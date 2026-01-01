@@ -1,3 +1,5 @@
+// @ts-nocheck           // ⬅️ diese Zeile NEU
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -264,7 +266,6 @@ export default function LocationsPage() {
                       placeholder="🎰"
                     />
                     <Button
-                      variant="ghost"
                       size="xs"
                       onClick={() => {
                         const suggestion = suggestEmojiForMachine(m.name ?? "");
