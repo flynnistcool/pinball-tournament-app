@@ -28,6 +28,7 @@ export async function GET() {
         id,
         round_id,
         rounds!inner (
+          id,
           tournament_id
         )
       )
