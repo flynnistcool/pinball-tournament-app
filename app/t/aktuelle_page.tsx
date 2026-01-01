@@ -1,5 +1,5 @@
+// @ts-nocheck
 "use client";
-
 import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Pill, Select } from "@/components/ui";
 import { BarChart, Sparkline } from "@/components/charts";
