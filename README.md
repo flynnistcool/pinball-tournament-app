@@ -104,3 +104,4 @@ Migration: `supabase_matchsize_migration.sql`
 ## Neu in v2.0
 - Anti-cheat: Start-Elo kann nur geändert werden, solange **matches_played = 0**.
 - Profil-Anlage: Start-Elo Feld ist standardmäßig **1500**, Range **800–3000**.
+Trigger redeploy
