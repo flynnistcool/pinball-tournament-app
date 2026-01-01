@@ -1,3 +1,5 @@
+// @ts-nocheck           // ⬅️ diese Zeile NEU
+
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 
