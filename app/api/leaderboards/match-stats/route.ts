@@ -38,7 +38,7 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = (data ?? []) as MPRow[];
+  const rows = (data ?? []) as unknown as MPRow[];
 
   if (rows.length === 0) {
     return NextResponse.json({ rows: [] });
