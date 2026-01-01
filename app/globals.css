@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html, body { height: 100%; }
+
+/* 🥇 Glow-Effekt für Platz 1 im Leaderboard */
+@keyframes leaderboard-glow {
+  0%   { text-shadow: 0 0 0 rgba(250, 204, 21, 0.0); transform: scale(1); }
+  50%  { text-shadow: 0 0 12px rgba(250, 204, 21, 0.8); transform: scale(1.08); }
+  100% { text-shadow: 0 0 0 rgba(250, 204, 21, 0.0); transform: scale(1); }
+}
+
+.leaderboard-glow {
+  animation: leaderboard-glow 1.6s ease-in-out infinite;
+}
+
+/* 🟨 Goldener Rahmen um Zeile Platz 1 */
+.leaderboard-first {
+  border: 2px solid rgba(250, 204, 21, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+}
+
+/* 🏅 Winner-Ribbon für Platz 1 */
+.winner-ribbon {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.6rem;
+  margin-left: 0.25rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #facc15, #f97316);
+  color: #111827;
+  font-size: 0.7rem;
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.15);
+}
+
+/* 🎉 Konfetti fürs Finale-Overlay (innerhalb der Karte) */
+/* 🎉 Konfetti fürs Finale-Overlay (innerhalb der weißen Karte) */
+/* 🎉 Konfetti fürs Finale-Overlay (innerhalb der weißen Karte) */
+@keyframes confetti-fall {
+  0% {
+    top: -15%;
+  }
+  100% {
+    top: 110%;
+  }
+}
+
+/* Container genau so groß wie die Karte */
+.confetti-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* einzelne Konfetti-Emojis */
+.confetti-piece {
+  position: absolute;
+  font-size: 22px;
+  opacity: 0.55;              /* 👈 leicht transparent, aber konstant */
+  animation-name: confetti-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-duration: 7s;     /* eher gemütlich */
+  pointer-events: none;
+}
+
+/* kleine Variationen für natürlichere Bewegung */
+.confetti-piece:nth-child(odd) {
+  animation-duration: 8s;
+}
+
+.confetti-piece:nth-child(3n) {
+  animation-duration: 6s;
+}
+
+.confetti-piece:nth-child(5n) {
+  font-size: 18px;
+}
+
+
+
+/* ✨ Sanftes Fade-In für das Finale-Overlay */
+@keyframes celebration-fade-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.celebration-overlay {
+  animation: celebration-fade-in 0.7s ease-out;
+}
+
+/* Scrollbares Finale-Overlay */
+.confetti-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  /* Wichtig: Inhalt scrollbar machen */
+  overflow-y: auto;
+
+  z-index: 9999;
+}
+
+.confetti-card {
+  background: white;
+  border-radius: 1rem;
+  padding: 2rem;
+  max-width: 650px;
+
+  /* Karte selbst auch scrollbar */
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+@keyframes finalChampionBounce {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.06); }
+  70%  { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+
+.final-champion {
+  animation: finalChampionBounce 1.6s ease-in-out infinite;
+  border: 2px solid #fbbf24;
+  border-radius: 0.75rem;
+  background: #fff7e6;
+}
+

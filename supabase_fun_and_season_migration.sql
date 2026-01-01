@@ -1,0 +1,3 @@
+-- Add 'fun' category is implicit (category is text)
+-- No SQL needed for category itself.
+-- (Optional) you may want an index if not present (already in league migration): idx_tournaments_category
