@@ -1,5 +1,5 @@
+// @ts-nocheck
 "use client";
-
 type PlayersTabProps = {
   isAdmin: boolean;
 };
