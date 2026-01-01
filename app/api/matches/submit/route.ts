@@ -47,10 +47,13 @@ export async function POST(req: Request) {
   // --- Elo update (profiles only, ignore players without profile_id) ---
   // Get tournament category to ignore fun tournaments
   const { data: tRow } = await sb
-    .from("rounds")
-    .select("tournaments!inner(category)")
-    .eq("tournament_id", matchRow.rounds.tournament_id)
-    .single();
+  .from("rounds")
+  .select("tournaments!inner(category)")
+  .eq(
+    "tournament_id",
+    (matchRow as any).rounds?.[0]?.tournament_id
+  )
+  .single();
 
   const category = (tRow as any)?.tournaments?.category ?? "normal";
   if (category !== "fun") {
