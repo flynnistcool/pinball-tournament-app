@@ -692,7 +692,7 @@ const getVal = (r: MatchPlacementRow) => {
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="font-semibold">Match-Leistung (global)</div>
+            <div className="font-semibold">Match-Leistung (global) Test</div>
             <div className="text-xs text-neutral-500">
               Platzierungen über alle Matches / Turniere. Sortierbar nach Matches,
               1. Plätzen, Ø-Platz oder Winrate.
@@ -3211,6 +3211,9 @@ if (joined)
 function Dashboard({ code, name, isAdmin }: { code: string; name: string; isAdmin: boolean }) {
   const [data, setData] = useState<any>(null);
   const rounds = data?.rounds ?? [];
+
+  const hasAtLeastOneFinishedRound = rounds.length > 0 && rounds.some((r: any) => r.status === "finished");
+
   const matches: Match[] = data?.matches ?? [];
   const matchPlayers: MP[] = data?.match_players ?? [];
 
@@ -3345,6 +3348,12 @@ function Dashboard({ code, name, isAdmin }: { code: string; name: string; isAdmi
 
   async function startSuperFinal() {
     if (locked) return;
+
+if (!hasAtLeastOneFinishedRound) {
+  alert('Super-Finale kann erst gestartet werden, wenn eine Runde "finished" ist.');
+  return;
+}
+
     setBusy(true);
     setNotice(null);
     const res = await fetch("/api/finals/start", {
@@ -4640,7 +4649,12 @@ async function registerFinalWin(playerId: string, winnerName: string) {
               </p>
               <div>
                 <Button
-                  disabled={busy || locked}
+                  disabled={busy || locked || !hasAtLeastOneFinishedRound}
+                      title={
+                  !hasAtLeastOneFinishedRound
+                    ? 'Erst eine Runden abschließen (Status "finished")'
+                    : ""
+                }
                   onClick={startSuperFinal}
                 >
                   Super-Finale starten
