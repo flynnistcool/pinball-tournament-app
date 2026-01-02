@@ -13,6 +13,7 @@ function expectedScore(rA: number, rB: number) {
 
 function getK(state: EloState): number {
   // einfache Heuristik – kannst du später anpassen
+  // Elo anpasssen
   if (state.provisional_matches > 0) return 32;
   if (state.matches_played < 30) return 24;
   return 16;

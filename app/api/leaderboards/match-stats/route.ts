@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 
+// Sorgt dafür, dass Next diese Route nicht statisch cached
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Rohdaten: ein Spieler in einem Match
 type MPRow = {
   player_id: string;
@@ -111,7 +115,7 @@ export async function GET() {
   if (profileIds.length > 0) {
     const { data: profiles, error: profErr } = await sb
       .from("profiles")
-      .select("id, avatar_url, color, icon")
+      .select("id, name, avatar_url, color, icon")
       .in("id", profileIds);
 
     if (profErr) {
@@ -129,61 +133,67 @@ export async function GET() {
   }
 
   // 5) Stats pro Spieler aufbauen
-  type Acc = {
-    playerId: string;
-    profileId: string | null;
-    name: string;
-    matches: number;
-    firstPlaces: number;
-    secondPlaces: number;
-    thirdPlaces: number;
-    fourthPlaces: number;
-    sumPosition: number;
-  };
+// 5) Stats pro Profil (global) aufbauen
+type Acc = {
+  key: string;                // <-- neu
+  profileId: string | null;
+  name: string;
+  matches: number;
+  firstPlaces: number;
+  secondPlaces: number;
+  thirdPlaces: number;
+  fourthPlaces: number;
+  sumPosition: number;
+};
 
-  const statsByPlayer: Record<string, Acc> = {};
+const statsByKey: Record<string, Acc> = {};
 
-  for (const r of rows) {
-    const match = r.matches;
-    const round = match?.rounds;
+for (const r of rows) {
+  const match = r.matches;
+  const round = match?.rounds;
+  if (!match || !round) continue;
 
-    if (!match || !round) continue;
+  const tId = round.tournament_id;
+  if (!validTournamentIds.has(tId)) continue;
 
-    const tId = round.tournament_id;
-    // Turnier existiert nicht mehr -> ignorieren
-    if (!validTournamentIds.has(tId)) continue;
+  const playerId = r.player_id;
+  const pos = typeof r.position === "number" ? r.position : null;
+  if (!playerId || pos == null) continue;
 
-    const playerId = r.player_id;
-    const pos = typeof r.position === "number" ? r.position : null;
-    if (!playerId || pos == null) continue;
+  const playerBase = playersById[playerId];
+  const profileId = playerBase?.profile_id ?? null;
 
-    const playerBase = playersById[playerId];
-    const name = playerBase?.name ?? "Unbekannter Spieler";
-    const profileId = playerBase?.profile_id ?? null;
+  // ✅ GLOBAL key: profileId wenn vorhanden, sonst playerId
+  const key = profileId ?? `player:${playerId}`;
 
-    if (!statsByPlayer[playerId]) {
-      statsByPlayer[playerId] = {
-        playerId,
-        profileId,
-        name,
-        matches: 0,
-        firstPlaces: 0,
-        secondPlaces: 0,
-        thirdPlaces: 0,
-        fourthPlaces: 0,
-        sumPosition: 0,
-      };
-    }
+  // ✅ Name: wenn Profil vorhanden, nimm Profil-Name, sonst Player-Name
+  const prof = profileId ? profilesById[profileId] : null;
+  const name = (prof as any)?.name ?? playerBase?.name ?? "Unbekannter Spieler";
 
-    const acc = statsByPlayer[playerId];
-    acc.matches += 1;
-    acc.sumPosition += pos;
-
-    if (pos === 1) acc.firstPlaces += 1;
-    else if (pos === 2) acc.secondPlaces += 1;
-    else if (pos === 3) acc.thirdPlaces += 1;
-    else if (pos === 4) acc.fourthPlaces += 1;
+  if (!statsByKey[key]) {
+    statsByKey[key] = {
+      key,
+      profileId,
+      name,
+      matches: 0,
+      firstPlaces: 0,
+      secondPlaces: 0,
+      thirdPlaces: 0,
+      fourthPlaces: 0,
+      sumPosition: 0,
+    };
   }
+
+  const acc = statsByKey[key];
+  acc.matches += 1;
+  acc.sumPosition += pos;
+
+  if (pos === 1) acc.firstPlaces += 1;
+  else if (pos === 2) acc.secondPlaces += 1;
+  else if (pos === 3) acc.thirdPlaces += 1;
+  else if (pos === 4) acc.fourthPlaces += 1;
+}
+
 
   // 6) In Output-Format umrechnen
   type MatchPlacementRow = {
@@ -201,31 +211,30 @@ export async function GET() {
     winrate: number; // in %
   };
 
-  const out: MatchPlacementRow[] = Object.values(statsByPlayer)
-    .filter((s) => s.matches > 0)
-    .map((s) => {
-      const avgPosition =
-        s.matches > 0 ? s.sumPosition / s.matches : null;
-      const winrate =
-        s.matches > 0 ? (s.firstPlaces / s.matches) * 100 : 0;
+const out: MatchPlacementRow[] = Object.values(statsByKey)
+  .filter((s) => s.matches > 0)
+  .map((s) => {
+    const avgPosition = s.matches > 0 ? s.sumPosition / s.matches : null;
+    const winrate = s.matches > 0 ? (s.firstPlaces / s.matches) * 100 : 0;
 
-      const prof = s.profileId ? profilesById[s.profileId] : null;
+    const prof = s.profileId ? profilesById[s.profileId] : null;
 
-      return {
-        profileId: s.profileId,
-        name: s.name,
-        avatar_url: prof?.avatar_url ?? null,
-        color: prof?.color ?? null,
-        icon: prof?.icon ?? null,
-        matches: s.matches,
-        firstPlaces: s.firstPlaces,
-        secondPlaces: s.secondPlaces,
-        thirdPlaces: s.thirdPlaces,
-        fourthPlaces: s.fourthPlaces,
-        avgPosition,
-        winrate,
-      };
-    });
+    return {
+      profileId: s.profileId,
+      name: s.name,
+      avatar_url: prof?.avatar_url ?? null,
+      color: prof?.color ?? null,
+      icon: prof?.icon ?? null,
+      matches: s.matches,
+      firstPlaces: s.firstPlaces,
+      secondPlaces: s.secondPlaces,
+      thirdPlaces: s.thirdPlaces,
+      fourthPlaces: s.fourthPlaces,
+      avgPosition,
+      winrate,
+    };
+  });
+
 
   // 7) Sortierung: wie im Frontend: viele Matches, dann Name
   out.sort((a, b) => {
@@ -233,5 +242,11 @@ export async function GET() {
     return a.name.localeCompare(b.name);
   });
 
-  return NextResponse.json({ rows: out });
+  return new NextResponse(JSON.stringify({ rows: out }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
 }
