@@ -692,7 +692,7 @@ const getVal = (r: MatchPlacementRow) => {
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="font-semibold">Match-Leistung (global) </div>
+            <div className="font-semibold">Match-Leistung (global) test</div>
             <div className="text-xs text-neutral-500">
               Platzierungen über alle Matches / Turniere. Sortierbar nach Matches,
               1. Plätzen, Ø-Platz oder Winrate.
