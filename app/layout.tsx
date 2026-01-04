@@ -8,20 +8,19 @@ export const metadata: Metadata = {
   title: "Pinball Turnier",
   description: "Kleine Turniersoftware für Matchplay, Round Robin, Swiss",
 
-  // ✅ PWA / Manifest
   manifest: "/manifest.webmanifest",
-
-  // ✅ Theme color (Android/Browser UI, teils iOS)
   themeColor: "#000000",
 
-  // ✅ iOS / iPad Standalone (Vollbild)
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "Pinball Turnier",
   },
 
-  // ✅ Icons
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
+
   icons: {
     icon: [
       { url: "/icon-192.png", sizes: "192x192", type: "image/png" },

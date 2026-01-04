@@ -9,6 +9,7 @@ import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
 import PlayersTab from "./PlayersTab";
 import { ProfilePicker } from "@/components/ProfilePicker";
+import Image from "next/image";
 
 type Tournament = {
   id: string;
@@ -3502,8 +3503,8 @@ async function handleChangeMachine(matchId: string, machineId: string | null) {
 
 export default function AdminHome() {
   const [tab, setTab] = useState<
-    "join" | "create" | "archive" | "elimination" | "locations" | "players" | "stats"
-  >("join");
+    "start" | "create" | "archive" | "elimination" | "locations" | "players" | "stats"
+  >("start");
 
     // ⭐ NEU: Rolle + Mail des aktuellen Users
   const [userRole, setUserRole] = useState<"admin" | "viewer" | null>(null);
@@ -3732,17 +3733,17 @@ if (joined)
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center gap-3">
-            {isAdmin && (
-            <button
-              onClick={() => setTab("join")}
-              className={tab === "join" ? "font-semibold" : "text-neutral-500"}
-            >
-              Turnier öffnen
-            </button>
-             )}
-            {isAdmin && (
+            
+<button
+  onClick={() => setTab("start")}
+  className={tab === "start" ? "font-semibold" : "text-neutral-500"}
+>
+  Start
+</button>
+            
+           
             <span className="text-neutral-300">|</span>
-             )}
+         
             {/*<button
               onClick={() => setTab("create")}
               className={
@@ -3831,22 +3832,37 @@ if (joined)
         </CardHeader>
 
         <CardBody>
-          {tab === "join" ? (
-            <div className="space-y-3">
-              <div>
-                <div className="mb-1 text-sm text-neutral-600">
-                  Turnier-Code
+          {tab === "start" ? (
+              <div className="space-y-4">
+
+                <div>
+                  <div className="text-lg font-semibold">Willkommen 👋</div>
                 </div>
-                <Input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="z.B. K3M9QZ"
-                />
+
+                <div
+                  className="relative w-full overflow-hidden rounded-xl border bg-neutral-100"
+                  style={{ height: 280, minHeight: 280 }}
+                >
+                  <Image
+                    src="/pinballturnier.png"
+                    alt="Pinball Turnier"
+                    fill
+                    unoptimized
+                    style={{ objectFit: "cover" }}
+                  />
+                </div>
+  {/*isAdmin && (
+
+                <div>
+                  <div className="text-text-base">Viel Spaß beim Flippern 🥳</div>
+                </div>
+
+               
+                
+                  )*/}
+         
+
               </div>
-              <Button disabled={busy} onClick={() => joinTournament()}>
-                Öffnen
-              </Button>
-            </div>
           ) : tab === "create" ? (
             <div className="space-y-3">
               <div>
