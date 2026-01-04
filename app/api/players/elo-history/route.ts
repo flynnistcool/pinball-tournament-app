@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     if (tournamentIds.length > 0) {
       const { data: ts, error: tErr } = await sb
         .from("tournaments")
-        .select("id, name, code, created_at, status")
+        .select("id, name, code, category,  created_at, status")
         .in("id", tournamentIds);
 
       if (tErr) {
@@ -104,6 +104,7 @@ export async function POST(req: Request) {
           typeof r.rating_before === "number" ? r.rating_before : null,
         created_at: t?.created_at ?? r.created_at,
         code: t?.code ?? "",
+        category: t?.category ?? null, // ✅ NEU
         tournamentName: t?.name ?? "(ohne Name)",
       };
     });

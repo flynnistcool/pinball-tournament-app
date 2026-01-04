@@ -1,13 +1,14 @@
 // @ts-nocheck
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, Fragment  } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Pill, Select } from "@/components/ui";
 import { BarChart, Sparkline } from "@/components/charts";
 import QRCode from "qrcode";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
 import PlayersTab from "./PlayersTab";
+import { ProfilePicker } from "@/components/ProfilePicker";
 
 type Tournament = {
   id: string;
@@ -109,7 +110,7 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
     <div className="flex items-center gap-2 min-w-0">
       <div
       // Runden Icons
-        className="flex h-9 w-9 flex items-center justify-center rounded-full text-ms font-bold"
+        className="flex h-9 w-9 flex items-center justify-center rounded-full text-xs font-bold"
         style={bgStyle}
       >
         {emoji ? (
@@ -121,12 +122,12 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
             className="h-full w-full object-cover"
           />
         ) : (
-          <span className="text-sm font-semibold text-neutral-700">
+          <span className="text-xs font-semibold text-neutral-700">
             {initials}
           </span>
         )}
       </div>
-      <span className="truncate font-medium">{player.name}</span>
+      <span className="truncate font-medium   ">{player.name}</span>
     </div>
   );
 }
@@ -547,6 +548,7 @@ function MachinesList({
 }
 
 type MatchPlacementRow = {
+  playerId: string;
   profileId: string | null;
   name: string;
   avatar_url: string | null;
@@ -592,36 +594,167 @@ function MatchPlacementLeaderboard() {
   const [sortKey, setSortKey] = useState<SortKey>("matches");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-async function load() {
-  setLoading(true);
-  setError(null);
-  // Hard-Reset der alten Daten
-  setRows([]);
+  // 👇 welcher Spieler ist aufgeklappt?
+  const [openProfileId, setOpenProfileId] = useState<string | null>(null);
+
+  // 👇 Detaildaten pro Spieler (Key = profileId)
+  type MatchByTournamentRow = {
+    tournamentId: string;
+    tournamentName: string;
+    tournamentCode: string | null;
+    matches: number;
+    firstPlaces: number;
+    secondPlaces: number;
+    thirdPlaces: number;
+    fourthPlaces: number;
+    avgPosition: number | null;
+    winrate: number; // %
+  };
+
+  const [detailsByProfile, setDetailsByProfile] = useState<
+    Record<string, MatchByTournamentRow[]>
+  >({});
+
+  const [detailsLoading, setDetailsLoading] = useState<Record<string, boolean>>(
+    {}
+  );
+
+  const [detailsError, setDetailsError] = useState<Record<string, string | null>>(
+    {}
+  );
+
+  async function loadDetails(profileId: string) {
+  setDetailsLoading((p) => ({ ...p, [profileId]: true }));
+  setDetailsError((p) => ({ ...p, [profileId]: null }));
 
   try {
     const res = await fetch(
-      `/api/leaderboards/match-stats?ts=${Date.now()}`,
+      `/api/leaderboards/match-stats-by-tournament?profileId=${encodeURIComponent(
+        profileId
+      )}&ts=${Date.now()}`,
       { cache: "no-store" }
     );
+
     const j = await res.json().catch(() => ({}));
+
     if (!res.ok) {
-      setError(j.error ?? "Konnte Match-Statistik nicht laden.");
-      setRows([]);
-    } else {
-      setRows(j.rows ?? []);
+      const msg = j.error ?? "Konnte Turnier-Details nicht laden.";
+      setDetailsError((p) => ({ ...p, [profileId]: msg }));
+      setDetailsByProfile((p) => ({ ...p, [profileId]: [] }));
+      return;
     }
+
+    setDetailsByProfile((p) => ({ ...p, [profileId]: j.rows ?? [] }));
   } catch {
-    setError("Konnte Match-Statistik nicht laden (Netzwerkfehler?).");
-    setRows([]);
+    setDetailsError((p) => ({
+      ...p,
+      [profileId]: "Konnte Turnier-Details nicht laden (Netzwerkfehler?).",
+    }));
+    setDetailsByProfile((p) => ({ ...p, [profileId]: [] }));
   } finally {
-    setLoading(false);
+    setDetailsLoading((p) => ({ ...p, [profileId]: false }));
   }
 }
 
+function toggleOpen(profileId: string) {
+  setOpenProfileId((prev) => {
+    const next = prev === profileId ? null : profileId;
+
+    // beim Öffnen: Details einmalig laden (wenn noch nicht da)
+    if (next && !detailsByProfile[next] && detailsLoading[next] !== true) {
+      loadDetails(next);
+    }
+
+    return next;
+  });
+}
+
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    setRows([]); // Hard reset
+
+    // Optional: wenn du neu lädst, klappt man besser alles zu
+    setOpenProfileId(null);
+
+    try {
+      const res = await fetch(`/api/leaderboards/match-stats?ts=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const j = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(j.error ?? "Konnte Match-Statistik nicht laden.");
+        setRows([]);
+      } else {
+        setRows(j.rows ?? []);
+      }
+    } catch {
+      setError("Konnte Match-Statistik nicht laden (Netzwerkfehler?).");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     load();
   }, []);
+
+  // ✅ NEU: lädt Turnier-Details für genau einen Spieler
+  async function fetchDetailsForProfile(profileId: string) {
+    // schon geladen? -> nicht nochmal
+    if ((detailsByProfile[profileId] ?? []).length > 0) return;
+
+    setDetailsLoading((p) => ({ ...p, [profileId]: true }));
+    setDetailsError((p) => ({ ...p, [profileId]: null }));
+
+    try {
+      const res = await fetch(
+        `/api/leaderboards/match-stats-by-tournament?profileId=${encodeURIComponent(
+          profileId
+        )}&ts=${Date.now()}`,
+        { cache: "no-store" }
+      );
+      const j = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setDetailsError((p) => ({
+          ...p,
+          [profileId]: j.error ?? "Konnte Turnier-Details nicht laden.",
+        }));
+        setDetailsByProfile((p) => ({ ...p, [profileId]: [] }));
+      } else {
+        setDetailsByProfile((p) => ({ ...p, [profileId]: j.rows ?? [] }));
+      }
+    } catch {
+      setDetailsError((p) => ({
+        ...p,
+        [profileId]: "Netzwerkfehler beim Laden der Turnier-Details.",
+      }));
+      setDetailsByProfile((p) => ({ ...p, [profileId]: [] }));
+    } finally {
+      setDetailsLoading((p) => ({ ...p, [profileId]: false }));
+    }
+  }
+
+  // ✅ NEU: klick handler (auf/zu + ggf. laden)
+  async function toggleOpen(profileId: string | null) {
+    if (!profileId) return;
+
+    // zuklappen
+    if (openProfileId === profileId) {
+      setOpenProfileId(null);
+      return;
+    }
+
+    // aufklappen
+    setOpenProfileId(profileId);
+
+    // details laden (nur wenn noch nicht da)
+    await fetchDetailsForProfile(profileId);
+  }
 
   function toggleSort(key: SortKey) {
     setSortKey((prevKey) => {
@@ -629,7 +762,6 @@ async function load() {
         setSortDir((prevDir) => (prevDir === "asc" ? "desc" : "asc"));
         return prevKey;
       }
-      // default dir if switching column:
       setSortDir(key === "avgPosition" ? "asc" : "desc");
       return key;
     });
@@ -639,31 +771,32 @@ async function load() {
     const copy = rows.slice();
     copy.sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
-const getVal = (r: MatchPlacementRow) => {
-  switch (sortKey) {
-    case "matches":
-      return r.matches;
-    case "firstPlaces":
-      return r.firstPlaces;
-    case "secondPlaces":
-      return r.secondPlaces;
-    case "thirdPlaces":
-      return r.thirdPlaces;
-    case "fourthPlaces":
-      return r.fourthPlaces;
-    case "winrate":
-      return r.winrate;
-    case "avgPosition":
-      return r.avgPosition ?? 9999;
-    default:
-      return 0;
-  }
-};
+
+      const getVal = (r: MatchPlacementRow) => {
+        switch (sortKey) {
+          case "matches":
+            return r.matches;
+          case "firstPlaces":
+            return r.firstPlaces;
+          case "secondPlaces":
+            return r.secondPlaces;
+          case "thirdPlaces":
+            return r.thirdPlaces;
+          case "fourthPlaces":
+            return r.fourthPlaces;
+          case "winrate":
+            return r.winrate;
+          case "avgPosition":
+            return r.avgPosition ?? 9999;
+          default:
+            return 0;
+        }
+      };
+
       const va = getVal(a);
       const vb = getVal(b);
       if (va < vb) return -1 * dir;
       if (va > vb) return 1 * dir;
-      // Tie-Breaker
       return a.name.localeCompare(b.name);
     });
     return copy;
@@ -688,21 +821,26 @@ const getVal = (r: MatchPlacementRow) => {
   }
 
   return (
+
+
+
+
     <Card className="mb-4">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="font-semibold">Match-Leistung (global) test</div>
+            <div className="font-semibold">Match-Leistung (global)</div>
             <div className="text-xs text-neutral-500">
-              Platzierungen über alle Matches / Turniere. Sortierbar nach Matches,
-              1. Plätzen, Ø-Platz oder Winrate.
+              Platzierungen über alle Matches / Turniere. Klick auf einen Spieler
+              zeigt Details pro Turnier.
             </div>
           </div>
-          <Button variant="secondary" onClick={load} disabled={loading}>
+          <Button className="ml-auto !h-8 !px-2 !text-[11px] !leading-none" variant="secondary" onClick={load} disabled={loading}>
             Neu laden
           </Button>
         </div>
       </CardHeader>
+
       <CardBody>
         {error && (
           <div className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -719,89 +857,188 @@ const getVal = (r: MatchPlacementRow) => {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-<thead>
-  <tr className="text-left text-xs text-neutral-500 border-b">
-    <th className="py-1 pr-2">Platz</th>
-    <th className="py-1 pr-2">Spieler</th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("matches", "Matches")}
-    </th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("firstPlaces", "1. Platz")}
-    </th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("secondPlaces", "2. Platz")}
-    </th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("thirdPlaces", "3. Platz")}
-    </th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("fourthPlaces", "4. Platz")}
-    </th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("avgPosition", "Ø-Platz")}
-    </th>
-    <th className="py-1 pr-2 text-right">
-      {sortLabel("winrate", "Winrate")}
-    </th>
-  </tr>
-</thead>
+              <thead>
+                <tr className="text-left text-xs text-neutral-500 border-b">
+                  <th className="py-1 pr-2">Platz</th>
+                  <th className="py-1 pr-2">Spieler</th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("matches", "Matches")}
+                  </th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("firstPlaces", "1. Platz")}
+                  </th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("secondPlaces", "2. Platz")}
+                  </th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("thirdPlaces", "3. Platz")}
+                  </th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("fourthPlaces", "4. Platz")}
+                  </th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("avgPosition", "Ø-Platz")}
+                  </th>
+                  <th className="py-1 pr-2 text-right">
+                    {sortLabel("winrate", "Winrate")}
+                  </th>
+                </tr>
+              </thead>
+
               <tbody>
                 {sortedRows.map((row, idx) => {
                   const place = idx + 1;
                   const medal =
-                    place === 1
-                      ? "🥇"
-                      : place === 2
-                      ? "🥈"
-                      : place === 3
-                      ? "🥉"
-                      : "";
+                    place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
+
+                  const id = row.profileId ?? null;
+                  const isOpen = !!id && openProfileId === id;
+
+                  const details = id ? detailsByProfile[id] ?? [] : [];
+                  const isLoadingDetails = id ? detailsLoading[id] === true : false;
+                  const err = id ? detailsError[id] ?? null : null;
 
                   return (
-                    <tr
-                      key={row.profileId ?? row.name + idx}
-                      className="border-b last:border-0 hover:bg-neutral-50/70"
-                    >
-      <td className="py-1 pr-2 text-sm tabular-nums text-neutral-500 text-left">
-        {medal ? (
-          <span>{medal}</span>
-        ) : (
-          <span>{place}.</span>
-        )}
-      </td>
-                      <td className="py-1 pr-2">
-                        <PlayerPill
-                          player={{
-                            name: row.name,
-                            color: row.color ?? null,
-                            icon: row.icon ?? null,
-                            avatarUrl: row.avatar_url ?? null,
-                          }}
-                        />
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.matches}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.firstPlaces}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.secondPlaces}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.thirdPlaces}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.fourthPlaces}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.avgPosition != null ? row.avgPosition.toFixed(2) : "—"}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums">
-                        {row.winrate.toFixed(1)} %
-                      </td>
-                    </tr>
+                    <Fragment key={id ?? row.name + idx}>
+                      {/* Hauptzeile */}
+                      <tr
+                        className={
+                          "border-b last:border-0 hover:bg-neutral-50/70 " +
+                          (id ? "cursor-pointer" : "cursor-default")
+                        }
+                        onClick={() => {
+                          if (!id) return;
+                          toggleOpen(id);
+                        }}
+                        title={id ? "Klicken für Turnier-Details" : "Kein profileId vorhanden"}
+                      >
+                        <td className="py-1 pr-2 text-sm tabular-nums text-neutral-500 text-left">
+                          {medal ? <span>{medal}</span> : <span>{place}.</span>}
+                        </td>
+
+<td className="py-1 pr-2">
+  <div className="flex items-center justify-between gap-2 min-w-0">
+    <PlayerPill
+      player={{
+        name: row.name,
+        color: row.color ?? null,
+        icon: row.icon ?? null,
+        avatarUrl: row.avatar_url ?? null,
+      }}
+    />
+
+    {/* 🔽 Pfeil rechts (nur wenn profileId vorhanden) */}
+    {id ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation(); // wichtig: verhindert "Doppelklick-Effekt" über die ganze Zeile
+          toggleOpen(id);
+        }}
+        className={
+          "ml-2 inline-flex h-8 w-8 items-center justify-center rounded-md " +
+          "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 " +
+          "transition-transform duration-200 " +
+          (isOpen ? "rotate-180" : "rotate-0")
+        }
+        aria-label={isOpen ? "Details schließen" : "Details öffnen"}
+        title={isOpen ? "Schließen" : "Öffnen"}
+      >
+        ▾
+      </button>
+    ) : null}
+  </div>
+</td>
+
+
+                        <td className="py-1 pr-2 text-right tabular-nums">{row.matches}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">{row.firstPlaces}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">{row.secondPlaces}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">{row.thirdPlaces}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">{row.fourthPlaces}</td>
+                        <td className="py-1 pr-2 text-right tabular-nums">
+                          {row.avgPosition != null ? row.avgPosition.toFixed(2) : "—"}
+                        </td>
+                        <td className="py-1 pr-2 text-right tabular-nums">
+                          {row.winrate.toFixed(1)} %
+                        </td>
+                      </tr>
+
+                      {/* Detailzeile */}
+{isOpen && (
+  <>
+    {/* Status-Zeile (Loading/Error/Empty) */}
+    {isLoadingDetails ? (
+      <tr className="border-b bg-neutral-50/50">
+        <td colSpan={9} className="py-2 px-2 text-sm text-neutral-500">
+          Lade Turnier-Details…
+        </td>
+      </tr>
+    ) : err ? (
+      <tr className="border-b bg-neutral-50/50">
+        <td colSpan={9} className="py-2 px-2 text-sm text-red-600">
+          {err}
+        </td>
+      </tr>
+    ) : details.length === 0 ? (
+      <tr className="border-b bg-neutral-50/50">
+        <td colSpan={9} className="py-2 px-2 text-sm text-neutral-500">
+          Keine Turnier-Details vorhanden.
+        </td>
+      </tr>
+    ) : (
+      <>
+        {/* Detail-Zeilen (WICHTIG: gleiche 9 Spalten wie oben) */}
+        {details.map((d: any, i: number) => {
+          const catRaw = d.tournamentCategory ?? d.category ?? null;
+          const cat =
+            catRaw && String(catRaw).trim().length > 0
+              ? String(catRaw).trim()
+              : null;
+
+          const created = d.tournamentCreatedAt ?? d.created_at ?? null;
+          const dt = created ? new Date(created).toLocaleDateString("de-DE") : null;
+
+          return (
+            <tr
+              key={(d.tournamentId ?? d.tournamentCode ?? i) + "-" + i}
+              className="border-b last:border-0 bg-neutral-50 hover:bg-neutral-100 transition-colors"
+            >
+              {/* Spalte 1 (Platz) leer lassen für Alignment */}
+              <td className="py-2 pr-2 text-sm tabular-nums text-neutral-500 text-left" />
+
+              {/* Spalte 2 (Spieler) wird Turniername + Meta */}
+              <td className="py-2 pr-2">
+                <div className="flex flex-col">
+                  <span className="font-medium">{d.tournamentName ?? "Turnier"}</span>
+                  <span className="text-[11px] text-neutral-500">
+                    {cat ?? "—"}
+                    {dt ? ` • ${dt}` : ""}
+                  </span>
+                </div>
+              </td>
+
+              {/* Spalte 3-9 exakt wie Haupttabelle */}
+              <td className="py-2 pr-2 text-right tabular-nums">{d.matches ?? 0}</td>
+              <td className="py-2 pr-2 text-right tabular-nums">{d.firstPlaces ?? 0}</td>
+              <td className="py-2 pr-2 text-right tabular-nums">{d.secondPlaces ?? 0}</td>
+              <td className="py-2 pr-2 text-right tabular-nums">{d.thirdPlaces ?? 0}</td>
+              <td className="py-2 pr-2 text-right tabular-nums">{d.fourthPlaces ?? 0}</td>
+              <td className="py-2 pr-2 text-right tabular-nums">
+                {d.avgPosition != null ? Number(d.avgPosition).toFixed(2) : "—"}
+              </td>
+              <td className="py-2 pr-2 text-right tabular-nums">
+                {d.winrate != null ? Number(d.winrate).toFixed(1) + " %" : "—"}
+              </td>
+            </tr>
+          );
+        })}
+      </>
+    )}
+  </>
+)}
+
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -809,12 +1046,28 @@ const getVal = (r: MatchPlacementRow) => {
           </div>
         )}
       </CardBody>
+
+    {/* 🎬 Animation für Detailzeilen */}
+    <style jsx global>{`
+      @keyframes mpDetailIn {
+        from {
+          opacity: 0;
+          transform: translateY(-6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    `}</style>
+
     </Card>
   );
 }
 
 
-function LeaderboardsTab() {
+
+function LeaderboardsTab({ isAdmin }: { isAdmin: boolean }) {
   const [subTab, setSubTab] = useState<
     "elo" | "tournaments" | "series" | "matches"
   >("elo");
@@ -859,6 +1112,115 @@ const [tournamentFilterCategory, setTournamentFilterCategory] = useState("");
 const [tournamentFilterName, setTournamentFilterName] = useState("");
 const [tournamentFilterFrom, setTournamentFilterFrom] = useState("");
 const [tournamentFilterTo, setTournamentFilterTo] = useState("");
+
+type GlobalPreset = {
+  id: string;
+  context: string;
+  label: string;
+  category: string;
+  name: string;
+  date_from: string;
+  date_to: string;
+  pinned: boolean;
+  sort_order: number;
+  created_at: string;
+};
+
+const GLOBAL_CONTEXT = "tournament_success";
+
+const [globalPresets, setGlobalPresets] = useState<GlobalPreset[]>([]);
+const [globalPresetsLoading, setGlobalPresetsLoading] = useState(false);
+
+async function loadGlobalPresets() {
+  setGlobalPresetsLoading(true);
+  try {
+    const res = await fetch(
+      `/api/filter-presets/list?context=${encodeURIComponent(GLOBAL_CONTEXT)}&ts=${Date.now()}`,
+      { cache: "no-store" }
+    );
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("global presets load failed:", j?.error);
+      setGlobalPresets([]);
+    } else {
+      setGlobalPresets(j.presets ?? []);
+    }
+  } catch (e) {
+    console.error("global presets network error:", e);
+    setGlobalPresets([]);
+  } finally {
+    setGlobalPresetsLoading(false);
+  }
+}
+
+async function deleteGlobalPreset(presetId: string) {
+  if (!confirm("Globalen Filter wirklich löschen?")) return;
+
+  try {
+    const res = await fetch(`/api/filter-presets/delete?ts=${Date.now()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ presetId }),
+    });
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(j?.error ?? "Löschen fehlgeschlagen");
+      return;
+    }
+
+    // 🔄 neu laden
+    await loadGlobalPresets();
+  } catch (e) {
+    console.error(e);
+    alert("Löschen fehlgeschlagen (Netzwerkfehler)");
+  }
+}
+
+
+function applyGlobalPreset(p: GlobalPreset) {
+  applyTournamentFiltersWith({
+    category: p.category || "",
+    name: p.name || "",
+    from: p.date_from || "",
+    to: p.date_to || "",
+  });
+}
+
+async function saveCurrentFilterAsGlobalPreset() {
+  try {
+    const payload = {
+      context: GLOBAL_CONTEXT,
+      category: tournamentFilterCategory.trim(),
+      name: tournamentFilterName.trim(),
+      date_from: tournamentFilterFrom || "",
+      date_to: tournamentFilterTo || "",
+      // label optional -> wird serverseitig sinnvoll gebaut
+    };
+
+    const res = await fetch(`/api/filter-presets/create?ts=${Date.now()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(payload),
+    });
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(j?.error ?? "Konnte globales Preset nicht speichern.");
+      return;
+    }
+
+    // neu laden, damit der Chip direkt erscheint
+    await loadGlobalPresets();
+  } catch (e) {
+    console.error(e);
+    alert("Konnte globales Preset nicht speichern (Netzwerkfehler?).");
+  }
+}
+
+
   const hasTournamentFilters =
     tournamentFilterCategory.trim() !== "" ||
     tournamentFilterName.trim() !== "" ||
@@ -874,6 +1236,223 @@ const [tournamentFilterTo, setTournamentFilterTo] = useState("");
     // zusätzlich:
     setFilterTournamentList(null);
   }
+
+function applyTournamentFiltersWith(filters: {
+  category: string;
+  name: string;
+  from: string;
+  to: string;
+}) {
+  const cat = filters.category.trim();
+  const name = filters.name.trim();
+  const from = filters.from || "";
+  const to = filters.to || "";
+
+  // UI-States setzen (damit Inputs/Chips anzeigen was aktiv ist)
+  setTournamentFilterCategory(cat);
+  setTournamentFilterName(name);
+  setTournamentFilterFrom(from);
+  setTournamentFilterTo(to);
+
+  // Hard reset wie gewünscht
+  setTournamentRows([]);
+  setFilterTournamentList(null);
+
+  // ✅ Wichtig: direkt mit den Werten laden (nicht “aus State lesen”)
+  loadTournamentSuccessWith(cat, name, from, to);
+  loadFilteredTournamentListWith(cat, name, from, to);
+}
+
+async function loadFilteredTournamentListWith(
+  category: string,
+  search: string,
+  from: string,
+  to: string
+) {
+  try {
+    const res = await fetch(`/api/tournaments/list?ts=${Date.now()}`, { cache: "no-store" });
+    const j = await res.json().catch(() => ({}));
+    const all: any[] = j.tournaments ?? [];
+
+    let filtered = all.filter((t) => t.status === "finished");
+
+    if (category.trim()) {
+      const cat = category.trim().toLowerCase();
+      filtered = filtered.filter((t) =>
+        (t.category ?? "").toLowerCase().includes(cat)
+      );
+    }
+
+    if (search.trim()) {
+      const s = search.trim().toLowerCase();
+      filtered = filtered.filter((t) =>
+        (t.name ?? "").toLowerCase().includes(s)
+      );
+    }
+
+    if (from) {
+      const fromDate = new Date(from);
+      filtered = filtered.filter((t) => t.created_at && new Date(t.created_at) >= fromDate);
+    }
+
+    if (to) {
+      const toDate = new Date(to);
+      filtered = filtered.filter((t) => t.created_at && new Date(t.created_at) <= toDate);
+    }
+
+    setFilterTournamentList(
+      filtered.map((t) => ({
+        id: t.id,
+        name: t.name,
+        code: t.code,
+        category: t.category ?? null,
+        status: t.status ?? null,
+        created_at: t.created_at ?? null,
+      }))
+    );
+  } catch (e) {
+    console.error("loadFilteredTournamentListWith error:", e);
+    setFilterTournamentList([]);
+  }
+}
+
+
+
+
+
+  // ---------------- Schnellfilter (Top 10) ----------------
+type TournamentFilterPreset = {
+  key: string;              // eindeutiger Key aus den Filterwerten
+  label: string;            // Anzeige im Chip
+  category: string;
+  name: string;
+  from: string;
+  to: string;
+  count: number;            // wie oft genutzt
+  lastUsed: number;         // timestamp
+};
+
+const PRESETS_KEY = "pinball:tournamentFilterPresets:v1";
+
+const [tournamentPresets, setTournamentPresets] = useState<TournamentFilterPreset[]>([]);
+
+useEffect(() => {
+  // nur im Browser
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) setTournamentPresets(arr);
+  } catch {
+    // ignore
+  }
+}, []);
+
+function formatPresetLabel(cat: string, name: string, from: string, to: string) {
+  const parts: string[] = [];
+  if (cat.trim()) parts.push(cat.trim());
+  if (name.trim()) parts.push(`„${name.trim()}“`);
+  if (from || to) parts.push(`${from || "…"} → ${to || "…"}`);
+  return parts.length ? parts.join(" · ") : "Alle Turniere";
+}
+
+function makePresetKey(cat: string, name: string, from: string, to: string) {
+  return `${cat.trim().toLowerCase()}|${name.trim().toLowerCase()}|${from || ""}|${to || ""}`;
+}
+
+function savePresets(next: TournamentFilterPreset[]) {
+  setTournamentPresets(next);
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+function deletePreset(key: string) {
+  const next = tournamentPresets.filter((p) => p.key !== key);
+  savePresets(next);
+}
+
+function presetTooltip(p: any) {
+  const cat = (p.category || "").trim();
+  const name = (p.name || "").trim();
+
+  // globale Presets: date_from / date_to
+  // lokale Presets: from / to
+  const from = (p.date_from || p.from || "").trim();
+  const to = (p.date_to || p.to || "").trim();
+
+  const lines: string[] = [];
+
+  if (cat) lines.push(`Kategorie: ${cat}`);
+  if (name) lines.push(`Name: ${name}`);
+  if (from || to) lines.push(`Zeitraum: ${from || "…"} → ${to || "…"}`);
+
+  if (p.count != null) {
+    lines.push(`Benutzt: ${p.count}×`);
+  }
+
+  if (lines.length === 0) {
+    lines.push("Kein Filter (zeigt alles)");
+  }
+
+  return lines.join("\n");
+}
+
+
+
+function recordPresetUse() {
+  const cat = tournamentFilterCategory.trim();
+  const name = tournamentFilterName.trim();
+  const from = tournamentFilterFrom;
+  const to = tournamentFilterTo;
+
+  const key = makePresetKey(cat, name, from, to);
+  const label = formatPresetLabel(cat, name, from, to);
+
+  const now = Date.now();
+
+  const existing = tournamentPresets.find((p) => p.key === key);
+
+  let next: TournamentFilterPreset[];
+  if (existing) {
+    next = tournamentPresets.map((p) =>
+      p.key === key ? { ...p, count: p.count + 1, lastUsed: now, label } : p
+    );
+  } else {
+    next = [
+      { key, label, category: cat, name, from, to, count: 1, lastUsed: now },
+      ...tournamentPresets,
+    ];
+  }
+
+  // Top 10: zuerst nach Häufigkeit, dann nach zuletzt benutzt
+  next.sort((a, b) => (b.count - a.count) || (b.lastUsed - a.lastUsed));
+  next = next.slice(0, 5);
+
+  savePresets(next);
+}
+
+function applyPreset(p: TournamentFilterPreset) {
+  applyTournamentFiltersWith({
+    category: p.category || "",
+    name: p.name || "",
+    from: p.from || "",
+    to: p.to || "",
+  });
+
+  // Nutzung hochzählen (kann bleiben wie es ist)
+  const now = Date.now();
+  const next = tournamentPresets
+    .map((x) => (x.key === p.key ? { ...x, count: x.count + 1, lastUsed: now } : x))
+    .sort((a, b) => (b.count - a.count) || (b.lastUsed - a.lastUsed))
+    .slice(0, 10);
+
+  savePresets(next);
+}
+
+
 
 
   type FilteredTournamentInfo = {
@@ -923,6 +1502,7 @@ useEffect(() => {
   } else if (subTab === "tournaments") {
     setTournamentRows([]);   // HARD RESET
     loadTournamentSuccess();
+    loadGlobalPresets();
   } else if (subTab === "matches") {
     setMatchRows([]);        // HARD RESET
     loadMatchHistory();
@@ -1048,7 +1628,52 @@ async function loadTournamentSuccess(ignoreFilters = false) {
     }
   }
 
-async function loadFilteredTournamentList() {
+async function loadTournamentSuccessWith(
+  category: string,
+  search: string,
+  from: string,
+  to: string
+) {
+  setTournamentLoading(true);
+  setTournamentError(null);
+  setTournamentRows([]);
+
+  try {
+    const params = new URLSearchParams();
+    params.set("ts", String(Date.now()));
+
+    if (category) params.set("category", category);
+    if (search) params.set("search", search);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+
+    const url = `/api/leaderboards/tournaments?${params.toString()}`;
+
+    const res = await fetch(url, { cache: "no-store" });
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setTournamentError(j.error ?? "Konnte Turniererfolge-Leaderboard nicht laden.");
+      setTournamentRows([]);
+    } else {
+      setTournamentRows(j.rows ?? []);
+    }
+  } catch {
+    setTournamentError("Konnte Turniererfolge-Leaderboard nicht laden (Netzwerkfehler?).");
+    setTournamentRows([]);
+  } finally {
+    setTournamentLoading(false);
+  }
+}
+
+
+
+async function loadFilteredTournamentList(
+  catRaw = "",
+  nameRaw = "",
+  fromRaw = "",
+  toRaw = ""
+) {
   try {
     const res = await fetch(`/api/tournaments/list?ts=${Date.now()}`, {
       cache: "no-store",
@@ -1056,33 +1681,35 @@ async function loadFilteredTournamentList() {
     const j = await res.json().catch(() => ({}));
     const all: any[] = j.tournaments ?? [];
 
-    // nur beendete Turniere berücksichtigen (typisch für Statistiken)
+    // nur beendete Turniere berücksichtigen
     let filtered = all.filter((t) => t.status === "finished");
 
-    // dieselben Filter wie in der UI
-    if (tournamentFilterCategory.trim()) {
-      const cat = tournamentFilterCategory.trim().toLowerCase();
+    const cat = catRaw.trim().toLowerCase();
+    const search = nameRaw.trim().toLowerCase();
+    const from = fromRaw;
+    const to = toRaw;
+
+    if (cat) {
       filtered = filtered.filter((t) =>
         (t.category ?? "").toLowerCase().includes(cat)
       );
     }
 
-    if (tournamentFilterName.trim()) {
-      const search = tournamentFilterName.trim().toLowerCase();
+    if (search) {
       filtered = filtered.filter((t) =>
         (t.name ?? "").toLowerCase().includes(search)
       );
     }
 
-    if (tournamentFilterFrom) {
-      const fromDate = new Date(tournamentFilterFrom);
+    if (from) {
+      const fromDate = new Date(from);
       filtered = filtered.filter(
         (t) => t.created_at && new Date(t.created_at) >= fromDate
       );
     }
 
-    if (tournamentFilterTo) {
-      const toDate = new Date(tournamentFilterTo);
+    if (to) {
+      const toDate = new Date(to);
       filtered = filtered.filter(
         (t) => t.created_at && new Date(t.created_at) <= toDate
       );
@@ -1103,6 +1730,7 @@ async function loadFilteredTournamentList() {
     setFilterTournamentList([]);
   }
 }
+
 
 
 
@@ -1295,6 +1923,7 @@ async function loadMatchHistory() {
                 Elo-Leaderboard (global)
               </div>
               <Button
+                className="ml-auto !h-8 !px-2 !text-[11px] !leading-none"
                 variant="secondary"
                 onClick={loadEloLeaderboard}
                 disabled={eloLoading}
@@ -1444,9 +2073,26 @@ async function loadMatchHistory() {
                 Lade Turniererfolge…
               </div>
             ) : tournamentRows.length === 0 && hasTournamentFilters ? (
-              <div className="text-sm text-neutral-500">
-                Keine Ergebnisse für die aktuellen Filter.
-              </div>
+
+  <div className="flex items-center gap-3">
+    <div className="text-sm text-neutral-500">
+      Keine Ergebnisse für die aktuellen Filter.
+    </div>
+
+    <Button
+      variant="secondary"
+      className="h-8 px-2 text-[11px] leading-none"
+      onClick={() => {
+        resetTournamentFilters();     // Filter-States leeren
+        loadTournamentSuccess(true);  // ohne Filter laden
+      }}
+      disabled={tournamentLoading}
+    >
+      Neu laden
+    </Button>
+  </div>
+
+
             ) : tournamentRows.length === 0 ? (
               <div className="text-sm text-neutral-500">
                 Noch keine Daten verfügbar.{" "}
@@ -1458,6 +2104,87 @@ async function loadMatchHistory() {
             ) : (
               <div className="overflow-x-auto">
                 <div className="max-h-80 overflow-y-auto rounded-2xl  bg-white">
+
+
+{/* 🌍 Globale Filter (für alle) */}
+<div className="mt-3 mb-5 flex flex-wrap items-center gap-2">
+  <div className="mr-1 text-[11px] font-semibold text-neutral-600">
+    🌍 Globale Filter:
+  </div>
+
+  {globalPresetsLoading && (
+    <div className="text-[11px] text-neutral-500">lade…</div>
+  )}
+
+  {!globalPresetsLoading && globalPresets.length === 0 && (
+    <div className="text-[11px] text-neutral-500">keine Presets</div>
+  )}
+
+{globalPresets.map((p, idx) => {
+  const colors = [
+    "bg-indigo-100 text-indigo-800 border-indigo-200 hover:bg-indigo-200",
+    "bg-sky-100 text-sky-800 border-sky-200 hover:bg-sky-200",
+    "bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200",
+    "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200",
+    "bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-200",
+    "bg-rose-100 text-rose-800 border-rose-200 hover:bg-rose-200",
+  ];
+  const cls = colors[idx % colors.length];
+
+  return (
+    <div
+      key={p.id}
+      className={
+        "inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-medium transition " +
+        cls
+      }
+      title={presetTooltip(p)}
+    >
+      {/* Klickbarer Teil */}
+      <button
+        type="button"
+        onClick={() => applyGlobalPreset(p)}
+        className="flex items-center gap-2"
+      >
+        {p.label}
+      </button>
+
+      {/* ✕ nur für Admin */}
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            deleteGlobalPreset(p.id);
+          }}
+          className="ml-2 rounded-full px-1 hover:bg-white/40"
+          title="Globalen Filter löschen"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+})}
+
+
+  {/* 🌍 Global speichern (nur Admin) */}
+  {isAdmin && (
+    <button
+      type="button"
+      onClick={saveCurrentFilterAsGlobalPreset}
+      className="ml-2 inline-flex items-center rounded-full border border-neutral-300 bg-white px-3 py-1 text-[11px] font-semibold text-neutral-800 hover:bg-neutral-50"
+      title="Aktuellen Filter als globalen Chip speichern"
+    >
+      🌍 Global speichern
+    </button>
+  )}
+</div>
+
+
+
+<div className="mt-1 mb-4 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
                 <table className="w-full text-sm">
 <thead>
   <tr className="text-left text-xs text-neutral-500 border-b">
@@ -1550,11 +2277,69 @@ async function loadMatchHistory() {
 </tbody>
 
 
+
+
                 </table>
+</div>
+
                 </div>
+
+
+
+                
 
             {/* Filter-Leiste unter der Tabelle */}
             <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+ 
+{/* Zusatz-Tabelle: berücksichtigte Turniere */}
+{filterTournamentList && filterTournamentList.length > 0 && (
+  <div className="mt-1 mb-4 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+    <div className="mb-2 text-xs font-semibold text-neutral-600">
+      Berücksichtigte Turniere ({filterTournamentList.length})
+    </div>
+
+    <div className="max-h-48 overflow-y-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-[11px] text-neutral-500 border-b">
+            <th className="py-1 pr-2">Name</th>
+            <th className="py-1 pr-2">Kategorie</th>
+            <th className="py-1 pr-2">Code</th>
+            <th className="py-1 pr-2">Status</th>
+            <th className="py-1 pr-2">Datum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filterTournamentList.map((t) => (
+            <tr
+              key={t.id}
+              className="border-b last:border-0 hover:bg-neutral-50/70"
+            >
+              <td className="py-1 pr-2">{t.name}</td>
+              <td className="py-1 pr-2 text-neutral-600">
+                {t.category || "—"}
+              </td>
+              <td className="py-1 pr-2 tabular-nums text-neutral-500">
+                {t.code}
+              </td>
+              <td className="py-1 pr-2 text-neutral-500">
+                {t.status === "finished" ? "Beendet" : "Laufend"}
+              </td>
+              <td className="py-1 pr-2 text-neutral-500">
+                {t.created_at
+                  ? new Date(t.created_at).toLocaleDateString("de-DE")
+                  : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+)}
+
+
+
  
             {/* 🔍 Filterzeile */}
             <div className="flex flex-wrap items-end gap-3 text-xs">
@@ -1617,8 +2402,13 @@ async function loadMatchHistory() {
                 variant="secondary"
                 className="ml-auto !h-8 !px-2 !text-[11px] !leading-none"
                 onClick={() => {
-                  loadTournamentSuccess(false);   // Stats laden mit Filtern
-                  loadFilteredTournamentList();  // Turnierliste passend zu den Filtern laden
+                  recordPresetUse();
+                  applyTournamentFiltersWith({
+                    category: tournamentFilterCategory,
+                    name: tournamentFilterName,
+                    from: tournamentFilterFrom,
+                    to: tournamentFilterTo,
+                  });
                 }}
                 disabled={tournamentLoading}
               >
@@ -1627,58 +2417,97 @@ async function loadMatchHistory() {
             </div>
 
 
-{/* Zusatz-Tabelle: berücksichtigte Turniere */}
-{filterTournamentList && filterTournamentList.length > 0 && (
-  <div className="mt-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
-    <div className="mb-2 text-xs font-semibold text-neutral-600">
-      Berücksichtigte Turniere ({filterTournamentList.length})
+
+
+
+
+
+
+
+{/* Schnellfilter-Chips (Top 10) */}
+{/*}
+{tournamentPresets.length > 0 && (
+  <div className="mt-3 flex flex-wrap items-center gap-2">
+    <div className="mr-1 text-[11px] font-semibold text-neutral-600">
+      Schnellfilter:
     </div>
 
-    <div className="max-h-48 overflow-y-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-left text-[11px] text-neutral-500 border-b">
-            <th className="py-1 pr-2">Name</th>
-            <th className="py-1 pr-2">Kategorie</th>
-            <th className="py-1 pr-2">Code</th>
-            <th className="py-1 pr-2">Status</th>
-            <th className="py-1 pr-2">Datum</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filterTournamentList.map((t) => (
-            <tr
-              key={t.id}
-              className="border-b last:border-0 hover:bg-neutral-50/70"
-            >
-              <td className="py-1 pr-2">{t.name}</td>
-              <td className="py-1 pr-2 text-neutral-600">
-                {t.category || "—"}
-              </td>
-              <td className="py-1 pr-2 tabular-nums text-neutral-500">
-                {t.code}
-              </td>
-              <td className="py-1 pr-2 text-neutral-500">
-                {t.status === "finished" ? "Beendet" : "Laufend"}
-              </td>
-              <td className="py-1 pr-2 text-neutral-500">
-                {t.created_at
-                  ? new Date(t.created_at).toLocaleDateString("de-DE")
-                  : "—"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    {tournamentPresets.map((p, idx) => {
+      const colors = [
+        "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-200",
+        "bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200",
+        "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200",
+        "bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-200",
+        "bg-rose-100 text-rose-800 border-rose-200 hover:bg-rose-200",
+        "bg-cyan-100 text-cyan-800 border-cyan-200 hover:bg-cyan-200",
+        "bg-lime-100 text-lime-800 border-lime-200 hover:bg-lime-200",
+        "bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200",
+        "bg-slate-100 text-slate-800 border-slate-200 hover:bg-slate-200",
+        "bg-teal-100 text-teal-800 border-teal-200 hover:bg-teal-200",
+      ];
+      const cls = colors[idx % colors.length];
+
+return (
+  <div
+    key={p.key}
+    className={
+      "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium transition " +
+      cls
+    }
+    title={presetTooltip(p)}
+  >
+  
+    <button
+      type="button"
+      onClick={() => applyPreset(p)}
+      className="inline-flex items-center gap-2"
+    >
+      <span className="truncate max-w-[220px]">{p.label}</span>
+      <span className="opacity-70 tabular-nums">{p.count}×</span>
+    </button>
+
+
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        deletePreset(p.key);
+      }}
+      className="ml-2 rounded-full px-2 py-0.5 hover:bg-white/40"
+      title="Schnellfilter löschen"
+    >
+      ✕
+    </button>
+  </div>
+);
+
+    })}
   </div>
 )}
+*/}
 
 
 
             </div>
 
-
+            {/* Filter-Leiste unter der Tabelle */}
+            <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+            <div className="flex flex-wrap items-end gap-3 text-xs">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-neutral-500">
+                  Turnierpunke
+                </span>
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-neutral-500">
+                 1. Platz - Anzahl Teilnehmer + 2; 2. Platz - Anzahl Teilnehmer; 3. Platz - Anzahl Teilnehmer - 2; danach erhält jede weitere Platzierung einen Punkt weniger
+                 <br />
+                 Super-Finale Sieg: Anzahl Teilnehmer/2
+                </span>
+              </div>
+              </div>
+            </div>
+            </div>
                 
               </div>
             )}
@@ -1704,6 +2533,7 @@ async function loadMatchHistory() {
                   </div>
 
                   <Button
+                    className="ml-auto !h-8 !px-2 !text-[11px] !leading-none"
                     variant="secondary"
                     onClick={loadMatchHistory}
                     disabled={matchLoading}
@@ -1920,7 +2750,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
         <CardBody>
 <div className="overflow-hidden rounded-2xl border bg-white">
   {/* Kopfzeile */}
-  <div className="grid grid-cols-12 gap-4 border-b bg-neutral-50 px-6 py-3 text-sm text-neutral-600">
+  <div className="grid grid-cols-12 gap-4 border-b bg-neutral-50 px-2 py-3 text-ms text-neutral-600">
     <div className="col-span-1 text-center">Platz</div>
     <div className="col-span-5">Spieler</div>
     <div className="col-span-2 text-right">Punkte</div>
@@ -1936,17 +2766,22 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
     const medal =
       place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
     const medalClass =
-      place === 1 ? "text-xl leaderboard-glow" : "text-xl";
+      place === 1 ? "text-lg leaderboard-glow" : "text-lg";
     const hasMedal = medal !== "";
 
     return (
-      <div key={r.id} className="border-b last:border-b-0">
+      <div key={r.id} className="relative min-w-0 border-b last:border-b-0">
         <button
-          className={`w-full grid grid-cols-12 gap-4 px-6 py-3 items-center text-left hover:bg-neutral-50 ${
+          className={`w-full grid grid-cols-12 gap-4 px-2 py-3 items-center text-left hover:bg-neutral-50 ${
             place === 1 ? "leaderboard-first" : ""
           }`}
           onClick={() => setOpenId(openId === r.id ? null : r.id)}
         >
+          
+
+          
+          
+          
           {/* Platz-Spalte: Medaille (1–3) oder Platz-Zahl (ab 4) */}
           <div className="col-span-1 flex flex-col items-center justify-center text-xs tabular-nums">
             {hasMedal && <span className={medalClass}>{medal}</span>}
@@ -1955,8 +2790,16 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
             )}
           </div>
 
+    {/* Badge schwebend */}
+    {place === 1 && (
+      <span className="absolute -top-3 left-0 winner-ribbon">
+        Champion
+      </span>
+    )}
+
           {/* Spieler + Elo-Infos */}
-          <div className="col-span-5 flex items-center">
+          <div className="col-span-5 flex items-center justify-between gap-4 min-w-0">
+            <div className="min-w-0">
             <PlayerPill
               player={{
                 name: r.name,
@@ -1965,48 +2808,81 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                 avatarUrl: r.avatarUrl ?? null,
               }}
             />
-
-            {/* Mehr Abstand zwischen Name und Champion/Elo */}
-            <div className="ml-6 flex flex-col gap-1">
-              <div className="flex items-center gap-3">
-                {r.eloEnd != null && (
-                  <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-sm">
-                    Elo{" "}
-                    <span className="ml-1 font-semibold tabular-nums">
-                      {Math.round(r.eloEnd)}
-                    </span>
-                  </span>
-                )}
-                {place === 1 && (
-                  <span className="winner-ribbon">Champion</span>
-                )}
-              </div>
-
-              {r.eloStart != null && r.eloEnd != null && (
-                <div className="text-[12px] tabular-nums text-neutral-600">
-                  {Math.round(r.eloStart)}{" "}
-                  <span className="mx-1">→</span>
-                  {Math.round(r.eloEnd)}{" "}
-                  {(() => {
-                    const delta = r.eloDelta ?? null;
-                    if (typeof delta !== "number" || delta === 0) {
-                      return null;
-                    }
-                    const sign = delta > 0 ? "+" : "";
-                    const cls =
-                      delta > 0
-                        ? "ml-1 font-semibold text-emerald-600"
-                        : "ml-1 font-semibold text-red-600";
-                    return (
-                      <span className={cls}>
-                        ({sign}
-                        {Math.round(delta)})
-                      </span>
-                    );
-                  })()}
-                </div>
-              )}
             </div>
+
+<div className="shrink-0 w-fit">
+  <div className="grid grid-cols-[auto_auto] gap-3 items-start">
+    {/* LEFT: ELO BLOCK */}
+
+
+  
+    <div className="rounded-xl">
+      {/* header row */}
+
+
+
+      <div className="flex items-center justify-between">
+        
+        <span className="ml-2 inline-flex  font-semibold items-center rounded-full bg-neutral-100 px-3 py-1 text-xs">
+          <span className="text-[14px] mr-2 text-neutral-700">Elo </span> {r.eloEnd != null ? Math.round(r.eloEnd) : "—"}
+        </span>
+      </div>
+
+      {/* detail row */}
+      <div className="mt-0.5 text-[12px] tabular-nums text-neutral-600">
+        {r.eloStart != null && r.eloEnd != null ? (
+          <>
+            {Math.round(r.eloStart)} <span className="mx-1">→</span>{" "}
+            {Math.round(r.eloEnd)}
+            {(() => {
+              const delta = r.eloDelta ?? null;
+              if (typeof delta !== "number" || delta === 0) return null;
+              const sign = delta > 0 ? "+" : "";
+              const cls =
+                delta > 0
+                  ? "ml-2 font-semibold text-[13px] text-emerald-600"
+                  : "ml-2 font-semibold text-[13px] text-red-600";
+              return (
+                <span className={cls}>
+                  ({sign}
+                  {Math.round(delta)})
+                </span>
+              );
+            })()}
+          </>
+        ) : (
+          <span className="text-neutral-400">—</span>
+        )}
+      </div>
+    </div>
+
+    {/* RIGHT: TP BLOCK  inline-flex flex-col rounded-xl border border-amber-200 bg-amber-50 */}
+    
+    {Number(r.tournamentPoints ?? 0) > 0 && (
+      <div className="ml-2 inline-flex font-semibold items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm">
+        {/* header row */}
+        <div className="justify-between">
+          <span className="text-[11px] font-semibold text-amber-800">
+            Turnierwertung        
+          </span>
+        </div>
+        <div className="mt-0.5 text-[13px]  text-amber-700 font-semibold">+{Number(r.tournamentPoints ?? 0)} TP</div>
+
+      </div>
+    )}
+
+
+
+
+
+    </div>
+
+
+
+
+</div>
+
+
           </div>
 
           {/* Punkte / Matches / Winrate / Verlauf */}
@@ -2170,19 +3046,22 @@ function MiniLeaderboard({ code }: { code: string }) {
               return (
                 <div
                   key={r.id ?? r.player_id ?? index}
-                  className="flex items-center gap-2 text-sm"
+                  className="flex items-start gap-2 text-sm"
                 >
-                  <div className="w-6 text-right tabular-nums text-neutral-500">
+                  <div className="w-3 text-right tabular-nums text-neutral-500 pt-0.5">
                     {index + 1}.
                   </div>
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <div className="flex items-start gap-2 flex-1 min-w-0">
                     <span
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white/70 text-xs"
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white/70 text-xs mt-0.5"
                       style={color ? { backgroundColor: color } : {}}
                     >
                       {emoji || initials}
                     </span>
                     <span className="truncate font-medium">{r.name}</span>
+                  </div>
+                  <div className="tabular-nums text-neutral-700 font-semibold pl-2">
+                    {r.points ?? "—"}
                   </div>
                 </div>
               );
@@ -3194,7 +4073,7 @@ if (joined)
             //<PlayersTab />
             <PlayersTab isAdmin={isAdmin} />
           ) : tab === "stats" ? (
-            <LeaderboardsTab />
+            <LeaderboardsTab isAdmin={isAdmin} />
           ) : null}
 
           {msg && (
@@ -4335,6 +5214,7 @@ async function registerFinalWin(playerId: string, winnerName: string) {
                       +
                     </Button>
                   </div>
+                  {/*}
                   <div className="mt-2 flex gap-2">
                     <Select
                       value={selectedProfileId}
@@ -4356,6 +5236,24 @@ async function registerFinalWin(playerId: string, winnerName: string) {
                       Hinzufügen
                     </Button>
                   </div>
+                  */}
+<div className="mt-2 flex gap-2">
+  <ProfilePicker
+    profiles={profiles}
+    value={selectedProfileId}
+    onChange={(id) => setSelectedProfileId(id)}
+    disabled={busy || locked}
+  />
+
+  <Button
+    variant="secondary"
+    disabled={busy || locked || !selectedProfileId}
+    onClick={addPlayerFromProfile}
+    className="h-10 px-3 text-sm"
+  >
+    Hinzufügen
+  </Button>
+</div>
                 </div>
 
                 <div>
@@ -4599,20 +5497,31 @@ async function registerFinalWin(playerId: string, winnerName: string) {
 
       <Stats code={code} tournamentName={tournamentName} />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)]">
-        <RoundMatchesCard
-          code={code}
-          rounds={rounds}
-          matches={matches}
-          matchPlayers={matchPlayers}
-          machinesById={machinesById}
-          playersById={playersById}
-          onSaved={reloadAll}
-          locked={locked}
-        />
+<div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] items-stretch">
+  {/* 🔹 LINKE SEITE */}
+  <div className="lg:flex-[3] min-w-0">
+    <RoundMatchesCard
+      code={code}
+      rounds={rounds}
+      matches={matches}
+      matchPlayers={matchPlayers}
+      machinesById={machinesById}
+      playersById={playersById}
+      onSaved={reloadAll}
+      locked={locked}
+    />
+  </div>
 
-        <MiniLeaderboard code={code} />
-      </div>
+  {/* 🔹 RECHTE SEITE */}
+  <div className="lg:flex-[1] min-w-0">
+<div className="rounded-2xl border bg-white p-3 h-full flex flex-col">
+  <div className="sticky top-4">
+    <MiniLeaderboard code={code} />
+  </div>
+</div>
+  </div>
+</div>
+
 
       <Card className="border-2 border-amber-300 shadow-sm mt-6">
         <CardHeader>

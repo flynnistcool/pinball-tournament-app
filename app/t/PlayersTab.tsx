@@ -17,6 +17,7 @@ type Profile = {
   provisional_matches: number;
   color?: string | null;
   icon?: string | null;
+  total_tournament_points?: number;
 };
 
 type Draft = {
@@ -32,6 +33,7 @@ type EloPoint = {
   tournamentId: string | null;
   tournamentName: string;
   code: string;
+  category: string | null;   // ✅ NEU
   created_at: string | null;
   rating: number;
 };
@@ -223,6 +225,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
             provisional_matches: p.provisional_matches ?? 0,
             color: p.color ?? null,
             icon: p.icon ?? null,
+            total_tournament_points: p.total_tournament_points ?? 0,
           }))
         );
       }
@@ -324,6 +327,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
               tournamentId: null,
               tournamentName: "Start-Elo",
               code: "",
+              category: null, 
               created_at: first.created_at ?? null,
               rating: startRating,
             });
@@ -342,6 +346,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                 h.name ??
                 "(ohne Name)",
               code: h.code ?? "",
+              category: h.category ?? null,
               created_at: h.created_at ?? null,
               rating: h.rating_after,
             });
@@ -939,7 +944,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                     onChange={(e) =>
                       updateDraftField("new", "provisional", e.target.value)
                     }
-                    disabled={savingKey === "new"}
+                    disabled={savingKey === "new" || !isAdmin}
                   />
                   <div className="mt-1 text-[11px] text-neutral-500">
                     Wie viele Spiele als „Einstiegsphase“ zählen.
@@ -1291,11 +1296,14 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                     />
                     <div>
                       <div className="text-base font-medium flex items-center gap-2">
-                        {p.name}
-                        {p.icon && <span className="text-sm">{p.icon}</span>}
+                        {p.name} • <span className="text-sm text-amber-600">
+                          <span>
+                            {Number(p.total_tournament_points)} TP <span className="text-xs text-amber-600">(Turnierpunkte)</span>
+                          </span>
+                        </span>
                       </div>
                       <div className="text-[11px] text-neutral-500">
-                        ID: <span className="font-mono">{p.id}</span>
+                        {/*ID: <span className="font-mono">{p.id}</span>*/}
                       </div>
                     </div>
                   </div>
@@ -1303,10 +1311,10 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                     {/* Zeile 1: ELO */}
                     {typeof p.rating === "number" ? (
                       <div className="flex items-baseline gap-1">
-                        <span className="text-xs font-medium text-neutral-600">
+                        <span className="text-xs font-medium text-amber-600">
                           ELO
                         </span>
-                        <span className="text-lg font-bold tabular-nums text-neutral-900">
+                        <span className="text-lg font-bold tabular-nums text-amber-600">
                           {Math.round(p.rating)}
                         </span>
                       </div>
@@ -1375,7 +1383,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                       >
                         Statistiken
                       </button>
-                      {isAdmin && (
+                      {/*{isAdmin && ( */}
                       <button
                         type="button"
                         onClick={() =>
@@ -1392,7 +1400,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                       >
                         Profil bearbeiten
                       </button>
-                      )}
+                      {/*})}*/}
                     </div>
 
                     {/* Tab: EDIT */}
@@ -1413,7 +1421,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                                   e.target.value
                                 )
                               }
-                              disabled={savingKey === p.id}
+                              disabled={savingKey === p.id || !isAdmin}
                             />
                             <div className="mt-1 text-[11px] text-neutral-500">
                               Kann nur geändert werden, bevor das Profil erste
@@ -1434,7 +1442,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                                   e.target.value
                                 )
                               }
-                              disabled={savingKey === p.id}
+                              disabled={savingKey === p.id || !isAdmin}
                             />
                             <div className="mt-1 text-[11px] text-neutral-500">
                               0–50, wie viele Spiele als „Einstiegsphase“
@@ -1453,7 +1461,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                                   e.target.checked
                                 )
                               }
-                              disabled={savingKey === p.id}
+                              disabled={savingKey === p.id || !isAdmin}
                             />
                             <span>
                               Matches gespielt auf 0 zurücksetzen
@@ -1530,18 +1538,19 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                             </div>
                           </div>
                         </div>
-
+                     
                         {/* Aktionen: Löschen / Abbrechen / Speichern */}
                         <div className="mt-3 flex items-center justify-between gap-2">
                           <Button
                             size="sm"
                             variant="secondary"
                             className="text-red-600 border-red-200 hover:bg-red-50"
-                            disabled={savingKey === p.id}
+                            disabled={savingKey === p.id || !isAdmin}
                             onClick={() => deleteProfile(p.id, p.name)}
                           >
                             Löschen
                           </Button>
+                       
 
                           <div className="flex gap-2">
                             <Button
@@ -2108,103 +2117,85 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                                 <div className="mb-1 text-sm font-semibold text-neutral-700">
                                   Elo pro Turnier (inkl. +/− Veränderung)
                                 </div>
-                                <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                                  {withDelta.map((pt, idx) => {
-                                    const dateLabel = pt.created_at
-                                      ? new Date(
-                                          pt.created_at
-                                        ).toLocaleDateString("de-DE")
-                                      : "";
+<div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+  {withDelta
+    .slice()
+    .reverse()
+    .map((pt, idx) => {
+      const dateLabel = pt.created_at
+        ? new Date(pt.created_at).toLocaleDateString("de-DE")
+        : "";
 
-                                    const delta = pt.delta as number | null;
-                                    const hasDelta =
-                                      typeof delta === "number";
-                                    const deltaAbs = hasDelta
-                                      ? Math.abs(delta)
-                                      : 0;
-                                    const deltaAbsRounded =
-                                      Math.round(deltaAbs);
-                                    const deltaSign =
-                                      !hasDelta || delta === 0
-                                        ? "±"
-                                        : delta > 0
-                                        ? "+"
-                                        : "−";
-                                    const deltaClass =
-                                      !hasDelta || delta === 0
-                                        ? "text-neutral-500"
-                                        : delta > 0
-                                        ? "text-emerald-600"
-                                        : "text-red-600";
+      const delta = pt.delta as number | null;
+      const hasDelta = typeof delta === "number";
+      const deltaAbs = hasDelta ? Math.abs(delta) : 0;
+      const deltaAbsRounded = Math.round(deltaAbs);
+      const deltaSign =
+        !hasDelta || delta === 0 ? "±" : delta > 0 ? "+" : "−";
+      const deltaClass =
+        !hasDelta || delta === 0
+          ? "text-neutral-500"
+          : delta > 0
+          ? "text-emerald-600"
+          : "text-red-600";
 
-                                    const isStartRow = idx === 0;
-                                    const isBest =
-                                      !isStartRow &&
-                                      bestRow &&
-                                      pt.tournamentId ===
-                                        bestRow.tournamentId;
-                                    const isWorst =
-                                      !isStartRow &&
-                                      worstRow &&
-                                      pt.tournamentId ===
-                                        worstRow.tournamentId;
+      // ✅ Start-Elo nach reverse richtig erkennen
+      const isStartRow = pt.tournamentId == null;
 
-                                    return (
-                                      <div
-                                        key={`${pt.tournamentId ?? "start"}-${
-                                          pt.created_at ?? idx
-                                        }`}
-                                        className="flex items-center justify-between gap-2 rounded-lg bg-neutral-50 px-2 py-1.5"
-                                      >
-                                        <div className="min-w-0">
-                                          <div className="truncate text-sm font-medium flex items-center gap-2">
-                                            {isStartRow
-                                              ? "Start-Elo"
-                                              : pt.tournamentName}
-                                            {!isStartRow && isBest && (
-                                              <span className="rounded-full bg-emerald-100 px-2 py-[1px] text-[11px] font-semibold text-emerald-700">
-                                                Bestes Turnier
-                                              </span>
-                                            )}
-                                            {!isStartRow && isWorst && (
-                                              <span className="rounded-full bg-red-100 px-2 py-[1px] text-[11px] font-semibold text-red-700">
-                                                Größter Drop
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="text-[13px] text-neutral-500">
-                                            {isStartRow ? (
-                                              <>Startwert</>
-                                            ) : (
-                                              <>
-                                                Code: {pt.code}
-                                                {dateLabel
-                                                  ? ` • ${dateLabel}`
-                                                  : ""}
-                                              </>
-                                            )}
-                                          </div>
-                                        </div>
-                                        <div className="text-right">
-                                          <div className="text-sm font-semibold tabular-nums">
-                                            {Math.round(pt.rating)}
-                                          </div>
-                                          {!isStartRow && hasDelta && (
-                                            <div
-                                              className={
-                                                "text-[13px] tabular-nums " +
-                                                deltaClass
-                                              }
-                                            >
-                                              {deltaSign}
-                                              {deltaAbsRounded}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
+      const isBest =
+        !isStartRow && bestRow && pt.tournamentId === bestRow.tournamentId;
+      const isWorst =
+        !isStartRow && worstRow && pt.tournamentId === worstRow.tournamentId;
+
+      return (
+        <div
+          key={`${pt.tournamentId ?? "start"}-${pt.created_at ?? idx}`}
+          className="flex items-center justify-between gap-2 rounded-lg bg-neutral-50 px-2 py-1.5"
+        >
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium flex items-center gap-2">
+              {isStartRow ? "Start-Elo" : pt.tournamentName}
+              {!isStartRow && isBest && (
+                <span className="rounded-full bg-emerald-100 px-2 py-[1px] text-[11px] font-semibold text-emerald-700">
+                  Bestes Turnier
+                </span>
+              )}
+              {!isStartRow && isWorst && (
+                <span className="rounded-full bg-red-100 px-2 py-[1px] text-[11px] font-semibold text-red-700">
+                  Größter Drop
+                </span>
+              )}
+            </div>
+
+            <div className="text-[13px] text-neutral-500">
+              {isStartRow ? (
+                <>Startwert</>
+              ) : (
+                <>
+                  {/*Kategorie: */}
+                  {pt.category ?? "—"}
+                  {dateLabel ? ` • ${dateLabel}` : ""}
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-sm font-semibold tabular-nums">
+              {Math.round(pt.rating)}
+            </div>
+            {!isStartRow && hasDelta && (
+              <div className={"text-[13px] tabular-nums " + deltaClass}>
+                {deltaSign}
+                {deltaAbsRounded}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    })}
+</div>
+
                               </div>
                             </div>
                           )}
