@@ -56,10 +56,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
 
           {children}
-
+          {/*}
           <div className="mt-10 text-xs text-neutral-500">
             Tipp: Auf dem iPad in Safari → Teilen → „Zum Home-Bildschirm“, dann fühlt es sich wie eine App an.
           </div>
+          */}   
         </div>
       </body>
     </html>

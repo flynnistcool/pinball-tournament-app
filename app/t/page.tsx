@@ -3841,7 +3841,7 @@ if (joined)
 
                 <div
                   className="relative w-full overflow-hidden rounded-xl border bg-neutral-100"
-                  style={{ height: 280, minHeight: 280 }}
+                  style={{ height: 390, minHeight: 390 }}
                 >
                   <Image
                     src="/pinballturnier.png"
