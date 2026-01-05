@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 
@@ -13,6 +14,14 @@ type TournamentResultRow = {
   super_final_rank: number | null;
   avg_position: number | null;        // wird für Turnier-Ø nicht mehr benutzt
   tournament_points: number | null;   // 👈 aus der DB nehmen wir diesen Wert
+  tournaments?: {
+    id: string;
+    code: string | null;
+    category: string | null;
+    name: string | null;
+    status: string | null;
+    created_at: string | null;
+  };
 };
 
 export async function GET(req: Request) {
@@ -26,6 +35,8 @@ export async function GET(req: Request) {
   const search = (searchParams.get("search") || "").trim();
   const from = searchParams.get("from") || "";
   const to = searchParams.get("to") || "";
+  const topRaw = (searchParams.get("top") || "").trim();
+  const topN = topRaw ? Math.max(0, parseInt(topRaw, 10) || 0) : 0;
 
   // 1) Alle gespeicherten Turnier-Endergebnisse holen
   //    Nur für Turniere, die es noch gibt (inner join auf tournaments)
@@ -42,41 +53,39 @@ export async function GET(req: Request) {
       tournament_points,
       tournaments!inner(
         id,
+        code,
         category,
         name,
+        status,
         created_at
       )
     `
     );
 
+  // ✅ nur beendete Turniere berücksichtigen (stale/deleted vermeiden)
+  query = query.eq("tournaments.status", "finished");
+
   // 🔽 Filter auf Turnier-Tabelle anwenden
   if (category) {
     query = query.ilike("tournaments.category", `%${category}%`);
-    //query = query.eq("tournaments.category", category);
   }
 
   if (search) {
-    // sucht im Turniernamen (case-insensitive)
     query = query.ilike("tournaments.name", `%${search}%`);
   }
 
   if (from) {
-    // Von-Datum inkl. Tagesanfang
     query = query.gte("tournaments.created_at", `${from}T00:00:00`);
   }
 
   if (to) {
-    // Bis-Datum inkl. Tagesende
     query = query.lte("tournaments.created_at", `${to}T23:59:59`);
   }
 
   const { data: results, error } = await query;
 
   if (error) {
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   if (!results || results.length === 0) {
@@ -93,9 +102,7 @@ export async function GET(req: Request) {
   const rows = results as TournamentResultRow[];
 
   // 2) dazu passende Spieler + Profile holen (für Name/Avatar/Icon)
-  const playerIds = Array.from(
-    new Set(rows.map((r) => r.player_id).filter(Boolean))
-  );
+  const playerIds = Array.from(new Set(rows.map((r) => r.player_id).filter(Boolean)));
 
   let players: any[] = [];
   if (playerIds.length > 0) {
@@ -105,20 +112,13 @@ export async function GET(req: Request) {
       .in("id", playerIds);
 
     if (pErr) {
-      return NextResponse.json(
-        { error: pErr.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: pErr.message }, { status: 500 });
     }
     players = data ?? [];
   }
 
   const profileIds = Array.from(
-    new Set(
-      players
-        .map((p) => p.profile_id)
-        .filter((id: string | null) => !!id)
-    )
+    new Set(players.map((p) => p.profile_id).filter((id: string | null) => !!id))
   );
 
   let profiles: any[] = [];
@@ -129,10 +129,7 @@ export async function GET(req: Request) {
       .in("id", profileIds);
 
     if (profErr) {
-      return NextResponse.json(
-        { error: profErr.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: profErr.message }, { status: 500 });
     }
     profiles = data ?? [];
   }
@@ -161,13 +158,95 @@ export async function GET(req: Request) {
 
   const aggByKey: Record<string, AggRow> = {};
 
-  // 3) Aggregation pro Spieler (über alle Turniere)
-  for (const r of rows) {
+  // --- Top-N Auswahl (optional) ---
+  // Wenn topN > 0: pro Spieler nur die Top-N Turniere (nach tournament_points) zählen.
+  // Zusätzlich bauen wir eine Auswahl-Liste für die UI (Transparenz).
+  type TopSelection = {
+    profileId: string | null;
+    name: string;
+    avatar_url: string | null;
+    color: string | null;
+    icon: string | null;
+    totalInFilter: number;
+    selected: Array<{
+      tournament_id: string;
+      tournament_code: string | null;
+      tournament_name: string | null;
+      tournament_category: string | null;
+      created_at: string | null;
+      final_rank: number | null;
+      tournament_points: number;
+    }>;
+  };
+
+  let selection: TopSelection[] = [];
+
+  // Welche Zeilen werden wirklich aggregiert?
+  let rowsForAgg: TournamentResultRow[] = rows;
+
+  if (topN > 0) {
+    // 1) Key je Spieler (profileId oder name:...)
+    const grouped: Record<string, TournamentResultRow[]> = {};
+
+    for (const r of rows) {
+      const player = playersById[r.player_id];
+      const profileId: string | null = player?.profile_id ?? null;
+      const key = profileId ?? `name:${r.player_name ?? ""}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(r);
+    }
+
+    // 2) pro Spieler sortieren und Top-N nehmen
+    const picked: TournamentResultRow[] = [];
+    const selectionOut: TopSelection[] = [];
+
+    for (const [key, list] of Object.entries(grouped)) {
+      const anyRow = list[0];
+      const player = playersById[anyRow.player_id];
+      const profileId: string | null = player?.profile_id ?? null;
+      const profile = profileId ? profilesById[profileId] : null;
+
+      const sorted = [...list].sort((a, b) => {
+        const ap = a.tournament_points ?? 0;
+        const bp = b.tournament_points ?? 0;
+        if (bp !== ap) return bp - ap;
+        const ad = a.tournaments?.created_at ? Date.parse(a.tournaments.created_at) : 0;
+        const bd = b.tournaments?.created_at ? Date.parse(b.tournaments.created_at) : 0;
+        return bd - ad;
+      });
+
+      const top = sorted.slice(0, topN);
+      picked.push(...top);
+
+      selectionOut.push({
+        profileId,
+        name: profile?.name ?? anyRow.player_name ?? "Unbekannt",
+        avatar_url: profile?.avatar_url ?? null,
+        color: profile?.color ?? null,
+        icon: profile?.icon ?? null,
+        totalInFilter: list.length,
+        selected: top.map((r) => ({
+          tournament_id: r.tournament_id,
+          tournament_code: r.tournaments?.code ?? null,
+          tournament_name: r.tournaments?.name ?? null,
+          tournament_category: r.tournaments?.category ?? null,
+          created_at: r.tournaments?.created_at ?? null,
+          final_rank: r.final_rank ?? null,
+          tournament_points: r.tournament_points ?? 0,
+        })),
+      });
+    }
+
+    rowsForAgg = picked;
+    selection = selectionOut.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // 3) Aggregation pro Spieler
+  for (const r of rowsForAgg) {
     const player = playersById[r.player_id];
     const profileId: string | null = player?.profile_id ?? null;
     const profile = profileId ? profilesById[profileId] : null;
 
-    // Key: bevorzugt profileId, sonst „name:…“ (falls kein Profil)
     const key = profileId ?? `name:${r.player_name ?? ""}`;
 
     if (!aggByKey[key]) {
@@ -191,39 +270,25 @@ export async function GET(req: Request) {
 
     acc.tournamentsPlayed += 1;
 
-    // Turnier-Platzierungen (auf Basis final_rank)
     if (r.final_rank === 1) acc.firstPlaces += 1;
     else if (r.final_rank === 2) acc.secondPlaces += 1;
     else if (r.final_rank === 3) acc.thirdPlaces += 1;
 
-    // Super-Final-Sieg
-    if (r.super_final_rank === 1) {
-      acc.superFinalWins += 1;
-    }
+    if (r.super_final_rank === 1) acc.superFinalWins += 1;
 
-    // Ø-Platz über final_rank aufbauen
-    if (typeof r.final_rank === "number") {
-      acc.sumFinalRank += r.final_rank;
-    }
+    if (typeof r.final_rank === "number") acc.sumFinalRank += r.final_rank;
 
-    // 👉 fertige tournament_points aufsummieren
-    const tp = r.tournament_points ?? 0;
-    acc.points += tp;
+    acc.points += (r.tournament_points ?? 0);
   }
 
-  // 4) Ausgabe-Zeilen bauen
+  // 4) Output
   const out = Object.values(aggByKey)
     .map((acc) => {
       const avgPosition =
-        acc.tournamentsPlayed > 0
-          ? acc.sumFinalRank / acc.tournamentsPlayed
-          : null;
+        acc.tournamentsPlayed > 0 ? acc.sumFinalRank / acc.tournamentsPlayed : null;
 
-      // Winrate auf Turnier-Basis (1. Plätze / Turniere)
       const tournamentWinrate =
-        acc.tournamentsPlayed > 0
-          ? (acc.firstPlaces / acc.tournamentsPlayed) * 100
-          : 0;
+        acc.tournamentsPlayed > 0 ? (acc.firstPlaces / acc.tournamentsPlayed) * 100 : 0;
 
       return {
         profileId: acc.profileId,
@@ -238,13 +303,12 @@ export async function GET(req: Request) {
         superFinalWins: acc.superFinalWins,
         avgPosition,
         tournamentWinrate,
-        tournamentPoints: acc.points, // 👈 so heißt das Feld jetzt im Output
+        tournamentPoints: acc.points,
       };
     })
     .sort((a, b) => {
-      // Sortierung: zuerst nach Turnierpunkten, dann 1./2./3. Plätze usw.
       return (
-        (b.tournamentPoints ?? 0) - (a.tournamentPoints ?? 0) || // Punkte
+        (b.tournamentPoints ?? 0) - (a.tournamentPoints ?? 0) ||
         b.firstPlaces - a.firstPlaces ||
         b.secondPlaces - a.secondPlaces ||
         b.thirdPlaces - a.thirdPlaces ||
@@ -254,7 +318,7 @@ export async function GET(req: Request) {
     });
 
   return NextResponse.json(
-    { rows: out },
+    { rows: out, selection },
     {
       headers: {
         "Cache-Control": "no-store, max-age=0",

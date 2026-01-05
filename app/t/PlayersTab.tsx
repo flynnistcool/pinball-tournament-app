@@ -1,12 +1,23 @@
 // @ts-nocheck
 "use client";
+{/*
 type PlayersTabProps = {
   isAdmin: boolean;
-};
+}; */}
 
 import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input } from "@/components/ui";
 import { Sparkline } from "@/components/charts";
+import { joinTournamentByCode } from "@/lib/joinTournament";
+
+
+import { useRouter } from "next/navigation";
+
+type PlayersTabProps = {
+  isAdmin: boolean;
+  joined: any | null;
+  setJoined: (t: any) => void;
+};
 
 type Profile = {
   id: string;
@@ -36,6 +47,9 @@ type EloPoint = {
   category: string | null;   // ✅ NEU
   created_at: string | null;
   rating: number;
+  tournament_points?: number | null;
+  final_rank?: number | null;
+  super_final_rank?: number | null;
 };
 
 type Achievement = {
@@ -115,6 +129,8 @@ const COLOR_OPTIONS = [
   "#14b8a6", // teal
 ];
 
+
+
 function Avatar({
   url,
   name,
@@ -135,6 +151,8 @@ function Avatar({
 
   const bgColor = color || "#e5e7eb"; // default gray
   const emoji = icon && icon.trim() ? icon.trim() : null;
+
+ 
 
   return (
     <div
@@ -158,7 +176,8 @@ function Avatar({
   );
 }
 
-export default function PlayersTab({ isAdmin }: PlayersTabProps){
+export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabProps){
+  const router = useRouter();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -246,6 +265,25 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
     if (!s) return profiles;
     return profiles.filter((p) => (p.name ?? "").toLowerCase().includes(s));
   }, [profiles, q]);
+
+  
+  //const [busy, setBusy] = useState(false);
+  //const [msg, setMsg] = useState<string | null>(null);
+
+  // falls du setJoined aus props oder context bekommst:
+  // const { setJoined } = props;
+
+  async function openByCode(code: string) {
+    //setBusy(true);
+    //setMsg(null);
+
+    const r = await joinTournamentByCode(code);
+    //setBusy(false);
+
+    if (!r.ok) return //setMsg(r.error);
+
+    setJoined(r.tournament); // oder was auch immer bei dir den State setzt
+  }
 
   function ensureDraft(key: string, profile?: Profile): Draft {
     setDrafts((prev) => {
@@ -345,10 +383,14 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                 h.tournament_name ??
                 h.name ??
                 "(ohne Name)",
-              code: h.code ?? "",
+             
+              code: (h.code ?? h.tournament_code ?? h.tournamentCode ?? h.slug ?? "").toString(),
               category: h.category ?? null,
               created_at: h.created_at ?? null,
               rating: h.rating_after,
+              tournament_points: h.tournament_points ?? null,
+              final_rank: h.final_rank ?? null,
+              super_final_rank: h.super_final_rank ?? null,
             });
           }
         }
@@ -1276,6 +1318,29 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
 
             const currentDetailTab = detailTabs[p.id] ?? "stats";
 
+// 🆕 Vollständige Maschinenliste: nach Winrate absteigend sortiert (nur Anzeige)
+// Hinweis: winRate ist hier ein Wert von 0..1 (wird unten als % formatiert).
+// Null/undefined behandeln wir als 0, damit diese Einträge am Ende landen.
+const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
+  .sort((a, b) => {
+    const wa = typeof a.winRate === "number" ? a.winRate : 0;
+    const wb = typeof b.winRate === "number" ? b.winRate : 0;
+
+    // 1) Primär: Winrate absteigend
+    if (wb !== wa) return wb - wa;
+
+    // 2) Tie-Breaker: mehr Matches zuerst
+    const ma = a.matchesPlayed ?? 0;
+    const mb = b.matchesPlayed ?? 0;
+    if (mb !== ma) return mb - ma;
+
+    // 3) Tie-Breaker: bessere Ø-Platzierung zuerst (niedriger ist besser)
+    const apa = a.avgPosition ?? Number.POSITIVE_INFINITY;
+    const apb = b.avgPosition ?? Number.POSITIVE_INFINITY;
+    return apa - apb;
+  });
+
+
             return (
               <div
                 key={p.id}
@@ -1924,7 +1989,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                               {/* Vollständige Maschinenliste */}
                               <div className="pt-2 border-t border-neutral-100 mt-2"> {/*Scrollbar*/}
                                   <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                                    {machineStatsArray.map((m, idx) => {
+                                    {machineStatsSortedByWinrate.map((m, idx) => {
                                       const winRatePercent =
                                         m.winRate != null
                                           ? (Math.round(m.winRate * 1000) / 10)
@@ -2115,7 +2180,7 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                               {/* Liste pro Turnier */}
                               <div className="rounded-xl border bg-white p-3">
                                 <div className="mb-1 text-sm font-semibold text-neutral-700">
-                                  Elo pro Turnier (inkl. +/− Veränderung)
+                                  Turniererfolge <span className="text-neutral-500 text-xs ">(Turnierpunke, Turnierplatzierung, Super-Finale Platzierung, Elo)</span>
                                 </div>
 <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
   {withDelta
@@ -2150,10 +2215,27 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
       return (
         <div
           key={`${pt.tournamentId ?? "start"}-${pt.created_at ?? idx}`}
-          className="flex items-center justify-between gap-2 rounded-lg bg-neutral-50 px-2 py-1.5"
+          className="group relative flex items-center justify-between gap-2 rounded-lg bg-neutral-50 px-2 py-1.5"
         >
           <div className="min-w-0">
             <div className="truncate text-sm font-medium flex items-center gap-2">
+
+{!isStartRow && String(pt.code ?? "").trim() !== "" && (
+  <button
+    type="button"
+    title="Turnier öffnen"
+    className="opacity-60 hover:opacity-100 transition"
+    onClick={() => {
+      const c = String(pt.code ?? "").trim();
+      if (c) openByCode(c);
+    }}
+  
+
+  >
+    ⤴️
+  </button>
+)}
+
               {isStartRow ? "Start-Elo" : pt.tournamentName}
               {!isStartRow && isBest && (
                 <span className="rounded-full bg-emerald-100 px-2 py-[1px] text-[11px] font-semibold text-emerald-700">
@@ -2178,7 +2260,33 @@ export default function PlayersTab({ isAdmin }: PlayersTabProps){
                 </>
               )}
             </div>
+          {!isStartRow && (
+            <div className="mt-1 flex flex-wrap gap-2">
+              {pt.tournament_points != null && (
+                <span className="rounded-full bg-amber-50 px-2 py-[1px] text-[11px] font-semibold text-amber-900 border">
+                  + {' '}{pt.tournament_points} TP
+                </span>
+              )}
+
+              {pt.final_rank != null && (
+                <span className="rounded-full bg-blue-50 text-blue-900 px-2 py-[1px] text-[12px] font-semibold border">
+                  Platz {pt.final_rank}
+                </span>
+              )}
+
+              {pt.super_final_rank != null && (
+                <span className="rounded-full bg-blue-50 text-blue-900 px-2 py-[1px] text-[12px] font-semibold border">
+                  SF Platz {pt.super_final_rank}
+                </span>
+              )}
+            </div>
+          )}            
+
+
+            
           </div>
+
+
 
           <div className="text-right">
             <div className="text-sm font-semibold tabular-nums">

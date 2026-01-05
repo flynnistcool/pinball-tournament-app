@@ -1,5 +1,9 @@
+// @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function POST(req: Request) {
   try {
@@ -7,7 +11,10 @@ export async function POST(req: Request) {
     const profileId = String(body.profileId ?? "").trim();
 
     if (!profileId) {
-      return NextResponse.json({ error: "profileId fehlt" }, { status: 400 });
+      return NextResponse.json(
+        { error: "profileId fehlt" },
+        { status: 400, headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     const sb = supabaseAdmin();
@@ -23,7 +30,7 @@ export async function POST(req: Request) {
       console.error("elo-history profile error:", profileErr);
       return NextResponse.json(
         { error: "Profil nicht gefunden" },
-        { status: 404 }
+        { status: 404, headers: { "Cache-Control": "no-store" } }
       );
     }
 
@@ -38,7 +45,7 @@ export async function POST(req: Request) {
       console.error("elo-history tournament_ratings error:", rowsErr);
       return NextResponse.json(
         { error: "DB-Fehler beim Laden der Elo-Historie" },
-        { status: 500 }
+        { status: 500, headers: { "Cache-Control": "no-store" } }
       );
     }
 
@@ -46,7 +53,10 @@ export async function POST(req: Request) {
     if (!rows || rows.length === 0) {
       const startRating =
         typeof profile.rating === "number" ? profile.rating : null;
-      return NextResponse.json({ startRating, history: [] });
+      return NextResponse.json(
+        { startRating, history: [] },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     const sorted = rows; // ist bereits nach created_at sortiert
@@ -80,6 +90,48 @@ export async function POST(req: Request) {
       }
     }
 
+    // ✅ NEU: Turnier-Ergebnisse (TP / Platz / SF-Platz) pro Turnier laden
+    const resultsByTournamentId: Record<
+      string,
+      {
+        tournament_points: number | null;
+        final_rank: number | null;
+        super_final_rank: number | null;
+      }
+    > = {};
+
+
+// ✅ player_id(s) für dieses Profil holen (tournament_results nutzt player_id)
+const { data: playerRows, error: playerErr } = await sb
+  .from("players")
+  .select("id")
+  .eq("profile_id", profileId);
+
+if (playerErr) {
+  console.error("elo-history players error:", playerErr);
+}
+
+const playerIds = (playerRows ?? []).map((p: any) => p.id).filter(Boolean);
+
+    if (tournamentIds.length > 0) {
+const { data: rRows, error: rErr } = await sb
+  .from("tournament_results")
+  .select("tournament_id, tournament_points, final_rank, super_final_rank")
+  .in("player_id", playerIds)
+  .in("tournament_id", tournamentIds);
+
+
+      if (rErr) console.error("elo-history tournament_results error:", rErr);
+
+      for (const rr of rRows ?? []) {
+        resultsByTournamentId[rr.tournament_id] = {
+          tournament_points: rr.tournament_points ?? null,
+          final_rank: rr.final_rank ?? null,
+          super_final_rank: rr.super_final_rank ?? null,
+        };
+      }
+    }
+
     // 4️⃣ Elo NACH jedem Turnier ableiten:
     // nach Turnier i = rating_before von Turnier i+1,
     // beim letzten Turnier = aktuelles profile.rating
@@ -97,6 +149,9 @@ export async function POST(req: Request) {
 
       const t = tournamentsById[r.tournament_id] ?? null;
 
+      // ✅ NEU: Ergebnisdaten für dieses Turnier
+      const res = resultsByTournamentId[r.tournament_id] ?? null;
+
       return {
         tournamentId: r.tournament_id,
         rating_after: ratingAfter,
@@ -106,15 +161,23 @@ export async function POST(req: Request) {
         code: t?.code ?? "",
         category: t?.category ?? null, // ✅ NEU
         tournamentName: t?.name ?? "(ohne Name)",
+
+        // ✅ NEU: Werte für Badges im Frontend
+        tournament_points: res?.tournament_points ?? null,
+        final_rank: res?.final_rank ?? null,
+        super_final_rank: res?.super_final_rank ?? null,
       };
     });
 
-    return NextResponse.json({ startRating, history });
+    return NextResponse.json(
+      { startRating, history },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (err) {
     console.error("elo-history route crash:", err);
     return NextResponse.json(
       { error: "Unerwarteter Fehler in elo-history" },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
