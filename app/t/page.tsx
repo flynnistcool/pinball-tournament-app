@@ -4000,10 +4000,17 @@ return (
                                 {/* Rechte Seite: Match-ID / Speichern-Status */}
                                 <div className="text-xs text-neutral-500 whitespace-nowrap">
                                    {m.game_number ? (
-                                      <span className="text-green-500 whitespace-nowrap">
+                                      <span className="font-semibold text-neutral-500 whitespace-nowrap">
                                         Spiel {m.game_number} {/*   •  */}
                                       </span>
                                     ) : null}
+                                    <div className="text-xs text-neutral-500 whitespace-nowrap">
+                                   {m.game_number ? (
+                                      <span className="font-semibold text-white whitespace-nowrap">
+                                        Place
+                                      </span>
+                                    ) : null}
+                                </div>
                                 </div>
                               </div>
 
