@@ -3602,7 +3602,7 @@ function RoundMatchesCard({
   rounds,
   matches,
   matchPlayers,
-  machinesById,
+  machinesInfoById,
   playersById,
   onSaved,
   locked,
@@ -3611,13 +3611,30 @@ function RoundMatchesCard({
   rounds: any[];
   matches: Match[];
   matchPlayers: MP[];
-  machinesById: Record<string, string>;
+  machinesInfoById: Record<string, { name: string; emoji?: string | null }>;
   playersById: Record<string, PlayerVisual>;
   onSaved: () => void;
   locked: boolean;
 }) {
   const [openRoundId, setOpenRoundId] = useState<string | null>(null);
   const lastRoundCountRef = useRef<number>(0);
+
+  const machineUsageCounts = useMemo(() => {
+  const map: Record<string, number> = {};
+  for (const m of matches ?? []) {
+    if (!m.machine_id) continue;
+    map[m.machine_id] = (map[m.machine_id] ?? 0) + 1;
+  }
+  return map;
+}, [matches]);
+
+
+  // Transition-basiert (Variante A):
+// Nur dann automatisch einklappen, wenn wir *live* sehen,
+// dass eine Runde von "open" -> "finished" wechselt.
+// Dadurch klappt eine manuell wieder geöffnete Finished-Runde
+// bei späteren Refetches/Rendern nicht wieder von selbst zu.
+const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
 
   useEffect(() => {
     const count = rounds?.length ?? 0;
@@ -3638,6 +3655,34 @@ function RoundMatchesCard({
 
     lastRoundCountRef.current = count;
   }, [rounds]);
+
+  useEffect(() => {
+  const prev = prevRoundStatusRef.current;
+  const currentIds = new Set<string>();
+
+  for (const r of rounds ?? []) {
+    const id = r?.id;
+    if (!id) continue;
+    currentIds.add(id);
+
+    const prevStatus = prev[id];
+    const nextStatus = r?.status;
+
+    // Auto-einklappen nur beim echten Übergang open -> finished
+    if (prevStatus === "open" && nextStatus === "finished") {
+      if (openRoundId === id) setOpenRoundId(null);
+    }
+
+    prev[id] = nextStatus;
+  }
+
+  // Cleanup: entferne alte IDs, damit die Map nicht wächst,
+  // wenn Runden z.B. gewechselt/gelöscht werden.
+  for (const id of Object.keys(prev)) {
+    if (!currentIds.has(id)) delete prev[id];
+  }
+}, [rounds, openRoundId]);
+
 
   const [posOverride, setPosOverride] = useState<Record<string, number | null>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
@@ -3752,276 +3797,374 @@ async function handleChangeMachine(matchId: string, machineId: string | null) {
 
 
 
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">Runden & Matches</div>
-          <div className="text-sm text-neutral-500">
-            Zum Öffnen auf eine Runde klicken
-            {locked ? " • Turnier beendet (read-only)" : ""}
-          </div>
+return (
+  <Card>
+    <CardHeader>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-semibold">Runden & Matches</div>
+        <div className="text-sm text-neutral-500">
+          Zum Öffnen auf eine Runde klicken
+          {locked ? " • Turnier beendet (read-only)" : ""}
         </div>
-      </CardHeader>
-      <CardBody>
-        <div className="overflow-hidden rounded-2xl border bg-white">
-          <div className="grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-            <div className="col-span-2">#</div>
-            <div className="col-span-4">Format</div>
-            <div className="col-span-3">Status</div>
-            <div className="col-span-3 text-right">Spiele</div>
-          </div>
+      </div>
+    </CardHeader>
+    <CardBody>
+      <div className="overflow-hidden rounded-2xl border bg-white">
+        <div className="grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+          <div className="col-span-2">#</div>
+          <div className="col-span-4">Format</div>
+          <div className="col-span-3">Status</div>
+          <div className="col-span-3 text-right">Spiele</div>
+        </div>
 
-          {rounds
-            .slice()
-            .sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0))
-            .map((r: any) => {
-              const ms = matchesByRound[r.id] ?? [];
-              const isOpen = openRoundId === r.id;
+        {rounds
+          .slice()
+          .sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0))
+          .map((r: any) => {
+            const ms = matchesByRound[r.id] ?? [];
+            const isOpen = openRoundId === r.id;
 
-              return (
-                <div key={r.id} className="border-b last:border-b-0">
-                  <button
-                    className="w-full grid grid-cols-12 gap-2 px-4 py-3 items-center text-left hover:bg-neutral-50"
-                    onClick={() => setOpenRoundId(isOpen ? null : r.id)}
-                  >
-                    <div className="col-span-2 font-semibold tabular-nums">
-                      #{r.number}
+            return (
+              <div
+                key={r.id}
+                id={`round-${r.id}`}
+                data-open={isOpen ? "true" : "false"}
+                className="border-b last:border-b-0"
+              >
+                <button
+                  className="w-full grid grid-cols-12 gap-2 px-4 py-3 items-center text-left hover:bg-neutral-50"
+                  onClick={() => setOpenRoundId(isOpen ? null : r.id)}
+                >
+                  <div className="col-span-2 font-semibold tabular-nums">
+                    #{r.number}
+                  </div>
+                  <div className="col-span-4">{r.format}</div>
+                  <div className="col-span-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={
+                          "inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ring-1 ring-inset " +
+                          (r.status === "finished"
+                            ? "bg-green-50 text-green-700 ring-green-200"
+                            : r.status === "open"
+                            ? "bg-blue-50 text-blue-700 ring-blue-200"
+                            : "bg-neutral-100 text-neutral-600 ring-neutral-200")
+                        }
+                      >
+                        {r.status === "open" ? (
+                          <span className="relative flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-600" />
+                          </span>
+                        ) : (
+                          <span
+                            className={
+                              "h-2 w-2 rounded-full " +
+                              (r.status === "finished"
+                                ? "bg-green-500"
+                                : "bg-neutral-400")
+                            }
+                          />
+                        )}
+
+                        {r.status === "open"
+                          ? "Aktiv"
+                          : r.status === "finished"
+                          ? "Finished"
+                          : r.status ?? "—"}
+                      </span>
+
+                      <span className="text-xs text-neutral-500">
+                        Elo:{" "}
+                        {r.elo_enabled ? (
+                          <span className="text-emerald-600 font-semibold">
+                            aktiv
+                          </span>
+                        ) : (
+                          <span className="text-neutral-500">aus</span>
+                        )}
+                      </span>
                     </div>
-                    <div className="col-span-4">{r.format}</div>
-                    <div className="col-span-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={
-                            "inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ring-1 ring-inset " +
-                            (r.status === "finished"
-                              ? "bg-green-50 text-green-700 ring-green-200"
-                              : r.status === "open"
-                              ? "bg-blue-50 text-blue-700 ring-blue-200"
-                              : "bg-neutral-100 text-neutral-600 ring-neutral-200")
-                          }
-                        >
-                          {r.status === "open" ? (
-                            <span className="relative flex h-2 w-2">
-                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-                              <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-600" />
-                            </span>
-                          ) : (
-                            <span
-                              className={
-                                "h-2 w-2 rounded-full " +
-                                (r.status === "finished"
-                                  ? "bg-green-500"
-                                  : "bg-neutral-400")
-                              }
-                            />
-                          )}
+                  </div>
+                  <div className="col-span-3 text-right tabular-nums">
+                    {ms.length}
+                  </div>
+                </button>
 
-                          {r.status === "open"
-                            ? "Aktiv"
-                            : r.status === "finished"
-                            ? "Finished"
-                            : r.status ?? "—"}
-                        </span>
-
-                        <span className="text-xs text-neutral-500">
-                          Elo:{" "}
-                          {r.elo_enabled ? (
-                            <span className="text-emerald-600 font-semibold">
-                              aktiv
-                            </span>
-                          ) : (
-                            <span className="text-neutral-500">aus</span>
-                          )}
-                        </span>
+                {/* ✅ NEU: animiertes Auf/Zu statt {isOpen && ...} */}
+                <div
+                  className={
+                    "overflow-hidden transition-all ease-in-out " +
+                    (isOpen
+                      ? "max-h-[5000px] opacity-100 duration-300"
+                      : "max-h-0 opacity-0 duration-700") //Animation 300 500 700
+                  }
+                  aria-hidden={!isOpen}
+                >
+                  <div className="border-t bg-neutral-100 px-4 py-4">
+                    {ms.length === 0 ? (
+                      <div className="text-sm text-neutral-500">
+                        Noch keine Matches in dieser Runde.
                       </div>
-                    </div>
-                    <div className="col-span-3 text-right tabular-nums">
-                      {ms.length}
-                    </div>
-                  </button>
+                    ) : (
+                      <div className="space-y-3">
+                        {ms.map((m) => {
+                          const mps = (mpByMatch[m.id] ?? []).slice();
 
-                  {isOpen && (
-                    <div className="border-t bg-neutral-100 px-4 py-4">
-                      {ms.length === 0 ? (
-                        <div className="text-sm text-neutral-500">
-                          Noch keine Matches in dieser Runde.
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-{ms.map((m) => {
-  const mps = (mpByMatch[m.id] ?? []).slice();
+                          mps.sort((a, b) => {
+                            const sa = (a.start_position ?? 999) as number;
+                            const sb = (b.start_position ?? 999) as number;
+                            if (sa !== sb) return sa - sb;
+                            const an = playersById[a.player_id]?.name ?? "";
+                            const bn = playersById[b.player_id]?.name ?? "";
+                            return an.localeCompare(bn);
+                          });
 
-  mps.sort((a, b) => {
-    const sa = (a.start_position ?? 999) as number;
-    const sb = (b.start_position ?? 999) as number;
-    if (sa !== sb) return sa - sb;
-    const an = playersById[a.player_id]?.name ?? "";
-    const bn = playersById[b.player_id]?.name ?? "";
-    return an.localeCompare(bn);
-  });
+                          const n = Math.max(2, mps.length || 4);
 
-  const n = Math.max(2, mps.length || 4);
+                          // WICHTIG: hier merken, ob schon Ergebnisse gesetzt sind
+                          {/*const hasResults = mps.some((mp) => mp.position != null);*/}
+                          const hasResults = mps.some((mp) => getPos(mp) != null);
 
-  // WICHTIG: hier merken, ob schon Ergebnisse gesetzt sind
-  {/*const hasResults = mps.some((mp) => mp.position != null);*/}
-  const hasResults = mps.some((mp) => getPos(mp) != null);
+                          return (
+                            <div
+                              key={m.id}
+                              className="rounded-2xl border bg-white"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+                                {/* Linke Seite: Maschine + Spiel + Hinweis */}
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-3">
 
 
+                                    {/* 🎰 Maschinen-Icon */}
+                                    {m.machine_id ? (
+                                      <MachineIcon
+                                        name={machinesInfoById[m.machine_id]?.name ?? "Maschine"}
+                                        emoji={machinesInfoById[m.machine_id]?.emoji ?? null}
+                                      />
+                                    ) : (
+                                      <MachineIcon name={"Maschine"} emoji={null} />
+                                    )}
+                                    {/* Maschinen-Dropdown */}
+                                    <Select
+                                      value={m.machine_id ?? ""}
+                                      className="min-w-[230px] max-w-[260px] text-sm"
+                                      disabled={
+                                        locked || hasResults || savingMachine[m.id]
+                                      }
+                                      onChange={(e) =>
+                                        handleChangeMachine(
+                                          m.id,
+                                          e.target.value === ""
+                                            ? null
+                                            : e.target.value
+                                        )
+                                      }
+                                    >
+                                      <option value="">Maschine wählen…</option>
+                                      {Object.entries(machinesInfoById).map(([id, info]) => (
+                                        <option key={id} value={id}>
+                                          {info.name}
+                                        </option>
+                                      ))}
+                                    </Select>
 
-                            return (
-                              <div
-                                key={m.id}
-                                className="rounded-2xl border bg-white"
-                              >
-
-
-
-<div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
-  {/* Linke Seite: Maschine + Spiel + Hinweis */}
-  <div className="flex flex-col gap-1">
-    <div className="flex items-center gap-3">
-      {/* Maschinen-Dropdown */}
-      <Select
-        value={m.machine_id ?? ""}
-        className="min-w-[230px] max-w-[260px] text-sm"
-        disabled={locked || hasResults || savingMachine[m.id]}
-        onChange={(e) =>
-          handleChangeMachine(
-            m.id,
-            e.target.value === "" ? null : e.target.value
-          )
-        }
-      >
-        <option value="">Maschine wählen…</option>
-        {Object.entries(machinesById).map(([id, name]) => (
-          <option key={id} value={id}>
-            {name}
-          </option>
-        ))}
-      </Select>
-
-      {m.game_number ? (
-        <span className="text-neutral-500 whitespace-nowrap">
-          • Spiel {m.game_number}
-        </span>
-      ) : null}
-    </div>
-
-    {/* Hinweistext unter dem Dropdown */}
-    <div className="text-xs font-normal text-neutral-500">
-      {locked
-        ? "Turnier ist beendet – Maschine kann nicht mehr geändert werden."
-        : hasResults
-        ? "Ergebnisse gesetzt – Maschine kann nicht mehr geändert werden."
-        : "Solange noch keine Ergebnisse gesetzt sind, kann die Maschine geändert werden."}
-    </div>
-  </div>
-
-  {/* Rechte Seite: Match-ID / Speichern-Status */}
-  <div className="text-xs text-neutral-500">
-    {savingMachine[m.id] ? "speichere…" : <>Match {m.id.slice(0, 8)}…</>}
-  </div>
-</div>
+                                <div className="text-xs text-neutral-500 whitespace-nowrap">
+                                  {savingMachine[m.id] ? (
+                                    "speichere…"
+                                  ) : m.machine_id ? (
+                                    <>
+                                      {machineUsageCounts[m.machine_id] ?? 0} x im Turnier verwendet
+                                    </>
+                                  ) : (
+                                    <>0 x im Turnier verwendet</>
+                                  )}
+                                </div>
 
 
 
 
-                                <div className="p-4 space-y-2">
-                                  {mps.map((mp) => {
-                                    const pos = getPos(mp);
-                                    const isWinner = pos === 1;
-                                    const isSaving =
-                                      saving[
-                                        k(mp.match_id, mp.player_id)
-                                      ] === true;
+                                  </div>
 
-                                    return (
-                                      <div
-                                        key={k(mp.match_id, mp.player_id)}
-                                        className={
-                                          "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 " +
-                                          (isWinner
-                                            ? "bg-amber-200 border-amber-300"
-                                            : "bg-white")
-                                        }
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <PlayerPill
-                                            player={
-                                              playersById[mp.player_id] ?? {
-                                                name: "Unbekannt",
-                                              }
-                                            }
-                                          />
-                                        {pos ? (
-                                            <Pill>#{pos}</Pill>
-                                          ) : (
-                                            <Pill>—</Pill>
-                                          )}
-                                          {isWinner ? (
-                                            <Pill>🏆 Sieger</Pill>
-                                          ) : null}
-                                          {isSaving ? (
-                                            <span className="text-xs text-neutral-500">
-                                              speichere…
-                                            </span>
-                                          ) : null}
-                                        </div>
+                                  {/* Hinweistext unter dem Dropdown */}
+                                  <div className="text-xs font-normal text-neutral-500">
+                                    {locked
+                                      ? "Turnier ist beendet – Maschine kann nicht mehr geändert werden."
+                                      : hasResults
+                                      ? "Ergebnisse gesetzt – Maschine kann nicht mehr geändert werden."
+                                      : "Solange noch keine Ergebnisse gesetzt sind, kann die Maschine geändert werden."}
+                                  </div>
+                                </div>
 
-                                        <div className="w-44">
-                                          <Select
-                                            value={pos ?? ""}
-                                            disabled={locked}
-                                            onChange={(e) => {
-                                              if (locked) return;
-                                              const v = e.target.value;
-                                              setPosition(
-                                                m.id,
-                                                mp.player_id,
-                                                v === ""
-                                                  ? null
-                                                  : Number(v)
-                                              );
-                                            }}
-                                          >
-                                            <option value="">
-                                              Platz — 
-                                            </option>
-                                            {Array.from(
-                                              { length: n },
-                                              (_, i) => i + 1
-                                            ).map((p) => (
-                                              <option key={p} value={p}>
-                                                Platz {p}
-                                              </option>
-                                            ))}
-                                          </Select>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
+                                {/* Rechte Seite: Match-ID / Speichern-Status */}
+                                <div className="text-xs text-neutral-500 whitespace-nowrap">
+                                   {m.game_number ? (
+                                      <span className="text-green-500 whitespace-nowrap">
+                                        Spiel {m.game_number} {/*   •  */}
+                                      </span>
+                                    ) : null}
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
 
-          {rounds.length === 0 && (
-            <div className="px-4 py-4 text-sm text-neutral-500">
-              Noch keine Runden.
-            </div>
-          )}
-        </div>
-      </CardBody>
-    </Card>
-  );
+                              <div className="p-4 space-y-2">
+                                {mps.map((mp) => {
+                                  const pos = getPos(mp);
+
+                                  // ✅ Welche Plätze sind in diesem Match schon vergeben – und von wem?
+                                  const takenBy = new Map<number, string>();
+
+                                  for (const other of mps) {
+                                    if (other.player_id === mp.player_id) continue;
+                                    const op = getPos(other);
+
+                                    if (typeof op === "number" && op > 0) {
+                                      const otherName = playersById[other.player_id]?.name ?? "jemand";
+                                      takenBy.set(op, otherName);
+                                    }
+                                  }
+
+
+                                  const isWinner = pos === 1;
+                                  const isSaving =
+                                    saving[k(mp.match_id, mp.player_id)] === true;
+
+                                  return (
+                                    <div
+                                      key={k(mp.match_id, mp.player_id)}
+                                      className={
+                                        "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 " +
+                                        (isWinner
+                                          ? "bg-amber-200 border-amber-300"
+                                          : "bg-white")
+                                      }
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <PlayerPill
+                                          player={
+                                            playersById[mp.player_id] ?? {
+                                              name: "Unbekannt",
+                                            }
+                                          }
+                                        />
+                                        {pos ? <Pill>#{pos}</Pill> : <Pill>—</Pill>}
+                                        {isWinner ? <Pill>🏆 Sieger</Pill> : null}
+                                        {isSaving ? (
+                                          <span className="text-xs text-neutral-500">
+                                            speichere…
+                                          </span>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="w-44">
+                                        <Select
+                                          value={pos ?? ""}
+                                          disabled={locked}
+                                          onChange={async (e) => {
+                                            if (locked) return;
+
+                                            const v = e.target.value;
+                                            const next = v === "" ? null : Number(v);
+
+                                            const currentPos =
+                                              typeof pos === "number" && pos > 0 ? pos : null;
+
+                                            // =========================
+                                            // 🥇 1vs1: Auto-Complete
+                                            // =========================
+                                            if (mps.length === 2) {
+                                              const other = mps.find((x) => x.player_id !== mp.player_id);
+                                              if (!other) return;
+
+                                              // Reset: Platz — -> beide —
+                                              if (next == null) {
+                                                await setPosition(m.id, mp.player_id, null);
+                                                await setPosition(m.id, other.player_id, null);
+                                                return;
+                                              }
+
+                                              // 1 oder 2 gesetzt -> anderer bekommt automatisch den Gegenplatz
+                                              const otherNext = next === 1 ? 2 : 1;
+
+                                              await setPosition(m.id, mp.player_id, next);
+
+                                              const otherPos = getPos(other);
+                                              if (otherPos !== otherNext) {
+                                                await setPosition(m.id, other.player_id, otherNext);
+                                              }
+
+                                              return;
+                                            }
+
+                                            // =========================
+                                            // 🧩 3–4 Spieler: 1:1 Swap
+                                            // =========================
+
+                                            // Platz — -> freimachen
+                                            if (next == null) {
+                                              await setPosition(m.id, mp.player_id, null);
+                                              return;
+                                            }
+
+                                            // Wer hält diesen Platz?
+                                            const otherMp = mps.find(
+                                              (x) => x.player_id !== mp.player_id && getPos(x) === next
+                                            );
+
+                                            // Platz frei -> normal setzen
+                                            if (!otherMp) {
+                                              await setPosition(m.id, mp.player_id, next);
+                                              return;
+                                            }
+
+                                            // 1:1 SWAP (nur 2 Spieler betroffen)
+                                            if (currentPos === next) return;
+
+                                            await setPosition(m.id, otherMp.player_id, currentPos);
+                                            await setPosition(m.id, mp.player_id, next);
+                                          }}
+
+                                        >
+                                          <option value="">Platz —</option>
+
+                                          {Array.from({ length: n }, (_, i) => i + 1).map((p) => {
+                                            const holder = takenBy.get(p);
+
+                                            return (
+                                              <option key={p} value={p}>
+                                                {holder
+                                                  ? `⛔ Platz ${p} (belegt durch ${holder})`
+                                                  : `✅ Platz ${p}`}
+                                              </option>
+                                            );
+                                          })}
+                                        </Select>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+        {rounds.length === 0 && (
+          <div className="px-4 py-4 text-sm text-neutral-500">
+            Noch keine Runden.
+          </div>
+        )}
+      </div>
+    </CardBody>
+  </Card>
+);
+
 }
 
 export default function AdminHome() {
@@ -4657,6 +4800,143 @@ function Dashboard({ code, name, isAdmin }: { code: string; name: string; isAdmi
   const [machineName, setMachineName] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  const tournamentLeaderboardRef = useRef<HTMLDivElement | null>(null);
+
+  function scrollToTournamentLeaderboard() {
+  const el = tournamentLeaderboardRef.current;
+  if (!el) return;
+
+  const SAFE_TOP_OFFSET = 0; //für das Leaderboard Scrollen
+
+  const scrollParent = getScrollParent(el);
+  if (scrollParent) {
+    const parentRect = scrollParent.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const y = (elRect.top - parentRect.top) + scrollParent.scrollTop;
+
+    scrollParent.scrollTo({
+      top: Math.max(0, y - SAFE_TOP_OFFSET),
+      behavior: "smooth",
+    });
+    return;
+  }
+
+  const y = el.getBoundingClientRect().top + window.scrollY;
+  window.scrollTo({
+    top: Math.max(0, y - SAFE_TOP_OFFSET),
+    behavior: "smooth",
+  });
+}
+
+
+
+  // ✅ Scroll-Anker für "Runden & Matches".
+// Hintergrund: Es gibt (mindestens) zwei "Runde erzeugen"-Buttons. Egal welcher
+// gedrückt wird, sollen wir nach dem Erzeugen der Runde automatisch zur Match-Liste scrollen.
+//
+// Wichtig: Wir scrollen NICHT sofort im onClick, sondern erst NACH reloadAll(),
+// damit die neuen Matches schon gerendert sind.
+const matchesSectionRef = useRef<HTMLDivElement | null>(null);
+const [scrollToMatchesNext, setScrollToMatchesNext] = useState(false);
+
+function scrollToMatchesSection() {
+  const el = matchesSectionRef.current;
+  if (!el) return;
+
+  const SAFE_TOP_OFFSET = 0; // kannst du weiter tunen // wird nicht verwendet
+
+  const scrollParent = getScrollParent(el);
+  if (scrollParent) {
+    const parentRect = scrollParent.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+
+    // Position des Elements relativ zum Scroll-Container:
+    const y = (elRect.top - parentRect.top) + scrollParent.scrollTop;
+
+    scrollParent.scrollTo({
+      top: Math.max(0, y - SAFE_TOP_OFFSET),
+      behavior: "smooth",
+    });
+    return;
+  }
+
+  // Fallback: Window scroll
+  const y = el.getBoundingClientRect().top + window.scrollY;
+  window.scrollTo({
+    top: Math.max(0, y - SAFE_TOP_OFFSET),
+    behavior: "smooth",
+  });
+}
+
+const [scrollTargetRoundId, setScrollTargetRoundId] = useState<string | null>(null);
+
+
+function scrollToRound(roundId: string) {
+  const el = document.getElementById(`round-${roundId}`);
+  if (!el) return;
+
+  const SAFE_TOP_OFFSET = 0; // bewusst etwas größer, damit der Runden-Header sichtbar bleibt // Runden Scroll
+
+  const scrollParent = getScrollParent(el);
+
+  // 🔹 Scroll innerhalb eines Containers (falls vorhanden)
+  if (scrollParent) {
+    const parentRect = scrollParent.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+
+    const y =
+      (elRect.top - parentRect.top) + scrollParent.scrollTop;
+
+    scrollParent.scrollTo({
+      top: Math.max(0, y - SAFE_TOP_OFFSET),
+      behavior: "smooth",
+    });
+    return;
+  }
+
+  // 🔹 Fallback: Window scroll
+  const y = el.getBoundingClientRect().top + window.scrollY;
+  window.scrollTo({
+    top: Math.max(0, y - SAFE_TOP_OFFSET),
+    behavior: "smooth",
+  });
+}
+
+function getActiveRoundId(): string | null {
+  if (!rounds || rounds.length === 0) return null;
+
+  // "aktive Runde" = status === "open" (bei dir steht in der UI "Aktiv")
+  const active = rounds.find((r: any) => r.status === "open");
+  if (active?.id) return active.id;
+
+  // Fallback: neueste Runde nach Nummer
+  const sorted = rounds.slice().sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0));
+  return sorted[sorted.length - 1]?.id ?? null;
+}
+
+function jumpToActiveRound() {
+  const id = getActiveRoundId();
+  if (!id) return;
+  scrollToRound(id);
+}
+
+
+function getScrollParent(el: HTMLElement | null): HTMLElement | null {
+  if (!el) return null;
+
+  let p: HTMLElement | null = el.parentElement;
+  while (p) {
+    const style = window.getComputedStyle(p);
+    const overflowY = style.overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") return p;
+    p = p.parentElement;
+  }
+  return null;
+}
+
+
+
   const [shareOpen, setShareOpen] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
 
@@ -4811,6 +5091,40 @@ async function handleToggleSuperfinalElo() {
     setSuperfinalEloEnabled(!next);
     alert("Konnte die Elo-Einstellung für das Super-Finale nicht speichern.");
   }
+}
+
+
+async function waitForRoundDom(roundId: string, { mustBeOpen }: { mustBeOpen: boolean }) {
+  const selector = `#round-${roundId}`;
+  const timeoutMs = 12000; // reicht locker, aber nicht unendlich Zeit bis gescrollt wird overlay Runde wird erstellt
+  const start = performance.now();
+
+  return new Promise<void>((resolve) => {
+    const tick = () => {
+      const el = document.querySelector(selector) as HTMLElement | null;
+
+      // Element existiert + hat Layout (>= 1px Höhe)
+      const exists = !!el && el.getBoundingClientRect().height > 0;
+
+      // optional: muss geöffnet sein
+      const openOk = !mustBeOpen || el?.dataset.open === "true";
+
+      if (exists && openOk) {
+        resolve();
+        return;
+      }
+
+      if (performance.now() - start > timeoutMs) {
+        // Timeout: wir geben trotzdem frei (sonst hängt es)
+        resolve();
+        return;
+      }
+
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  });
 }
 
 
@@ -4972,6 +5286,37 @@ async function registerFinalWin(playerId: string, winnerName: string) {
     loadTournamentStartRatings();
   }, [data?.tournament?.id]);
 
+useEffect(() => {
+  if (!scrollToMatchesNext) return;
+  if (!data) return;
+  if (!rounds || rounds.length === 0) return;
+
+  const run = async () => {
+    // 1) Zielrunde bestimmen: aktive, sonst neueste
+    const active = rounds.find((r: any) => r.status === "open");
+    const sorted = rounds.slice().sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0));
+    const newest = sorted[sorted.length - 1];
+    const targetId = (active?.id ?? newest?.id) as string | undefined;
+    if (!targetId) {
+      setScrollToMatchesNext(false);
+      return;
+    }
+
+    // 2) Runde öffnen, damit Header+Matches wirklich gerendert sind
+    //setOpenRoundId(targetId);
+
+    // 3) Warten bis DOM da ist (und geöffnet ist)
+    await waitForRoundDom(targetId, { mustBeOpen: true });
+
+    // 4) Jetzt scrollen
+    scrollToRound(targetId);
+    setTimeout(() => scrollToRound(targetId), 200);
+
+    setScrollToMatchesNext(false);
+  };
+
+  run();
+}, [scrollToMatchesNext, data, rounds.length, matches.length]);
 
 
 
@@ -5113,6 +5458,12 @@ async function registerFinalWin(playerId: string, winnerName: string) {
   async function reloadAll() {
     await Promise.all([reload(), loadProfiles(), reloadFinal()]);
   }
+
+
+
+
+
+
 
   async function addPlayerByName() {
     if (locked) return;
@@ -5264,6 +5615,10 @@ async function registerFinalWin(playerId: string, winnerName: string) {
     return mps.some((x: any) => x.position == null);
   }, [currentRoundMatches, matchPlayers]);
 
+  const hasActiveRound = useMemo(() => {
+  return (rounds ?? []).some((r: any) => r.status === "open");
+}, [rounds]);
+
   async function createRound() {
     if (locked) return;
 
@@ -5273,6 +5628,15 @@ async function registerFinalWin(playerId: string, winnerName: string) {
       );
       return;
     }
+
+    // Nur per Button eine neue Runde starten – und nur wenn aktuell keine Runde mehr aktiv ist.
+    if (hasActiveRound) {
+      setNotice(
+        "Es läuft noch eine aktive Runde. Bitte erst alle Runden auf Finished bringen, dann eine neue Runde erzeugen."
+      );
+      return;
+    }
+
     setBusy(true);
     setNotice(null);
 
@@ -5290,7 +5654,15 @@ async function registerFinalWin(playerId: string, winnerName: string) {
     setBusy(false);
     if (!res.ok) return setNotice(j.error ?? "Fehler");
     if (j.warnings?.length) setNotice(j.warnings.join(" "));
+
+      // ✅ Nach dem Erzeugen wollen wir direkt zu den Matches springen.
+    // Wir setzen nur ein Flag; das tatsächliche Scrollen passiert in einem useEffect
+    // NACH reloadAll(), wenn die neuen Runden/Matches schon im DOM sind.
     await reloadAll();
+    setScrollToMatchesNext(true);
+  
+
+    
   }
 
   const cat = data?.tournament?.category ?? "";
@@ -5316,13 +5688,17 @@ async function registerFinalWin(playerId: string, winnerName: string) {
     [profiles]
   );
 
-  const machinesById = useMemo(
-    () =>
-      Object.fromEntries(
-        (data?.machines ?? []).map((m: any) => [m.id, m.name])
-      ),
-    [data?.machines]
-  );
+
+const machinesInfoById = useMemo(
+  () =>
+    Object.fromEntries(
+      (data?.machines ?? []).map((m: any) => [
+        m.id,
+        { name: m.name, emoji: m.icon_emoji ?? null },
+      ])
+    ),
+  [data?.machines]
+);
 
   const playersById = useMemo(
     () =>
@@ -5517,7 +5893,8 @@ async function registerFinalWin(playerId: string, winnerName: string) {
 
                 {/* Stats + Final-Ranking */}
                 <div className="relative z-10 mt-6 space-y-6">
-                  <Stats code={code} tournamentName={tournamentName} />
+                
+                <Stats code={code} tournamentName={tournamentName} />
 
                   {finalState?.exists &&
                     finalState.status === "finished" &&
@@ -5969,7 +6346,7 @@ async function registerFinalWin(playerId: string, winnerName: string) {
       <Button
         className="px-6 py-3 font-semibold"
         onClick={createRound}
-        disabled={busy || hasOpenPositions || locked || superFinalRunning}
+        disabled={busy || hasOpenPositions || locked || superFinalRunning || hasActiveRound}
         title={
           locked
             ? "Turnier ist beendet"
@@ -6038,18 +6415,19 @@ async function registerFinalWin(playerId: string, winnerName: string) {
         locked={locked}
         eloDeltas={eloDeltas} 
       />
-
+      <div ref={tournamentLeaderboardRef} />
       <Stats code={code} tournamentName={tournamentName} />
 
 <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] items-stretch">
   {/* 🔹 LINKE SEITE */}
   <div className="lg:flex-[3] min-w-0">
+    <div ref={matchesSectionRef} />
     <RoundMatchesCard
       code={code}
       rounds={rounds}
       matches={matches}
       matchPlayers={matchPlayers}
-      machinesById={machinesById}
+      machinesInfoById={machinesInfoById}
       playersById={playersById}
       onSaved={reloadAll}
       locked={locked}
@@ -6234,13 +6612,13 @@ async function registerFinalWin(playerId: string, winnerName: string) {
         </CardBody>
       </Card>
 
-      <div className="sticky bottom-0 left-0 right-0 bg-[rgb(250,250,250)] p-4 flex z-20">
+      <div className="sticky bottom-0 left-0 right-0 bg-[rgb(250,250,250)] p-4 flex gap-2 z-20">
         <Button
           disabled={
-            busy || hasOpenPositions || locked || superFinalRunning
+            busy || hasOpenPositions || locked || superFinalRunning || hasActiveRound
           }
           onClick={createRound}
-          className="w-full"
+          className="flex-1"
           title={
             locked
               ? "Turnier ist beendet"
@@ -6251,6 +6629,40 @@ async function registerFinalWin(playerId: string, winnerName: string) {
         >
           Runde erzeugen + Spieler den Maschinen zuweisen
         </Button>
+
+<div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-700">
+  <span className="text-sm text-gray-400">ELO</span>
+
+  <button
+    type="button"
+    disabled={busy || locked}
+    onClick={() => setUseElo((prev) => !prev)}
+    className={`text-sm font-medium ${
+      useElo ? "text-green-400" : "text-gray-500"
+    }`}
+  >
+    {useElo ? "✓ an" : "aus"}
+  </button>
+</div>
+
+  <Button
+    variant="secondary"
+    onClick={jumpToActiveRound}
+    disabled={!rounds || rounds.length === 0}
+    className="whitespace-nowrap"
+    title="Zur aktiven Runde springen"
+  >
+    ⬇️ Runde
+  </Button>
+
+  <Button
+    variant="secondary"
+    onClick={scrollToTournamentLeaderboard}
+    className="whitespace-nowrap"
+    title="Zum Turnier-Leaderboard springen"
+  >
+    🏆 Leaderboard
+  </Button>
       </div>
     </div>
   );
