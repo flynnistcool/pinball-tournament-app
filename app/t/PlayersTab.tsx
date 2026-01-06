@@ -759,6 +759,7 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
             const numTournaments =
               history.length > 0 ? Math.max(0, history.length - 1) : 0;
             const matches = profile.matches_played ?? 0;
+            const tournamentPoints = Number((profile as any).total_tournament_points ?? 0);
             const currentElo =
               typeof profile.rating === "number" ? profile.rating : null;
 
@@ -788,6 +789,7 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
             return {
               numTournaments,
               matches,
+              tournamentPoints, 
               currentElo,
               trendDelta,
               trendLabel,
@@ -838,9 +840,11 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
                             {idx === 0 ? "Spieler A:" : "Spieler B:"} {p.name}
                             {p.icon && <span>{p.icon}</span>}
                           </div>
+                          {/*
                           <div className="text-[11px] text-neutral-500">
                             ID: <span className="font-mono">{p.id}</span>
                           </div>
+                          */}
                         </div>
                       </div>
 
@@ -869,7 +873,17 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
                           </span>{" "}
                           <span className="text-neutral-500">Matches</span>
                         </span>
+                  
+                        <span className="flex items-baseline gap-1">
+                          
+                          <span className="font-semibold tabular-nums text-amber-600">
+                            {Number.isFinite(s.tournamentPoints) ? Math.round(s.tournamentPoints) : 0}
+                          </span>{" "}
+                          <span className="text-amber-600 font-semibold">TP</span>{/*<span className="text-amber-600 font-semibold">(Turnierpunkte)</span>*/}
+                        </span>
                       </div>
+
+
 
                       <div className="flex items-center justify-between mt-1.5">
                         <span

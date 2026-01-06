@@ -5670,13 +5670,14 @@ async function registerFinalWin(playerId: string, winnerName: string) {
   <Pill>✅ Turnier beendet</Pill>
 )}
 
-              <Button
-                variant="secondary"
-                onClick={() => setShareOpen(true)}
-              >
-                QR teilen
-              </Button>
-
+              {/*
+                <Button
+                  variant="secondary"
+                  onClick={() => setShareOpen(true)}
+                >
+                  QR teilen
+                </Button>
+              */}
 
 
 {/*}
