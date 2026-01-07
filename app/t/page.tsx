@@ -4174,6 +4174,9 @@ return (
 
 }
 
+
+
+
 export default function AdminHome() {
   const [tab, setTab] = useState<
     "start" | "create" | "archive" | "elimination" | "locations" | "players" | "stats"
@@ -4361,6 +4364,7 @@ useEffect(() => {
     localStorage.setItem("pb_code", c);
   }
 
+{/*  Altes Menu
 if (joined)
   return (
     <Dashboard
@@ -4369,6 +4373,144 @@ if (joined)
       isAdmin={isAdmin}
     />
   );
+  */}
+{/* Hier kommt das neue Menu */}
+  if (joined)
+  return (
+    <div className="grid gap-4 grid-cols-1">
+      {/* 🔸 Dein Header oben rechts (wie in AdminHome) */}
+      <div className="flex justify-end">
+        <div className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 bg-white/60 text-xs text-neutral-600 shadow-sm">
+          <span className="flex items-center gap-1 px-1">
+            <span>👤</span>
+            <span className="truncate max-w-[160px]">
+              {userEmail === "flo.nestmann@gmx.de"
+                ? "Admin"
+                : userEmail
+                ? "Besucher"
+                : "…"}
+            </span>
+          </span>
+
+          <button
+            type="button"
+            onClick={async () => {
+              await supabaseBrowser().auth.signOut();
+              localStorage.clear();
+              location.href = "/login";
+            }}
+            className="rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium hover:bg-neutral-200 transition"
+          >
+            Abmelden
+          </button>
+        </div>
+      </div>
+
+      {/* 🔸 Card mit deinem Menü-Header */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => {
+                setJoined(null);
+                setTab("start");
+              }}
+              className={tab === "start" ? "font-semibold" : "text-neutral-500"}
+            >
+              Start
+            </button>
+
+            <span className="text-neutral-300">|</span>
+
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setJoined(null);
+                  handleClickCreateTab();
+                }}
+                className={tab === "create" ? "font-semibold" : "text-neutral-500"}
+              >
+                Turnier Neu anlegen
+              </button>
+            )}
+
+            {isAdmin && <span className="text-neutral-300">|</span>}
+
+            <button
+              onClick={() => {
+                setJoined(null);
+                setTab("archive");
+              }}
+              className={tab === "archive" ? "font-semibold" : "text-neutral-500"}
+            >
+              Turnier-Archiv
+            </button>
+
+            {isAdmin && <span className="text-neutral-300">|</span>}
+
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setJoined(null);
+                  setTab("elimination");
+                }}
+                className={
+                  tab === "elimination" ? "font-semibold" : "text-neutral-500"
+                }
+              >
+                Elimination
+              </button>
+            )}
+
+            {isAdmin && <span className="text-neutral-300">|</span>}
+
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setJoined(null);
+                  setTab("locations");
+                }}
+                className={tab === "locations" ? "font-semibold" : "text-neutral-500"}
+              >
+                Locations
+              </button>
+            )}
+
+            <span className="text-neutral-300">|</span>
+
+            <button
+              onClick={() => {
+                setJoined(null);
+                setTab("players");
+              }}
+              className={tab === "players" ? "font-semibold" : "text-neutral-500"}
+            >
+              Spieler
+            </button>
+
+            <span className="text-neutral-300">|</span>
+
+            <button
+              onClick={() => {
+                setJoined(null);
+                setTab("stats");
+              }}
+              className={tab === "stats" ? "font-semibold" : "text-neutral-500"}
+            >
+              Statistiken
+            </button>
+          </div>
+        </CardHeader>
+
+        <CardBody>
+          {/* ✅ Hier ist jetzt dein Turnier-UI */}
+          <Dashboard code={joined.code} name={joined.name} isAdmin={isAdmin} />
+        </CardBody>
+      </Card>
+    </div>
+  );
+
+  
 
 
   return (
@@ -5221,7 +5363,7 @@ async function registerFinalWin(playerId: string, winnerName: string) {
       return;
     }
 
-    await reloadAll();
+    {/* await reloadAll(); */}
     localStorage.removeItem("pb_code");
     location.href = "/t";
   }
@@ -5756,29 +5898,7 @@ const machinesInfoById = useMemo(
   return (
     <div className="space-y-4">
 
-      {/* 🔸 Header oben rechts auch IM Turnier */}
-      <div className="flex justify-end">
-        <div className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 bg-white/60 text-xs text-neutral-600 shadow-sm">
-          <span className="flex items-center gap-1 px-1">
-            <span>👤</span>
-            <span className="truncate max-w-[160px]">
-              {isAdmin ? "Admin" : "Besucher"}
-            </span>
-          </span>
 
-          <button
-            type="button"
-            onClick={async () => {
-              await supabaseBrowser().auth.signOut();
-              localStorage.clear();
-              location.href = "/login";
-            }}
-            className="rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium hover:bg-neutral-200 transition"
-          >
-            Abmelden
-          </button>
-        </div>
-      </div>
 
 
 
@@ -5986,7 +6106,7 @@ const machinesInfoById = useMemo(
       <Card>
         <CardHeader>
 {/* ===== TURNIER-HEADER START ===== */}
-<div className="mb-4 rounded-xl border border-neutral-200 bg-white/70 p-3 shadow-sm">
+<div className="mb-4 rounded-xl border border-neutral-200  p-3 shadow-sm">
   {/* Zeile 1: Name + Status rechts */}
   <div className="flex items-center justify-between gap-4">
     <h2 className="text-2xl font-semibold">
