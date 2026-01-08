@@ -5,10 +5,11 @@ export function Card({ className, children }: PropsWithChildren<{ className?: st
   return <div className={clsx("rounded-2xl border bg-white shadow-sm", className)}>{children}</div>;
 }
 export function CardHeader({ children }: PropsWithChildren) {
-  return <div className="px-5 pt-5 pb-3 border-b">{children}</div>;
+  // Mobile: etwas kompaktere horizontal padding
+  return <div className="px-4 md:px-5 pt-5 pb-3 border-b">{children}</div>;
 }
 export function CardBody({ children }: PropsWithChildren) {
-  return <div className="px-5 py-4">{children}</div>;
+  return <div className="px-4 md:px-5 py-4">{children}</div>;
 }
 export function Button({
   variant = "primary",

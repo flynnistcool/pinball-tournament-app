@@ -5,6 +5,11 @@
 :root { color-scheme: light; }
 html, body { height: 100%; }
 
+/* 📱 Mobile QoL */
+html { -webkit-text-size-adjust: 100%; }
+body { -webkit-tap-highlight-color: transparent; }
+a, button { touch-action: manipulation; }
+
 /* 🥇 Glow-Effekt für Platz 1 im Leaderboard */
 @keyframes leaderboard-glow {
   0%   { text-shadow: 0 0 0 rgba(250, 204, 21, 0.0); transform: scale(1); }

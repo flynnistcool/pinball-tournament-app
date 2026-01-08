@@ -30,23 +30,35 @@ export const metadata: Metadata = {
   },
 };
 
+// ✅ Mobile: korrektes Scaling + "notch safe area" (iPhone)
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="de">
       <body className="min-h-screen bg-neutral-50 text-neutral-900">
-        <div className="mx-auto max-w-5xl p-4 md:p-8">
+        {/*
+          Mobile-Polish:
+          - etwas weniger Rand auf kleinen Screens
+          - safe-area padding (iPhone Notch/Homebar)
+        */}
+        <div className="mx-auto max-w-5xl p-3 sm:p-4 md:p-8 pt-[calc(12px+env(safe-area-inset-top))] pb-[calc(12px+env(safe-area-inset-bottom))]">
           <div className="mb-6 flex items-center justify-between">
             {/* <div className="text-xl font-semibold">🎱 Pinball Turnier</div> */}
 <Link
   href="/"
-  className="flex items-center gap-3 text-2xl font-bold hover:opacity-70 transition cursor-pointer select-none"
+  className="flex items-center gap-3 font-bold hover:opacity-70 transition cursor-pointer select-none"
 >
   <img
     src="/icon-192.png"
     alt="Pinball Icon"
-    className="h-12 w-12 rounded-md"
+    className="h-10 w-10 sm:h-12 sm:w-12 rounded-md"
   />
-  <span>Pinball Turnier</span>
+  <span className="text-xl sm:text-2xl">Pinball Turnier</span>
 </Link>
 
             <div className="flex items-center gap-3">

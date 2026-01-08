@@ -4409,18 +4409,27 @@ if (joined)
       {/* 🔸 Card mit deinem Menü-Header */}
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center gap-3">
+          {/*
+            📱 Mobile: Tab-Leiste als horizontales Scroll-Menü (große Touch-Targets)
+            Desktop: darf weiterhin umbrechen
+          */}
+          <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 md:flex-wrap md:overflow-visible md:whitespace-normal [-webkit-overflow-scrolling:touch]">
             <button
               onClick={() => {
                 setJoined(null);
                 setTab("start");
               }}
-              className={tab === "start" ? "font-semibold" : "text-neutral-500"}
+              className={
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "start"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
+              }
             >
               Start
             </button>
 
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
 
             {isAdmin && (
               <button
@@ -4428,25 +4437,35 @@ if (joined)
                   setJoined(null);
                   handleClickCreateTab();
                 }}
-                className={tab === "create" ? "font-semibold" : "text-neutral-500"}
+                className={
+                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                  (tab === "create"
+                    ? "bg-black text-white"
+                    : "text-neutral-600 hover:bg-neutral-100")
+                }
               >
                 Turnier Neu anlegen
               </button>
             )}
 
-            {isAdmin && <span className="text-neutral-300">|</span>}
+            {isAdmin && <span className="hidden md:inline text-neutral-300">|</span>}
 
             <button
               onClick={() => {
                 setJoined(null);
                 setTab("archive");
               }}
-              className={tab === "archive" ? "font-semibold" : "text-neutral-500"}
+              className={
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "archive"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
+              }
             >
               Turnier-Archiv
             </button>
 
-            {isAdmin && <span className="text-neutral-300">|</span>}
+            {isAdmin && <span className="hidden md:inline text-neutral-300">|</span>}
 
             {isAdmin && (
               <button
@@ -4455,14 +4474,17 @@ if (joined)
                   setTab("elimination");
                 }}
                 className={
-                  tab === "elimination" ? "font-semibold" : "text-neutral-500"
+                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                  (tab === "elimination"
+                    ? "bg-black text-white"
+                    : "text-neutral-600 hover:bg-neutral-100")
                 }
               >
                 Elimination
               </button>
             )}
 
-            {isAdmin && <span className="text-neutral-300">|</span>}
+            {isAdmin && <span className="hidden md:inline text-neutral-300">|</span>}
 
             {isAdmin && (
               <button
@@ -4470,32 +4492,47 @@ if (joined)
                   setJoined(null);
                   setTab("locations");
                 }}
-                className={tab === "locations" ? "font-semibold" : "text-neutral-500"}
+                className={
+                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                  (tab === "locations"
+                    ? "bg-black text-white"
+                    : "text-neutral-600 hover:bg-neutral-100")
+                }
               >
                 Locations
               </button>
             )}
 
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
 
             <button
               onClick={() => {
                 setJoined(null);
                 setTab("players");
               }}
-              className={tab === "players" ? "font-semibold" : "text-neutral-500"}
+              className={
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "players"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
+              }
             >
               Spieler
             </button>
 
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
 
             <button
               onClick={() => {
                 setJoined(null);
                 setTab("stats");
               }}
-              className={tab === "stats" ? "font-semibold" : "text-neutral-500"}
+              className={
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "stats"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
+              }
             >
               Statistiken
             </button>
@@ -4547,17 +4584,21 @@ if (joined)
 
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center gap-3">
+          {/* 📱 Mobile: horizontale Scroll-Tab-Leiste */}
+          <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 md:flex-wrap md:overflow-visible md:whitespace-normal [-webkit-overflow-scrolling:touch]">
+            <button
+              onClick={() => setTab("start")}
+              className={
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "start"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
+              }
+            >
+              Start
+            </button>
             
-<button
-  onClick={() => setTab("start")}
-  className={tab === "start" ? "font-semibold" : "text-neutral-500"}
->
-  Start
-</button>
-            
-           
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
          
             {/*<button
               onClick={() => setTab("create")}
@@ -4568,22 +4609,29 @@ if (joined)
               Turnier Neu anlegen
             </button>*/}
             {isAdmin && (
-            <button
-              onClick={handleClickCreateTab}
-              className={tab === "create" ? "font-semibold" : "text-neutral-500"}
-            >
-              Turnier Neu anlegen
-            </button>
+              <button
+                onClick={handleClickCreateTab}
+                className={
+                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                  (tab === "create"
+                    ? "bg-black text-white"
+                    : "text-neutral-600 hover:bg-neutral-100")
+                }
+              >
+                Turnier Neu anlegen
+              </button>
             )}
             {isAdmin && (
-            <span className="text-neutral-300">|</span>
+              <span className="hidden md:inline text-neutral-300">|</span>
             )}
             
             <button
-           
               onClick={() => setTab("archive")}
               className={
-                tab === "archive" ? "font-semibold" : "text-neutral-500"
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "archive"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
               }
             >
               Turnier-Archiv
@@ -4591,13 +4639,16 @@ if (joined)
 
               {/* 👇 NEU: Elimination-Tab */}
               {isAdmin && (
-              <span className="text-neutral-300">|</span>
+                <span className="hidden md:inline text-neutral-300">|</span>
               )}
               {isAdmin && (
               <button
                 onClick={() => setTab("elimination")}
                 className={
-                  tab === "elimination" ? "font-semibold" : "text-neutral-500"
+                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                  (tab === "elimination"
+                    ? "bg-black text-white"
+                    : "text-neutral-600 hover:bg-neutral-100")
                 }
               >
                 Elimination
@@ -4608,7 +4659,7 @@ if (joined)
 
 
              {isAdmin && (
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
             )}
 
 
@@ -4618,27 +4669,36 @@ if (joined)
             <button
               onClick={() => setTab("locations")}
               className={
-                tab === "locations" ? "font-semibold" : "text-neutral-500"
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "locations"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
               }
             >
               Locations
             </button>
             )}
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
             <button
               onClick={() => setTab("players")}
               className={
-                tab === "players" ? "font-semibold" : "text-neutral-500"
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "players"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
               }
             >
               Spieler
             </button>
 
-            <span className="text-neutral-300">|</span>
+            <span className="hidden md:inline text-neutral-300">|</span>
             <button
               onClick={() => setTab("stats")}
               className={
-                tab === "stats" ? "font-semibold" : "text-neutral-500"
+                "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                (tab === "stats"
+                  ? "bg-black text-white"
+                  : "text-neutral-600 hover:bg-neutral-100")
               }
             >
               Statistiken
@@ -4818,7 +4878,8 @@ if (joined)
                 Letzte Turniere (klicken zum Öffnen):
               </div>
               <div className="overflow-hidden rounded-2xl border bg-white">
-                <div className="grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+                {/* Desktop Header – auf Mobile ausblenden (sonst zu eng) */}
+                <div className="hidden sm:grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
                   <div className="col-span-6">Name</div>
                   <div className="col-span-3">Kategorie / Serie</div>
                   <div className="col-span-1">Code</div>
@@ -4829,14 +4890,14 @@ if (joined)
                   <div
                     key={t.id}
                     onClick={() => joinTournament(t.code)}
-                    className="grid grid-cols-12 gap-2 px-4 py-3 border-b last:border-b-0 items-center
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
                               cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition"
                   >
-                    <div className="col-span-6 font-medium truncate">
+                    <div className="sm:col-span-6 font-medium truncate">
                       {t.name}
                     </div>
 
-                    <div className="col-span-3">
+                    <div className="sm:col-span-3">
                       {t.category ? (
                         <span className="inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-700">
                           {t.category}
