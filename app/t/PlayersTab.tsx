@@ -1202,26 +1202,31 @@ const headToHeadPanel =
   
     <Card>
       <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-semibold">Spieler (Profiles)</div>
-          <div className="flex items-center gap-2">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Suchen…"
-              className="w-40 sm:w-60"
-            />
-          
-            <Button variant="secondary" disabled={busy} onClick={load}>
-              Neu laden
-            </Button>
-         {isAdmin && (
-            <Button disabled={busy} onClick={startNew}>
-              Neuer Spieler
-            </Button>
-         )}
-          </div>
-        </div>
+<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div className="font-semibold">Spieler (Profiles)</div>
+
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2">
+    <Input
+      value={q}
+      onChange={(e) => setQ(e.target.value)}
+      placeholder="Suchen…"
+      className="w-full sm:w-60"
+    />
+
+    <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2">
+      <Button variant="secondary" disabled={busy} onClick={load} className="w-full sm:w-auto">
+        Neu laden
+      </Button>
+
+      {isAdmin && (
+        <Button disabled={busy} onClick={startNew} className="w-full sm:w-auto">
+          Neuer Spieler
+        </Button>
+      )}
+    </div>
+  </div>
+</div>
+
       </CardHeader>
 
       <CardBody>
@@ -1659,10 +1664,10 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                 {/* Kopfzeile */}
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-neutral-50"
+                  className="flex w-full flex-col gap-3 px-4 py-3 text-left hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between"
                   onClick={() => openRow(p.id)}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0 w-full">
                     <Avatar
                       url={(p as any).avatar_url ?? null}
                       name={p.name}
@@ -1670,19 +1675,22 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                       icon={p.icon}
                     />
                     <div>
-                      <div className="text-base font-medium flex items-center gap-2">
-                        {p.name} • <span className="text-sm text-amber-600">
-                          <span>
-                            {Number(p.total_tournament_points)} TP <span className="text-xs text-amber-600">(Turnierpunkte)</span>
-                          </span>
-                        </span>
-                      </div>
+  <div className="text-base font-medium flex items-center gap-2 min-w-0">
+    <span className="truncate">{p.name}</span>
+
+    <span className="shrink-0 text-sm text-amber-600">
+      {Number(p.total_tournament_points)} TP{" "}
+      <span className="hidden sm:inline text-xs text-amber-600">(Turnierpunkte)</span>
+    </span>
+  </div>
                       <div className="text-[11px] text-neutral-500">
                         {/*ID: <span className="font-mono">{p.id}</span>*/}
                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end text-right leading-tight gap-1.5">
+                  <div className="flex w-full flex-col items-start text-left leading-tight gap-1.5 sm:w-auto sm:items-end sm:text-right sm:shrink-0">
+
+
                     {/* Zeile 1: ELO */}
                     {typeof p.rating === "number" ? (
                       <div className="flex items-baseline gap-1">
