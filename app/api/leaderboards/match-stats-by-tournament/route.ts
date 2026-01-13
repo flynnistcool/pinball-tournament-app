@@ -218,10 +218,14 @@ export async function GET(req: Request) {
       };
     });
 
-    // Sortierung
+    // ✅ Sortierung: neuestes Turnier zuerst
     out.sort((a, b) => {
-      if (b.matches !== a.matches) return b.matches - a.matches;
-      return a.tournamentName.localeCompare(b.tournamentName);
+      const ta = a.tournamentCreatedAt ? new Date(a.tournamentCreatedAt).getTime() : 0;
+      const tb = b.tournamentCreatedAt ? new Date(b.tournamentCreatedAt).getTime() : 0;
+
+      if (tb !== ta) return tb - ta;                // Datum DESC (neu → alt)
+      if (b.matches !== a.matches) return b.matches - a.matches; // optional: bei gleichem Datum
+      return a.tournamentName.localeCompare(b.tournamentName);  // optional: als letzte Tie-Breaker
     });
 
     return jsonNoStore({ rows: out });

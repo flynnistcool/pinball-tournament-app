@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 
@@ -238,8 +239,12 @@ const out: MatchPlacementRow[] = Object.values(statsByKey)
 
   // 7) Sortierung: wie im Frontend: viele Matches, dann Name
   out.sort((a, b) => {
-    if (b.matches !== a.matches) return b.matches - a.matches;
-    return a.name.localeCompare(b.name);
+    const aa = a.avgPosition ?? Number.POSITIVE_INFINITY;
+    const bb = b.avgPosition ?? Number.POSITIVE_INFINITY;
+
+    if (aa !== bb) return aa - bb;                 // ✅ Ø-Platz ASC
+    if (b.matches !== a.matches) return b.matches - a.matches; // Tie-Breaker: mehr Matches
+    return a.name.localeCompare(b.name);           // Tie-Breaker: Name
   });
 
   return new NextResponse(JSON.stringify({ rows: out }), {

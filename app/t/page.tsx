@@ -9,6 +9,7 @@ import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
 import PlayersTab from "./PlayersTab";
 import { ProfilePicker } from "@/components/ProfilePicker";
+import AdminTab from "./AdminTab";
 import Image from "next/image";
 
 type Tournament = {
@@ -240,12 +241,17 @@ function ShareModal({
 }) {
   const [tQr, setTQr] = useState<string>("");
   const [pQr, setPQr] = useState<string>("");
+  const [origin, setOrigin] = useState("");
 
   useEffect(() => {
     if (!open) return;
-    const origin = window.location.origin;
-    const tUrl = `${origin}/t/${encodeURIComponent(code)}`;
-    const pUrl = `${origin}/public`;
+
+    const o = window.location.origin;
+    setOrigin(o);
+
+    const tUrl = `${o}/t/${encodeURIComponent(code)}`;
+    const pUrl = `${o}/public`;
+
     (async () => {
       try {
         setTQr(await QRCode.toDataURL(tUrl, { margin: 1, width: 320 }));
@@ -259,9 +265,8 @@ function ShareModal({
 
   if (!open) return null;
 
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const tUrl = `${origin}/t/${encodeURIComponent(code)}`;
-  const pUrl = `${origin}/public`;
+  const tUrl = origin ? `${origin}/t/${encodeURIComponent(code)}` : "";
+  const pUrl = origin ? `${origin}/public` : "";
 
   return (
     <div
@@ -614,8 +619,12 @@ function MatchPlacementLeaderboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  {/*
   const [sortKey, setSortKey] = useState<SortKey>("matches");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  */}
+  const [sortKey, setSortKey] = useState<SortKey>("avgPosition");
+  const [sortDir, setSortDir] = useState<SortDir>("asc"); // kleiner Ø-Platz = besser
 
   // 👇 welcher Spieler ist aufgeklappt?
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
@@ -3240,7 +3249,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
         <BarChart title="Winrate (≥3 Matches)" items={topWinrate} valueLabel="%" />
       </div>
 
-      <Card>
+<Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-semibold">
@@ -3248,7 +3257,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
             </div>
             <div className="flex gap-2">
               <a
-                className="inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
+                className="hidden sm:inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
                 href={`/api/export/standings.csv?code=${encodeURIComponent(
                   code
                 )}`}
@@ -3256,13 +3265,13 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                 Tabelle CSV
               </a>
               <a
-                className="inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
+                className="hidden sm:inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
                 href={`/api/export/stats.csv?code=${encodeURIComponent(code)}`}
               >
                 Stats CSV
               </a>
               <button
-                className="inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
+                className="hidden sm:inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
                 onClick={() => window.print()}
               >
                 Drucken/PDF
@@ -3272,238 +3281,223 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
         </CardHeader>
 
         <CardBody>
-<div className="overflow-hidden rounded-2xl border bg-white">
-  {/* Kopfzeile */}
-  <div className="grid grid-cols-12 gap-4 border-b bg-neutral-50 px-2 py-3 text-ms text-neutral-600">
-    <div className="col-span-1 text-center">Platz</div>
-    <div className="col-span-5">Spieler</div>
-    <div className="col-span-2 text-right">Punkte</div>
-    <div className="col-span-1 text-right">Matches</div>
-    <div className="col-span-1 text-right">Winrate</div>
-    <div className="col-span-2 text-right">Verlauf</div>
-  </div>
+          <div className="overflow-hidden rounded-2xl border bg-white">
+            {/* Kopfzeile – Mobile (Platz / Spieler / Punkte) */}
+            <div className="grid sm:hidden grid-cols-12 gap-2 border-b bg-neutral-50 px-2 py-3 text-xs text-neutral-600">
+              <div className="col-span-2 text-center">Platz</div>
+              <div className="col-span-7">Spieler</div>
+              <div className="col-span-3 text-right">Punkte</div>
+            </div>
 
-  {rows.map((r: any, index: number) => {
-    const hist = (r.history ?? []).map((x: any) => x.points);
-    const place = index + 1;
+            {/* Kopfzeile – Desktop */}
+            <div className="hidden sm:grid grid-cols-12 gap-4 border-b bg-neutral-50 px-2 py-3 text-ms text-neutral-600">
+              <div className="col-span-1 text-center">Platz</div>
+              <div className="col-span-5">Spieler</div>
+              <div className="col-span-2 text-right">Punkte</div>
+              <div className="col-span-1 text-right">Matches</div>
+              <div className="col-span-1 text-right">Winrate</div>
+              <div className="col-span-2 text-right">Verlauf</div>
+            </div>
 
-    const medal =
-      place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
-    const medalClass =
-      place === 1 ? "text-lg leaderboard-glow" : "text-lg";
-    const hasMedal = medal !== "";
+            {rows.map((r: any, index: number) => {
+              const hist = (r.history ?? []).map((x: any) => x.points);
+              const place = index + 1;
 
-    return (
-      <div key={r.id} className="relative min-w-0 border-b last:border-b-0">
-        <button
-          className={`w-full grid grid-cols-12 gap-4 px-2 py-3 items-center text-left hover:bg-neutral-50 ${
-            place === 1 ? "leaderboard-first" : ""
-          }`}
-          onClick={() => setOpenId(openId === r.id ? null : r.id)}
-        >
-          
+              const medal =
+                place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
+              const medalClass =
+                place === 1 ? "text-lg leaderboard-glow" : "text-lg";
+              const hasMedal = medal !== "";
 
-          
-          
-          
-          {/* Platz-Spalte: Medaille (1–3) oder Platz-Zahl (ab 4) */}
-          <div className="col-span-1 flex flex-col items-center justify-center text-xs tabular-nums">
-            {hasMedal && <span className={medalClass}>{medal}</span>}
-            {!hasMedal && (
-              <span className="font-semibold">{place}.</span>
+              return (
+                <div key={r.id} className="relative min-w-0 border-b last:border-b-0">
+                  <button
+                    className={`w-full grid grid-cols-12 gap-2 sm:gap-4 px-2 py-3 items-center text-left hover:bg-neutral-50 ${
+                      place === 1 ? "leaderboard-first" : ""
+                    }`}
+                    onClick={() => setOpenId(openId === r.id ? null : r.id)}
+                  >
+                    {/* Platz-Spalte: Medaille (1–3) oder Platz-Zahl (ab 4) */}
+                    <div className="col-span-2 sm:col-span-1 flex flex-col items-center justify-center text-xs tabular-nums">
+                      {hasMedal && <span className={medalClass}>{medal}</span>}
+                      {!hasMedal && <span className="font-semibold">{place}.</span>}
+                    </div>
+
+                    {/* Badge schwebend */}
+                    {place === 1 && (
+                      <span className="absolute -top-3 left-0 winner-ribbon">
+                        Champion
+                      </span>
+                    )}
+
+                    {/* Spieler + Elo-Infos */}
+                    <div className="col-span-7 sm:col-span-5 flex items-center justify-between gap-2 sm:gap-4 min-w-0">
+                      <div className="min-w-0">
+                        <PlayerPill
+                          player={{
+                            name: r.name,
+                            color: r.color ?? null,
+                            icon: r.icon ?? null,
+                            avatarUrl: r.avatarUrl ?? null,
+                          }}
+                        />
+                      </div>
+
+                      {/* Elo/TP rechts: auf Mobile ausblenden */}
+                      <div className="hidden sm:block shrink-0 w-fit">
+                        <div className="grid grid-cols-[auto_auto] gap-3 items-start">
+                          {/* LEFT: ELO BLOCK */}
+                          <div className="rounded-xl">
+                            <div className="flex items-center justify-between">
+                              <span className="ml-2 inline-flex font-semibold items-center rounded-full bg-neutral-100 px-3 py-1 text-xs">
+                                <span className="text-[14px] mr-2 text-neutral-700">
+                                  Elo{" "}
+                                </span>{" "}
+                                {r.eloEnd != null ? Math.round(r.eloEnd) : "—"}
+                              </span>
+                            </div>
+
+                            {/* detail row */}
+                            <div className="mt-0.5 text-[12px] tabular-nums text-neutral-600">
+                              {r.eloStart != null && r.eloEnd != null ? (
+                                <>
+                                  {Math.round(r.eloStart)}{" "}
+                                  <span className="mx-1">→</span>{" "}
+                                  {Math.round(r.eloEnd)}
+                                  {(() => {
+                                    const delta = r.eloDelta ?? null;
+                                    if (typeof delta !== "number" || delta === 0)
+                                      return null;
+                                    const sign = delta > 0 ? "+" : "";
+                                    const cls =
+                                      delta > 0
+                                        ? "ml-2 font-semibold text-[13px] text-emerald-600"
+                                        : "ml-2 font-semibold text-[13px] text-red-600";
+                                    return (
+                                      <span className={cls}>
+                                        ({sign}
+                                        {Math.round(delta)})
+                                      </span>
+                                    );
+                                  })()}
+                                </>
+                              ) : (
+                                <span className="text-neutral-400">—</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* RIGHT: TP BLOCK */}
+                          {Number(r.tournamentPoints ?? 0) > 0 && (
+                            <div className="ml-2 inline-flex font-semibold items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm">
+                              <div className="justify-between">
+                                <span className="text-[11px] font-semibold text-amber-800">
+                                  Turnierwertung
+                                </span>
+                              </div>
+                              <div className="mt-0.5 text-[13px] text-amber-700 font-semibold">
+                                +{Number(r.tournamentPoints ?? 0)} TP
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Punkte / Matches / Winrate / Verlauf */}
+                    <div className="col-span-3 sm:col-span-2 text-right font-semibold tabular-nums">
+                      {r.points}
+                    </div>
+                    <div className="hidden sm:block col-span-1 text-right tabular-nums">
+                      {r.matches}
+                    </div>
+                    <div className="hidden sm:block col-span-1 text-right tabular-nums">
+                      {r.winrate}%
+                    </div>
+                    <div className="hidden sm:flex col-span-2 justify-end text-neutral-900">
+                      <Sparkline values={hist} />
+                    </div>
+                  </button>
+
+                  {openId === r.id && (
+                    <div className="px-4 pb-4">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-2xl border bg-white p-4">
+                          <div className="text-xs text-neutral-500">
+                            Ø-Platzierung
+                          </div>
+                          <div className="text-2xl font-semibold">
+                            {r.avgPos ?? "—"}
+                          </div>
+                          <div className="mt-1 text-xs text-neutral-500">
+                            Podium-Rate: {r.podiumRate}%
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border bg-white p-4">
+                          <div className="text-xs text-neutral-500">
+                            Häufigste Maschine
+                          </div>
+                          <div className="text-base font-semibold">
+                            {r.favoriteMachine?.machine ?? "—"}
+                          </div>
+                          <div className="mt-1 text-xs text-neutral-500">
+                            {r.favoriteMachine
+                              ? `${r.favoriteMachine.plays}x gespielt`
+                              : ""}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border bg-white p-4">
+                          <div className="text-xs text-neutral-500">
+                            Beste Maschine
+                          </div>
+                          <div className="text-base font-semibold">
+                            {r.bestMachine?.machine ?? "—"}
+                          </div>
+                          <div className="mt-1 text-xs text-neutral-500">
+                            {r.bestMachine
+                              ? `Ø ${r.bestMachine.avgPoints} Punkte (${r.bestMachine.plays}x)`
+                              : ""}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 rounded-2xl border bg-white p-4">
+                        <div className="mb-2 text-sm font-semibold">
+                          Punkte pro Runde
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {(r.history ?? []).map((h: any) => (
+                            <span
+                              key={h.round}
+                              className="inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-sm"
+                            >
+                              R{h.round}:{" "}
+                              <span className="ml-2 font-semibold tabular-nums">
+                                {h.points}
+                              </span>
+                            </span>
+                          ))}
+                          {(r.history ?? []).length === 0 && (
+                            <span className="text-sm text-neutral-500">
+                              Noch keine Ergebnisse.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {rows.length === 0 && (
+              <div className="px-4 py-4 text-sm text-neutral-500">
+                Noch keine Ergebnisse.
+              </div>
             )}
           </div>
-
-    {/* Badge schwebend */}
-    {place === 1 && (
-      <span className="absolute -top-3 left-0 winner-ribbon">
-        Champion
-      </span>
-    )}
-
-          {/* Spieler + Elo-Infos */}
-          <div className="col-span-5 flex items-center justify-between gap-4 min-w-0">
-            <div className="min-w-0">
-            <PlayerPill
-              player={{
-                name: r.name,
-                color: r.color ?? null,
-                icon: r.icon ?? null,
-                avatarUrl: r.avatarUrl ?? null,
-              }}
-            />
-            </div>
-
-<div className="shrink-0 w-fit">
-  <div className="grid grid-cols-[auto_auto] gap-3 items-start">
-    {/* LEFT: ELO BLOCK */}
-
-
-  
-    <div className="rounded-xl">
-      {/* header row */}
-
-
-
-      <div className="flex items-center justify-between">
-        
-        <span className="ml-2 inline-flex  font-semibold items-center rounded-full bg-neutral-100 px-3 py-1 text-xs">
-          <span className="text-[14px] mr-2 text-neutral-700">Elo </span> {r.eloEnd != null ? Math.round(r.eloEnd) : "—"}
-        </span>
-      </div>
-
-      {/* detail row */}
-      <div className="mt-0.5 text-[12px] tabular-nums text-neutral-600">
-        {r.eloStart != null && r.eloEnd != null ? (
-          <>
-            {Math.round(r.eloStart)} <span className="mx-1">→</span>{" "}
-            {Math.round(r.eloEnd)}
-            {(() => {
-              const delta = r.eloDelta ?? null;
-              if (typeof delta !== "number" || delta === 0) return null;
-              const sign = delta > 0 ? "+" : "";
-              const cls =
-                delta > 0
-                  ? "ml-2 font-semibold text-[13px] text-emerald-600"
-                  : "ml-2 font-semibold text-[13px] text-red-600";
-              return (
-                <span className={cls}>
-                  ({sign}
-                  {Math.round(delta)})
-                </span>
-              );
-            })()}
-          </>
-        ) : (
-          <span className="text-neutral-400">—</span>
-        )}
-      </div>
-    </div>
-
-    {/* RIGHT: TP BLOCK  inline-flex flex-col rounded-xl border border-amber-200 bg-amber-50 */}
-    
-    {Number(r.tournamentPoints ?? 0) > 0 && (
-      <div className="ml-2 inline-flex font-semibold items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm">
-        {/* header row */}
-        <div className="justify-between">
-          <span className="text-[11px] font-semibold text-amber-800">
-            Turnierwertung        
-          </span>
-        </div>
-        <div className="mt-0.5 text-[13px]  text-amber-700 font-semibold">+{Number(r.tournamentPoints ?? 0)} TP</div>
-
-      </div>
-    )}
-
-
-
-
-
-    </div>
-
-
-
-
-</div>
-
-
-          </div>
-
-          {/* Punkte / Matches / Winrate / Verlauf */}
-          <div className="col-span-2 text-right font-semibold tabular-nums">
-            {r.points}
-          </div>
-          <div className="col-span-1 text-right tabular-nums">
-            {r.matches}
-          </div>
-          <div className="col-span-1 text-right tabular-nums">
-            {r.winrate}%
-          </div>
-          <div className="col-span-2 flex justify-end text-neutral-900">
-            <Sparkline values={hist} />
-          </div>
-        </button>
-
-        {openId === r.id && (
-          <div className="px-4 pb-4">
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl border bg-white p-4">
-                <div className="text-xs text-neutral-500">
-                  Ø-Platzierung
-                </div>
-                <div className="text-2xl font-semibold">
-                  {r.avgPos ?? "—"}
-                </div>
-                <div className="mt-1 text-xs text-neutral-500">
-                  Podium-Rate: {r.podiumRate}%
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-white p-4">
-                <div className="text-xs text-neutral-500">
-                  Häufigste Maschine
-                </div>
-                <div className="text-base font-semibold">
-                  {r.favoriteMachine?.machine ?? "—"}
-                </div>
-                <div className="mt-1 text-xs text-neutral-500">
-                  {r.favoriteMachine
-                    ? `${r.favoriteMachine.plays}x gespielt`
-                    : ""}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-white p-4">
-                <div className="text-xs text-neutral-500">
-                  Beste Maschine
-                </div>
-                <div className="text-base font-semibold">
-                  {r.bestMachine?.machine ?? "—"}
-                </div>
-                <div className="mt-1 text-xs text-neutral-500">
-                  {r.bestMachine
-                    ? `Ø ${r.bestMachine.avgPoints} Punkte (${r.bestMachine.plays}x)`
-                    : ""}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3 rounded-2xl border bg-white p-4">
-              <div className="mb-2 text-sm font-semibold">
-                Punkte pro Runde
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {(r.history ?? []).map((h: any) => (
-                  <span
-                    key={h.round}
-                    className="inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-sm"
-                  >
-                    R{h.round}:{" "}
-                    <span className="ml-2 font-semibold tabular-nums">
-                      {h.points}
-                    </span>
-                  </span>
-                ))}
-                {(r.history ?? []).length === 0 && (
-                  <span className="text-sm text-neutral-500">
-                    Noch keine Ergebnisse.
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  })}
-
-  {rows.length === 0 && (
-    <div className="px-4 py-4 text-sm text-neutral-500">
-      Noch keine Ergebnisse.
-    </div>
-  )}
-</div>
-
         </CardBody>
       </Card>
     </div>
@@ -3811,10 +3805,11 @@ return (
     <CardBody>
       <div className="overflow-hidden rounded-2xl border bg-white">
         <div className="grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-          <div className="col-span-2">#</div>
-          <div className="col-span-4">Format</div>
-          <div className="col-span-3">Status</div>
-          <div className="col-span-3 text-right">Spiele</div>
+          <div className="col-span-1">#</div>
+          <div className="col-span-3">Format</div>
+          <div className="col-span-2">Status</div>
+          <div className="col-span-4 text-center">Sieger</div>
+          <div className="col-span-2 text-right">Spiele</div>
         </div>
 
         {rounds
@@ -3823,6 +3818,19 @@ return (
           .map((r: any) => {
             const ms = matchesByRound[r.id] ?? [];
             const isOpen = openRoundId === r.id;
+
+            const winnerNames = Array.from(
+            new Set(
+              ms.flatMap((m: any) =>
+                (mpByMatch[m.id] ?? [])
+                  .filter((p: any) => p.position === 1)
+                  .map((p: any) => playersById[p.player_id]?.name ?? "—")
+              )
+            )
+          ).filter((n) => n && n !== "—");
+
+          const winnersText = winnerNames.length ? winnerNames.join(", ") : "—";
+
 
             return (
               <div
@@ -3835,11 +3843,11 @@ return (
                   className="w-full grid grid-cols-12 gap-2 px-4 py-3 items-center text-left hover:bg-neutral-50"
                   onClick={() => setOpenRoundId(isOpen ? null : r.id)}
                 >
-                  <div className="col-span-2 font-semibold tabular-nums">
+                  <div className="col-span-1 font-semibold tabular-nums">
                     #{r.number}
                   </div>
-                  <div className="col-span-4">{r.format}</div>
-                  <div className="col-span-3">
+                  <div className="col-span-3">{r.format}</div>
+                  <div className="col-span-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={
@@ -3886,7 +3894,10 @@ return (
                       </span>
                     </div>
                   </div>
-                  <div className="col-span-3 text-right tabular-nums">
+                  <div className="col-span-4 text-center text-ms text-neutral-700 truncate">
+                    {winnersText}
+                  </div>
+                  <div className="col-span-2 text-right tabular-nums">
                     {ms.length}
                   </div>
                 </button>
@@ -3931,10 +3942,10 @@ return (
                               key={m.id}
                               className="rounded-2xl border bg-white"
                             >
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 sm:px-4 sm:py-3">
                                 {/* Linke Seite: Maschine + Spiel + Hinweis */}
                                 <div className="flex flex-col gap-1">
-                                  <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-2 sm:gap-3">
 
 
                                     {/* 🎰 Maschinen-Icon */}
@@ -4014,7 +4025,7 @@ return (
                                 </div>
                               </div>
 
-                              <div className="p-4 space-y-2">
+                              <div className="p-3 sm:p-4 space-y-2">
                                 {mps.map((mp) => {
                                   const pos = getPos(mp);
 
@@ -4040,7 +4051,7 @@ return (
                                     <div
                                       key={k(mp.match_id, mp.player_id)}
                                       className={
-                                        "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 " +
+                                        "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-4 sm:py-3 " +
                                         (isWinner
                                           ? "bg-amber-200 border-amber-300"
                                           : "bg-white")
@@ -4066,6 +4077,7 @@ return (
                                       <div className="w-44">
                                         <Select
                                           value={pos ?? ""}
+                                          className="rounded-lg px-3 py-2 text-sm sm:px-4 sm:py-3 sm:text-base"
                                           disabled={locked}
                                           onChange={async (e) => {
                                             if (locked) return;
@@ -4176,10 +4188,9 @@ return (
 
 
 
-
 export default function AdminHome() {
   const [tab, setTab] = useState<
-    "start" | "create" | "archive" | "elimination" | "locations" | "players" | "stats"
+    "start" | "create" | "archive" | "elimination" | "locations" | "players" | "stats" | "admin"
   >("start");
 
     // ⭐ NEU: Rolle + Mail des aktuellen Users
@@ -4193,7 +4204,11 @@ useEffect(() => {
       const supabase = supabaseBrowser();
       const { data, error } = await supabase.auth.getUser();
 
+
       console.log("getUser result:", { data, error });
+
+
+
 
       if (error || !data?.user) {
         setUserRole(null);
@@ -4203,6 +4218,39 @@ useEffect(() => {
       }
 
       const user = data.user;
+
+// ✅ Activity: 1× pro Tag (pro Tab), StrictMode-sicher
+try {
+  // Legacy keys wegräumen (falls du vorher "activity_bumped" verwendet hast)
+  sessionStorage.removeItem("activity_bumped");
+  sessionStorage.removeItem("activity_bumped_at");
+
+  const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const key = `activity_bumped_${today}`;
+  const last = Number(sessionStorage.getItem(`${key}_at`) || "0");
+
+  // optional: 10s cooldown gegen F5-Spam
+  if (sessionStorage.getItem(key) !== "1" && Date.now() - last >= 10_000) {
+    // Flag SOFORT setzen (blockt StrictMode-Doppelaufrufe)
+    sessionStorage.setItem(key, "1");
+    sessionStorage.setItem(`${key}_at`, String(Date.now()));
+
+    const { error: rpcError } = await supabase.rpc("bump_daily_activity");
+    if (rpcError) throw rpcError;
+
+    console.log("activity bump ok:", { today });
+  }
+} catch (e) {
+  // wenn es fehlschlägt, wieder erlauben
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `activity_bumped_${today}`;
+  sessionStorage.removeItem(key);
+
+  console.error("activity bump failed", e);
+}
+
+
+
 
       setUserEmail(user.email ?? null);
 
@@ -4296,15 +4344,29 @@ useEffect(() => {
     loadLocations();
   }, []);
 
-  async function loadArchive() {
-    try {
-      const res = await fetch("/api/tournaments/list", { cache: "no-store" });
-      const j = await res.json().catch(() => ({}));
-      setArchive(j.tournaments ?? []);
-    } catch {
-      setArchive([]);
-    }
+  useEffect(() => {
+  if (tab === "archive") {
+    loadArchive();
   }
+}, [tab]);
+
+async function loadArchive() {
+  // HARD RESET: alte Liste sofort weg, damit nichts “stale” bleibt
+  setArchive([]);
+
+  try {
+    const res = await fetch(`/api/tournaments/list?ts=${Date.now()}`, {
+      cache: "no-store",
+    });
+    const j = await res.json().catch(() => ({}));
+    setArchive(j.tournaments ?? []);
+  } catch {
+    setArchive([]);
+  }
+}
+
+
+
 
   async function loadLocations() {
     try {
@@ -4536,6 +4598,24 @@ if (joined)
             >
               Statistiken
             </button>
+
+            {isAdmin && (
+              <>
+                <span className="hidden md:inline text-neutral-300">|</span>
+                <button
+                  onClick={() => setTab("admin")}
+                  className={
+                    "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                    (tab === "admin"
+                      ? "bg-black text-white"
+                      : "text-neutral-600 hover:bg-neutral-100")
+                  }
+                >
+                  Admin
+                </button>
+              </>
+            )}
+
           </div>
         </CardHeader>
 
@@ -4547,6 +4627,8 @@ if (joined)
     </div>
   );
 
+
+  
   
 
 
@@ -4703,6 +4785,23 @@ if (joined)
             >
               Statistiken
             </button>
+
+            {isAdmin && (
+              <>
+                <span className="hidden md:inline text-neutral-300">|</span>
+                <button
+                  onClick={() => setTab("admin")}
+                  className={
+                    "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
+                    (tab === "admin"
+                      ? "bg-black text-white"
+                      : "text-neutral-600 hover:bg-neutral-100")
+                  }
+                >
+                  Admin
+                </button>
+              </>
+            )}
           </div>
         </CardHeader>
 
@@ -4970,6 +5069,8 @@ if (joined)
   />
           ) : tab === "stats" ? (
             <LeaderboardsTab isAdmin={isAdmin} />
+          ) : tab === "admin" ? (
+            <AdminTab />
           ) : null}
 
           {msg && (
@@ -5254,6 +5355,7 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
     }
 
     await reloadAll();
+    {/* await loadArchive(); neue hinzugefügt */}
     await loadChampions();
     setShowCelebration(true);
   }
@@ -5374,6 +5476,7 @@ async function registerFinalWin(playerId: string, winnerName: string) {
     }
 
     await reloadAll();
+    {/* await loadArchive(); neue hinzugefügt */}
     await loadChampions();
     setShowCelebration(true);
     return;
@@ -6800,13 +6903,15 @@ const machinesInfoById = useMemo(
         </CardBody>
       </Card>
 
-      <div className="sticky bottom-0 left-0 right-0 bg-[rgb(250,250,250)] p-4 flex gap-2 z-20">
+
+      <div className="sticky bottom-0 left-0 right-0 bg-[rgb(250,250,250)] p-3 sm:p-4 flex gap-2 z-20 text-xs sm:text-sm">
+
         <Button
           disabled={
             busy || hasOpenPositions || locked || superFinalRunning || hasActiveRound
           }
           onClick={createRound}
-          className="flex-1"
+          className="flex-1 !py-2 !text-xs sm:!py-3 sm:!text-base"
           title={
             locked
               ? "Turnier ist beendet"
@@ -6819,13 +6924,13 @@ const machinesInfoById = useMemo(
         </Button>
 
 <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-700">
-  <span className="text-sm text-gray-400">ELO</span>
+  <span className="text-xs sm:text-sm text-gray-400">ELO</span>
 
   <button
     type="button"
     disabled={busy || locked}
     onClick={() => setUseElo((prev) => !prev)}
-    className={`text-sm font-medium ${
+    className={`text-xs sm:text-sm font-medium ${
       useElo ? "text-green-400" : "text-gray-500"
     }`}
   >
@@ -6837,7 +6942,7 @@ const machinesInfoById = useMemo(
     variant="secondary"
     onClick={jumpToActiveRound}
     disabled={!rounds || rounds.length === 0}
-    className="whitespace-nowrap"
+    className="whitespace-nowrap hidden sm:inline-flex"
     title="Zur aktiven Runde springen"
   >
     ⬇️ Runde
@@ -6846,7 +6951,7 @@ const machinesInfoById = useMemo(
   <Button
     variant="secondary"
     onClick={scrollToTournamentLeaderboard}
-    className="whitespace-nowrap"
+    className="whitespace-nowrap hidden sm:inline-flex"
     title="Zum Turnier-Leaderboard springen"
   >
     🏆 Leaderboard

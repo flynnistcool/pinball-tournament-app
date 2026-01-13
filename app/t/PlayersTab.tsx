@@ -176,6 +176,81 @@ function Avatar({
   );
 }
 
+function ScoreboardRow({
+  leftLabel,
+  leftValue,
+  leftSubValue,
+  leftSubLabel,
+  centerTop,
+  rightLabel,
+  rightValue,
+  rightSubValue,
+  rightSubLabel,
+}: {
+  leftLabel: string;
+  leftValue: number;
+  leftSubValue?: number;
+  leftSubLabel?: string;
+  centerTop: string;
+  rightLabel: string;
+  rightValue: number;
+  rightSubValue?: number;
+  rightSubLabel?: string;
+}) {
+  return (
+    <div className="mt-4 rounded-2xl border bg-white px-4 py-3">
+      <div className="grid grid-cols-3 items-center">
+        {/* Left */}
+        <div className="flex flex-col items-center">
+
+          <div className="mt-1 inline-flex min-w-[1.25rem] justify-center rounded-xl bg-neutral-900 px-3 py-1 text-3xl font-extrabold tabular-nums text-white shadow-sm">
+            {leftValue}
+          </div>
+
+          {leftSubValue !== undefined ? (
+            <div className="mt-1 flex flex-col items-center">
+              <div className="text-sm font-bold tabular-nums text-neutral-900">
+                {leftSubValue}
+              </div>
+              {leftSubLabel ? (
+                <div className="text-[10px] text-neutral-500">{leftSubLabel}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Center */}
+        <div className="text-center">
+          <div className="text-xs font-semibold text-neutral-500">{centerTop}</div>
+          <div className="mt-1 text-xl font-black tracking-widest text-neutral-900">
+            VS
+          </div>
+        </div>
+
+        {/* Right */}
+        <div className="flex flex-col items-center">
+        
+          <div className="mt-1 inline-flex min-w-[1.25rem] justify-center rounded-xl bg-neutral-900 px-3 py-1 text-3xl font-extrabold tabular-nums text-white shadow-sm">
+            {rightValue}
+          </div>
+
+          {rightSubValue !== undefined ? (
+            <div className="mt-1 flex flex-col items-center">
+              <div className="text-sm font-bold tabular-nums text-neutral-900">
+                {rightSubValue}
+              </div>
+              {rightSubLabel ? (
+                <div className="text-[10px] text-neutral-500">{rightSubLabel}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabProps){
   const router = useRouter();
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -193,6 +268,10 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
 
   // Vergleichsauswahl (max. 2 Spieler)
   const [compareSelection, setCompareSelection] = useState<string[]>([]);
+  // 🆕 Head-to-Head (Vergleich: direkte Duelle)
+  const [h2hLoading, setH2hLoading] = useState(false);
+  const [h2hError, setH2hError] = useState<string | null>(null);
+  const [h2hData, setH2hData] = useState<any | null>(null);
 
   // Stats-State pro Profil
   const [statsByProfile, setStatsByProfile] = useState<
@@ -742,6 +821,198 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
     }
   }
 
+  useEffect(() => {
+  async function run() {
+    if (compareSelection.length !== 2) {
+      setH2hData(null);
+      setH2hError(null);
+      return;
+    }
+
+    const [profileAId, profileBId] = compareSelection;
+
+    setH2hLoading(true);
+    setH2hError(null);
+
+    try {
+      const res = await fetch(`/api/players/head-to-head?ts=${Date.now()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ profileAId, profileBId }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error ?? "Head-to-Head konnte nicht geladen werden.");
+
+      setH2hData(j);
+    } catch (e: any) {
+      setH2hData(null);
+      setH2hError(String(e?.message ?? e));
+    } finally {
+      setH2hLoading(false);
+    }
+  }
+
+  run();
+  }, [compareSelection]);
+
+
+
+
+  const one = h2hData?.matches?.oneVsOne;
+const togetherAny = h2hData?.matches?.togetherAny;
+
+
+const [idA, idB] =
+  compareSelection.length === 2 ? (compareSelection as [string, string]) : (["", ""] as any);
+
+const leftName =
+  profiles.find((p) => p.id === idA)?.display_name ??
+  profiles.find((p) => p.id === idA)?.nickname ??
+  "A";
+
+const rightName =
+  profiles.find((p) => p.id === idB)?.display_name ??
+  profiles.find((p) => p.id === idB)?.nickname ??
+  "B";
+
+
+const headToHeadPanel =
+  compareSelection.length === 2 ? (
+    <div className="mt-3 rounded-xl bg-white p-3 ml-3 mr-3">
+      <div className="text-base font-semibold text-neutral-800 mb-3 text-center">
+        Direktvergleich (Head-to-Head)
+      </div>
+
+      {h2hLoading ? (
+        <div className="text-sm text-neutral-500">Lade Head-to-Head…</div>
+      ) : h2hError ? (
+        <div className="text-sm text-red-600">{h2hError}</div>
+      ) : !h2hData ? (
+        <div className="text-sm text-neutral-500">Keine Daten.</div>
+      ) : (
+        <div className="grid gap-4">
+          {/* 🎯 1 vs 1 */}
+          <div className="rounded-2xl border bg-neutral-50 p-4">
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2 text-base font-semibold text-neutral-800">
+                <span>🎯</span>
+                <span>Matches 1 vs 1 (nur ihr beide)</span>
+              </div>
+
+              <div className="mt-1 text-sm text-neutral-600">
+                Spiele:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {one?.count ?? 0}
+                </span>
+              </div>
+            </div>
+
+            <ScoreboardRow
+              leftLabel={leftName}
+              leftValue={h2hData.matches.oneVsOne.aWins ?? 0}
+              centerTop="gewonnen"
+
+              rightLabel={rightName}
+              rightValue={h2hData.matches.oneVsOne.bWins ?? 0}
+            />
+          </div>
+
+          {/* 👥 zusammen */}
+          <div className="rounded-2xl border bg-neutral-50 p-4">
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2 text-base font-semibold text-neutral-800">
+                <span>👥</span>
+                <span>Matches zusammen (auch mit anderen)</span>
+              </div>
+
+              <div className="mt-1 text-sm text-neutral-600">
+                Spiele:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {togetherAny?.count ?? 0}
+                </span>
+              </div>
+            </div>
+
+            <ScoreboardRow
+              leftLabel={leftName}
+              leftValue={h2hData.matches.togetherAny?.aBeatsB ?? 0}
+              leftSubValue={h2hData.matches.togetherAny?.aFirsts ?? 0}
+              leftSubLabel="1. Plätze"
+              centerTop="besser platziert"
+              rightLabel={rightName}
+              rightValue={h2hData.matches.togetherAny?.bBeatsA ?? 0}
+              rightSubValue={h2hData.matches.togetherAny?.bFirsts ?? 0}
+              rightSubLabel="1. Plätze"
+            />
+          </div>
+
+          {/* --- TURNIERE --- */}
+          <div className="mt-2 text-center text-sm font-semibold text-neutral-700">
+            Turniere
+          </div>
+
+          {/* 🏆 Turniere 1 vs 1 */}
+          <div className="rounded-2xl border bg-neutral-50 p-4">
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2 text-base font-semibold text-neutral-800">
+                <span>🏆</span>
+                <span>Turniere 1 vs 1 (nur ihr beide)</span>
+              </div>
+
+              <div className="mt-1 text-sm text-neutral-600">
+                Turniere:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {h2hData.tournaments.oneVsOneOnly?.count ?? 0}
+                </span>
+              </div>
+            </div>
+
+            <ScoreboardRow
+              leftLabel={leftName}
+              leftValue={h2hData.tournaments.oneVsOneOnly?.aWins ?? 0}
+              centerTop="gewonnen"
+              rightLabel={rightName}
+              rightValue={h2hData.tournaments.oneVsOneOnly?.bWins ?? 0}
+            />
+          </div>
+
+          {/* 🏆 Turniere zusammen */}
+          <div className="rounded-2xl border bg-neutral-50 p-4">
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-2 text-base font-semibold text-neutral-800">
+                <span>🏆</span>
+                <span>Turniere zusammen (auch mit anderen)</span>
+              </div>
+
+              <div className="mt-1 text-sm text-neutral-600">
+                Turniere:{" "}
+                <span className="font-semibold text-neutral-900">
+                  {h2hData.tournaments.togetherAny?.count ?? 0}
+                </span>
+              </div>
+            </div>
+
+            <ScoreboardRow
+              leftLabel={leftName}
+              leftValue={h2hData.tournaments.togetherAny?.aWins ?? 0}
+              leftSubValue={h2hData.tournaments.togetherAny?.aFirsts ?? 0}
+              leftSubLabel="1. Plätze"
+              centerTop="besser platziert"
+              rightLabel={rightName}
+              rightValue={h2hData.tournaments.togetherAny?.bWins ?? 0}
+              rightSubValue={h2hData.tournaments.togetherAny?.bFirsts ?? 0}
+              rightSubLabel="1. Plätze"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
+
+
+
   // Vergleichspanel (wenn genau 2 Spieler ausgewählt sind)
   const comparePanel =
     compareSelection.length === 2
@@ -836,7 +1107,7 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
                           icon={p.icon}
                         />
                         <div>
-                          <div className="text-sm font-semibold flex items-center gap-1.5">
+                          <div className="text-base font-semibold flex items-center gap-1.5">
                             {idx === 0 ? "Spieler A:" : "Spieler B:"} {p.name}
                             {p.icon && <span>{p.icon}</span>}
                           </div>
@@ -848,7 +1119,7 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[12px] mt-1">
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] mt-1">
                         <span className="flex items-baseline gap-1">
                           <span className="text-neutral-500">ELO</span>
                           <span className="font-bold tabular-nums text-neutral-900">
@@ -876,10 +1147,10 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
                   
                         <span className="flex items-baseline gap-1">
                           
-                          <span className="font-semibold tabular-nums text-amber-600">
+                          <span className="font-bold tabular-nums text-amber-600">
                             {Number.isFinite(s.tournamentPoints) ? Math.round(s.tournamentPoints) : 0}
                           </span>{" "}
-                          <span className="text-amber-600 font-semibold">TP</span>{/*<span className="text-amber-600 font-semibold">(Turnierpunkte)</span>*/}
+                          <span className="text-amber-600 font-bold">TP</span>{/*<span className="text-amber-600 font-semibold">(Turnierpunkte)</span>*/}
                         </span>
                       </div>
 
@@ -888,23 +1159,47 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
                       <div className="flex items-center justify-between mt-1.5">
                         <span
                           className={
-                            "inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-semibold " +
+                            "inline-flex items-center rounded-full px-2 py-[2px] text-[12px] font-semibold " +
                             s.trendClass
                           }
                         >
                           Trend: {s.trendLabel}
                         </span>
+                        
                       </div>
+                     
                     </div>
                   )
                 )}
+               
+
+
+               
               </div>
+
+
+
+              
+{headToHeadPanel}
+
+
             </div>
+            
           );
         })()
       : null;
 
+
+
+
+
+
+
+
   return (
+
+
+  
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -938,6 +1233,7 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
 
         {/* Vergleichspanel */}
         {comparePanel}
+
 
         <div className="space-y-2">
           {/* Neuer Spieler – Editblock */}
@@ -1426,10 +1722,10 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                           toggleCompare(p.id);
                         }}
                         className={
-                          "rounded-full border px-2 py-[2px] text-[11px] font-medium " +
+                          "rounded-full border px-3 py-[3px] text-[12px] font-medium " +
                           (isCompared
                             ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                            : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50")
+                            : "border-blue-200 bg-blue-50 text-blue-600 hover:bg-neutral-50")
                         }
                       >
                         {isCompared ? "Im Vergleich" : "Vergleichen"}
@@ -2336,6 +2632,8 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
             </div>
           )}
         </div>
+
+
       </CardBody>
     </Card>
   );
