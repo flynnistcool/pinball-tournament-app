@@ -149,7 +149,7 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
           </span>
         )}
       </div>
-      <span className="truncate font-medium   ">{player.name}</span>
+      <span className="truncate font-medium text-sm sm:text-base">{player.name}</span>
       
 
 
@@ -3843,12 +3843,12 @@ return (
                   <div className="col-span-1 font-semibold tabular-nums">
                     #{r.number}
                   </div>
-                  <div className="col-span-3">{r.format}</div>
+                  <div className="col-span-3 text-sm sm:text-base">{r.format}</div>
                   <div className="col-span-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={
-                          "inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ring-1 ring-inset " +
+                          "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs sm:text-xs font-semibold ring-1 ring-inset " +
                           (r.status === "finished"
                             ? "bg-green-50 text-green-700 ring-green-200"
                             : r.status === "open"
@@ -3891,7 +3891,7 @@ return (
                       </span>
                     </div>
                   </div>
-                  <div className="col-span-4 text-center text-ms text-neutral-700 truncate">
+                  <div className="col-span-4 text-center text-neutral-700 truncate text-xs sm:text-sm">
                     {winnersText}
                   </div>
                   <div className="col-span-2 text-right tabular-nums">
