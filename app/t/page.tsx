@@ -150,6 +150,9 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
         )}
       </div>
       <span className="truncate font-medium   ">{player.name}</span>
+      
+
+
     </div>
   );
 }
@@ -402,13 +405,7 @@ function PlayersList({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {p.profile_id ? (
-                    <AvatarUploader
-                      profileId={p.profile_id}
-                      onDone={onReload}
-                      disabled={busy || locked}
-                    />
-                  ) : null}
+
                   <button
                     type="button"
                     disabled={busy || locked}
