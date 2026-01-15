@@ -48,6 +48,8 @@ type MP = {
   player_id: string;
   position: number | null;
   start_position?: number | null;
+  // 👇 NEU: Flipperpunkte/Score pro Spieler & Match
+  score?: number | null;
 };
 
 type Location = { id: string; name: string };
@@ -149,10 +151,7 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
           </span>
         )}
       </div>
-      <span className="truncate font-medium text-sm sm:text-base">{player.name}</span>
-      
-
-
+      <span className="truncate font-medium   ">{player.name}</span>
     </div>
   );
 }
@@ -244,17 +243,12 @@ function ShareModal({
 }) {
   const [tQr, setTQr] = useState<string>("");
   const [pQr, setPQr] = useState<string>("");
-  const [origin, setOrigin] = useState("");
 
   useEffect(() => {
     if (!open) return;
-
-    const o = window.location.origin;
-    setOrigin(o);
-
-    const tUrl = `${o}/t/${encodeURIComponent(code)}`;
-    const pUrl = `${o}/public`;
-
+    const origin = window.location.origin;
+    const tUrl = `${origin}/t/${encodeURIComponent(code)}`;
+    const pUrl = `${origin}/public`;
     (async () => {
       try {
         setTQr(await QRCode.toDataURL(tUrl, { margin: 1, width: 320 }));
@@ -268,8 +262,9 @@ function ShareModal({
 
   if (!open) return null;
 
-  const tUrl = origin ? `${origin}/t/${encodeURIComponent(code)}` : "";
-  const pUrl = origin ? `${origin}/public` : "";
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const tUrl = `${origin}/t/${encodeURIComponent(code)}`;
+  const pUrl = `${origin}/public`;
 
   return (
     <div
@@ -3678,6 +3673,11 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
   const [posOverride, setPosOverride] = useState<Record<string, number | null>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
+  // ✅ NEU: Flipperpunkte (Score) – Override + Saving-Flag (pro match_id + player_id)
+  const [scoreOverride, setScoreOverride] = useState<Record<string, string>>({});
+  const [savingScore, setSavingScore] = useState<Record<string, boolean>>({});
+  const [scoreFocusKey, setScoreFocusKey] = useState<string | null>(null);
+
   const [savingMachine, setSavingMachine] = useState<Record<string, boolean>>({});
 
   const matchesByRound = useMemo(() => {
@@ -3714,6 +3714,25 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
       ? posOverride[key]
       : mp.position;
   }
+
+  function getScoreStr(mp: MP) {
+    const key = k(mp.match_id, mp.player_id);
+    if (Object.prototype.hasOwnProperty.call(scoreOverride, key)) {
+      return scoreOverride[key];
+    }
+    return mp.score == null ? "" : String(mp.score);
+  }
+
+  const scoreFmt = new Intl.NumberFormat("en-US"); // 3,300,000,000
+
+  function formatScoreStr(raw: string) {
+    const s = (raw ?? "").trim();
+    if (!s) return "";
+    const n = Number(s);
+    if (!Number.isFinite(n)) return s;
+    return scoreFmt.format(n);
+  }
+
 
   async function setPosition(
     matchId: string,
@@ -3753,6 +3772,42 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
       alert("Speichern fehlgeschlagen (Netzwerk)");
     } finally {
       setSaving((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+  async function setScore(matchId: string, playerId: string, score: number | null) {
+    if (locked) return;
+
+    const key = k(matchId, playerId);
+    setSavingScore((prev) => ({ ...prev, [key]: true }));
+
+    const scoreFmt = new Intl.NumberFormat("en-US"); // 3,300,000,000
+
+    function formatScoreStr(raw: string) {
+      const s = (raw ?? "").trim();
+      if (!s) return "";
+      const n = Number(s);
+      if (!Number.isFinite(n)) return s;
+      return scoreFmt.format(n);
+    }
+
+    try {
+      const res = await fetch("/api/match_players/set-score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, match_id: matchId, player_id: playerId, score }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error ?? "Speichern fehlgeschlagen");
+      } else {
+        onSaved();
+      }
+    } catch {
+      alert("Speichern fehlgeschlagen (Netzwerk)");
+    } finally {
+      setSavingScore((prev) => ({ ...prev, [key]: false }));
     }
   }
 
@@ -3843,7 +3898,7 @@ return (
                   <div className="col-span-1 font-semibold tabular-nums">
                     #{r.number}
                   </div>
-                  <div className="col-span-3 text-sm sm:text-base">{r.format}</div>
+                  <div className="col-span-3">{r.format}</div>
                   <div className="col-span-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
@@ -3891,10 +3946,10 @@ return (
                       </span>
                     </div>
                   </div>
-                  <div className="col-span-4 text-center text-neutral-700 truncate text-xs sm:text-sm">
+                  <div className="col-span-4 text-center text-xs sm:text-sm text-neutral-700 truncate">
                     {winnersText}
                   </div>
-                  <div className="col-span-2 text-right tabular-nums">
+                  <div className="col-span-2 text-right tabular-nums text-xs sm:text-sm">
                     {ms.length}
                   </div>
                 </button>
@@ -4071,7 +4126,7 @@ return (
                                         ) : null}
                                       </div>
 
-                                      <div className="w-44">
+                                      <div className="w-44 flex flex-col gap-1">
                                         <Select
                                           value={pos ?? ""}
                                           className="rounded-lg px-3 py-2 text-sm sm:px-4 sm:py-3 sm:text-base"
@@ -4155,6 +4210,67 @@ return (
                                             );
                                           })}
                                         </Select>
+
+                                        {/* ✅ NEU: Flipperpunkte/Score (unter Platz-Dropdown) */}
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
+                                            Punkte
+                                          </span>
+                                          <Input
+                                           value={
+                                              scoreFocusKey === k(mp.match_id, mp.player_id)
+                                                ? getScoreStr(mp)
+                                                : formatScoreStr(getScoreStr(mp))
+                                            }
+                                            onFocus={() => setScoreFocusKey(k(mp.match_id, mp.player_id))}
+                                            inputMode="numeric"
+                                            placeholder="0"
+                                            className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
+                                            disabled={locked}
+                                            onChange={(e) => {
+                                              const raw = e.target.value;
+                                              const cleaned = raw.replace(/[^0-9]/g, "");
+                                              const key = k(mp.match_id, mp.player_id);
+                                              setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
+                                            }}
+                                            onBlur={async () => {
+                                              setScoreFocusKey(null);
+                                              const key = k(mp.match_id, mp.player_id);
+                                              const raw = (scoreOverride[key] ?? (mp.score == null ? "" : String(mp.score))).trim();
+                                              if (raw === "") {
+                                                await setScore(mp.match_id, mp.player_id, null);
+                                                setScoreOverride((prev) => {
+                                                  const cp = { ...prev };
+                                                  delete cp[key];
+                                                  return cp;
+                                                });
+                                                return;
+                                              }
+
+                                              const n = Number(raw);
+                                              if (!Number.isFinite(n) || n < 0) {
+                                                alert("Ungültige Punkte");
+                                                return;
+                                              }
+
+                                              await setScore(mp.match_id, mp.player_id, n);
+                                              setScoreOverride((prev) => {
+                                                const cp = { ...prev };
+                                                delete cp[key];
+                                                return cp;
+                                              });
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") {
+                                                (e.target as HTMLInputElement).blur();
+                                              }
+                                            }}
+                                          />
+
+                                          {savingScore[k(mp.match_id, mp.player_id)] ? (
+                                            <span className="text-[10px] sm:text-xs text-neutral-500">speichere…</span>
+                                          ) : null}
+                                        </div>
                                       </div>
                                     </div>
                                   );
@@ -4201,7 +4317,6 @@ useEffect(() => {
       const supabase = supabaseBrowser();
       const { data, error } = await supabase.auth.getUser();
 
-
       console.log("getUser result:", { data, error });
 
 
@@ -4216,36 +4331,24 @@ useEffect(() => {
 
       const user = data.user;
 
-// ✅ Activity: 1× pro Tag (pro Tab), StrictMode-sicher
-try {
-  // Legacy keys wegräumen (falls du vorher "activity_bumped" verwendet hast)
-  sessionStorage.removeItem("activity_bumped");
-  sessionStorage.removeItem("activity_bumped_at");
+      // ✅ Activity: Active day + hits (nur 1× pro Tab) – super robust
+if (sessionStorage.getItem("activity_bumped") !== "1") {
+  // optional: 10s cooldown gegen F5-spam
+  const last = Number(sessionStorage.getItem("activity_bumped_at") || "0");
+  if (Date.now() - last >= 10_000) {
+    // 🔒 Flag SOFORT setzen (blockt StrictMode-Doppelaufrufe zuverlässig)
+    sessionStorage.setItem("activity_bumped", "1");
+    sessionStorage.setItem("activity_bumped_at", String(Date.now()));
 
-  const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-  const key = `activity_bumped_${today}`;
-  const last = Number(sessionStorage.getItem(`${key}_at`) || "0");
-
-  // optional: 10s cooldown gegen F5-Spam
-  if (sessionStorage.getItem(key) !== "1" && Date.now() - last >= 10_000) {
-    // Flag SOFORT setzen (blockt StrictMode-Doppelaufrufe)
-    sessionStorage.setItem(key, "1");
-    sessionStorage.setItem(`${key}_at`, String(Date.now()));
-
-    const { error: rpcError } = await supabase.rpc("bump_daily_activity");
-    if (rpcError) throw rpcError;
-
-    console.log("activity bump ok:", { today });
+    try {
+      await supabase.rpc("bump_daily_activity");
+    } catch (e) {
+      // Wenn der Call fehlschlägt, Flag wieder entfernen, damit es später nochmal probieren kann
+      sessionStorage.removeItem("activity_bumped");
+      console.error("activity bump failed", e);
+    }
   }
-} catch (e) {
-  // wenn es fehlschlägt, wieder erlauben
-  const today = new Date().toISOString().slice(0, 10);
-  const key = `activity_bumped_${today}`;
-  sessionStorage.removeItem(key);
-
-  console.error("activity bump failed", e);
 }
-
 
 
 
