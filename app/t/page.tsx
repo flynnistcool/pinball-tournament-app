@@ -1157,7 +1157,7 @@ function toggleOpen(profileId: string) {
 
 function LeaderboardsTab({ isAdmin }: { isAdmin: boolean }) {
   const [subTab, setSubTab] = useState<
-    "elo" | "tournaments" | "series" | "matches"
+    "elo" | "tournaments" | "matches" | "highscores"
   >("elo");
 
   // --- Elo ---
@@ -1631,6 +1631,53 @@ const [filterTournamentList, setFilterTournamentList] =
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchError, setMatchError] = useState<string | null>(null);
 
+  // --- Highscores (pro Maschine) ---
+type HighscoreMachine = {
+  key: string;
+  name: string;
+  icon?: string | null;
+  location?: string | null;
+  top: Array<{
+    score: number;
+    player: string;
+    tournament: string;
+    tournamentCreatedAt?: string | null; // ✅ HIER rein
+  }>;
+};
+
+const [highscoreMachines, setHighscoreMachines] = useState<HighscoreMachine[]>([]);
+const [highscoreLoading, setHighscoreLoading] = useState(false);
+const [highscoreError, setHighscoreError] = useState<string | null>(null);
+
+async function loadHighscores() {
+  setHighscoreMachines([]);        // HARD RESET
+  setHighscoreError(null);
+  setHighscoreLoading(true);
+
+  try {
+    const res = await fetch(`/api/leaderboards/highscores?ts=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-store" },
+    });
+
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setHighscoreError(j.error ?? "Konnte Highscores nicht laden.");
+      setHighscoreMachines([]);
+      return;
+    }
+
+    setHighscoreMachines(j.machines ?? []);
+  } catch {
+    setHighscoreError("Konnte Highscores nicht laden (Netzwerkfehler?).");
+    setHighscoreMachines([]);
+  } finally {
+    setHighscoreLoading(false);
+  }
+}
+
+
 {/*
 useEffect(() => {
   if (subTab === "elo") {
@@ -1657,6 +1704,10 @@ useEffect(() => {
   } else if (subTab === "matches") {
     setMatchRows([]);        // HARD RESET
     loadMatchHistory();
+  }
+  else if (subTab === "highscores") {
+    setHighscoreMachines([]); // HARD RESET
+    loadHighscores();
   }
 }, [subTab]);
 
@@ -2119,15 +2170,15 @@ async function loadMatchHistory() {
             </button>
             <button
               type="button"
-              onClick={() => setSubTab("series")}
+              onClick={() => setSubTab("highscores")}
               className={
                 "rounded-full px-3 py-1 border text-xs font-medium " +
-                (subTab === "series"
+                (subTab === "highscores"
                   ? "bg-neutral-900 text-white border-neutral-900"
                   : "bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50")
               }
             >
-              Serien / Seasons
+              Highscores
             </button>
           </div>
         </div>
@@ -3238,12 +3289,92 @@ return (
           </div>
         )}
 
-        {/* ---------------- Serien / Seasons Platzhalter ---------------- */}
-        {subTab === "series" && (
-          <div className="text-sm text-neutral-500">
-            Wird noch bearbeitet
+{/* ---------------- Highscores ---------------- */}
+{subTab === "highscores" && (
+  <div className="space-y-3">
+    <div className="flex items-center justify-between gap-2">
+      <div>
+        <div className="text-sm font-semibold text-neutral-700">
+          Highscores (pro Maschine)
+        </div>
+        <div className="text-xs text-neutral-500">
+          Top 3 Scores je Flipper – inkl. Spieler & Turnier.
+        </div>
+      </div>
+
+      <Button
+        className="ml-auto !h-8 !px-2 !text-[11px] !leading-none"
+        variant="secondary"
+        onClick={loadHighscores}
+        disabled={highscoreLoading}
+      >
+        Neu laden
+      </Button>
+    </div>
+
+    {highscoreError && (
+      <div className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+        {highscoreError}
+      </div>
+    )}
+
+    {highscoreLoading ? (
+      <div className="text-sm text-neutral-500">Lade Highscores…</div>
+    ) : highscoreMachines.length === 0 ? (
+      <div className="text-sm text-neutral-500">
+        Noch keine Highscores vorhanden.
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {highscoreMachines.map((m) => (
+          <div key={m.key} className="rounded-2xl border bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{(m.icon ?? "🎱").trim() || "🎱"}</span>
+                  <div className="font-semibold truncate">{m.name}</div>
+                </div>
+                <div className="text-xs text-neutral-500 truncate">
+                  {m.location ?? "Unbekannte Location"}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              {(!m.top || m.top.length === 0) ? (
+                <div className="text-sm text-neutral-500">
+                  Keine Scores eingetragen.
+                </div>
+              ) : (
+                <ol className="space-y-1 text-sm">
+                  {m.top.slice(0, 3).map((s, idx) => (
+                    <li key={idx} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-medium">
+                          {idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉"} {s.player}
+                        </span>
+                        <span className="text-xs text-neutral-500">
+                          {" "}– {s.tournament}
+                          {s.tournamentCreatedAt
+                            ? ` (${new Date(s.tournamentCreatedAt).toLocaleDateString("de-DE")})`
+                            : ""}
+                        </span>
+                      </div>
+                      <div className="tabular-nums font-semibold">
+                         {Number(s.score).toLocaleString("en-US")}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
           </div>
-        )}
+        ))}
+      </div>
+    )}
+  </div>
+)}
+
       </CardBody>
     </Card>
   );
@@ -5270,6 +5401,13 @@ function Dashboard({ code, name, isAdmin }: { code: string; name: string; isAdmi
   const [machineName, setMachineName] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // --- Turnier-Highscore-Boards (unten im Turnier) ---
+  const [playerHighscores, setPlayerHighscores] = useState<any[]>([]);
+  const [machineHighscores, setMachineHighscores] = useState<any[]>([]);
+  const [hsLoading, setHsLoading] = useState(false);
+  // --- Kategorie Turnierleaderboard (übergreifend) ---
+  const [categoryTournamentRows, setCategoryTournamentRows] = useState<any[]>([]);
+  const [categoryTournamentLoading, setCategoryTournamentLoading] = useState(false);
 
   const tournamentLeaderboardRef = useRef<HTMLDivElement | null>(null);
 
@@ -5717,9 +5855,13 @@ async function registerFinalWin(playerId: string, winnerName: string) {
 
 
   useEffect(() => {
-    reload();
-    loadProfiles();
-    reloadFinal();
+    (async () => {
+      const next = await reload();
+      await loadProfiles();
+      await reloadFinal();
+      await loadTournamentHighscores();
+      await loadCategoryTournamentLeaderboard(next?.tournament?.category);
+    })();
   }, [code]);
 
   useEffect(() => {
@@ -5860,7 +6002,11 @@ useEffect(() => {
       body: JSON.stringify({ code }),
     });
     const j = await res.json();
-    setData(j.data ?? j);
+
+    const next = j.data ?? j; // ✅ DAS fehlte
+    setData(next);
+
+    return next; // ✅ jetzt korrekt
   }
 
   async function loadProfiles() {
@@ -5928,9 +6074,63 @@ useEffect(() => {
     }
   }
 
-  async function reloadAll() {
-    await Promise.all([reload(), loadProfiles(), reloadFinal()]);
+  async function loadTournamentHighscores() {
+    if (!code) return;
+
+    setPlayerHighscores([]);   // HARD RESET
+    setMachineHighscores([]);  // HARD RESET
+    setHsLoading(true);
+
+    try {
+      const res = await fetch(`/api/tournaments/highscores?_ts=${Date.now()}`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      setPlayerHighscores(json.playerHighscores ?? []);
+      setMachineHighscores(json.machineHighscores ?? []);
+    } finally {
+      setHsLoading(false);
+    }
   }
+
+  async function loadCategoryTournamentLeaderboard(category: string | undefined | null) {
+    const cat = (category ?? "").trim();
+    if (!cat) return;
+
+    setCategoryTournamentRows([]); // HARD RESET gegen stale data
+    setCategoryTournamentLoading(true);
+
+    try {
+      const res = await fetch(
+        `/api/leaderboards/tournaments?category=${encodeURIComponent(cat)}&_ts=${Date.now()}`,
+        { cache: "no-store" }
+      );
+
+      const json = await res.json().catch(() => ({}));
+      setCategoryTournamentRows(json.rows ?? []);
+    } finally {
+      setCategoryTournamentLoading(false);
+    }
+  }
+
+
+
+  async function reloadAll() {
+    const next = await reload();
+
+    await Promise.all([
+      loadProfiles(),
+      reloadFinal(),
+      loadTournamentHighscores(),
+      loadCategoryTournamentLeaderboard(next?.tournament?.category),
+    ]);
+  }
+
 
 
 
@@ -7071,6 +7271,140 @@ const machinesInfoById = useMemo(
           )}
         </CardBody>
       </Card>
+
+{/* --- Leaderboards unten --- */}
+<div className="mt-6 grid gap-4 lg:grid-cols-3">
+  {/* A) Turnierpunkte (dein Turnierleaderboard) */}
+  <Card>
+    <CardHeader>
+      <div className="font-semibold">
+        🏆 Turnierpunkte ({tournament?.category ?? "—"})
+      </div>
+    </CardHeader>
+    <CardBody>
+      {categoryTournamentLoading ? (
+        <div className="text-sm text-neutral-500">Lade…</div>
+      ) : categoryTournamentRows.length === 0 ? (
+        <div className="text-sm text-neutral-500">
+          Keine Daten für Kategorie "{tournament?.category ?? "—"}".
+          (Nur beendete Turniere zählen.)
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-neutral-500 border-b">
+                <th className="py-1 pr-2">#</th>
+                <th className="py-1 pr-2">Spieler</th>
+                <th className="py-1 pr-2 text-right">Turnierpunkte</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categoryTournamentRows.map((r: any, idx: number) => (
+                <tr key={r.profileId ?? r.name ?? idx} className="border-b last:border-0">
+                  <td className="py-1 pr-2 text-neutral-500 tabular-nums">{idx + 1}</td>
+                  <td className="py-1 pr-2">{r.name ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right tabular-nums font-semibold">
+                    {Number(r.tournamentPoints ?? 0).toLocaleString("en-US")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </CardBody>
+
+  </Card>
+
+  {/* B) Highscores pro Spieler */}
+  <Card>
+    <CardHeader>
+      <div className="font-semibold">🔥 Highscores pro Spieler</div>
+    </CardHeader>
+    <CardBody>
+      {hsLoading ? (
+        <div className="text-sm text-neutral-500">Lade…</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-neutral-500 border-b">
+                <th className="py-1 pr-2">#</th>
+                <th className="py-1 pr-2">Spieler</th>
+                <th className="py-1 pr-2 text-right">Highscores</th>
+              </tr>
+            </thead>
+            <tbody>
+              {playerHighscores.map((r, idx) => (
+                <tr key={r.profile_id} className="border-b last:border-0">
+                  <td className="py-1 pr-2 text-neutral-500 tabular-nums">
+                    {idx + 1}
+                  </td>
+                  <td className="py-1 pr-2">{r.name}</td>
+                  <td className="py-1 pr-2 text-right tabular-nums font-semibold">
+                    {r.highscores}
+                  </td>
+                </tr>
+              ))}
+              {playerHighscores.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="py-2 text-sm text-neutral-500">
+                    Noch keine Highscores.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </CardBody>
+  </Card>
+
+  {/* C) Maschinen-Highscores */}
+  <Card>
+    <CardHeader>
+      <div className="font-semibold">🕹️ Maschinen-Highscores</div>
+    </CardHeader>
+    <CardBody>
+      {hsLoading ? (
+        <div className="text-sm text-neutral-500">Lade…</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-neutral-500 border-b">
+                <th className="py-1 pr-2">Maschine</th>
+                <th className="py-1 pr-2">Spieler</th>
+                <th className="py-1 pr-2 text-right">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {machineHighscores.map((r, idx) => (
+                <tr key={`${r.machine_id}-${r.profile_id}-${idx}`} className="border-b last:border-0">
+                  <td className="py-1 pr-2">{r.machine_name}</td>
+                  <td className="py-1 pr-2">{r.name}</td>
+                  <td className="py-1 pr-2 text-right tabular-nums font-semibold">
+                    {Number(r.score ?? 0).toLocaleString("en-US")}
+                  </td>
+                </tr>
+              ))}
+              {machineHighscores.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="py-2 text-sm text-neutral-500">
+                    Noch keine Scores.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </CardBody>
+  </Card>
+</div>
+
+
 
 
       <div className="sticky bottom-0 left-0 right-0 bg-[rgb(250,250,250)] p-3 sm:p-4 flex gap-2 z-20 text-xs sm:text-sm">
