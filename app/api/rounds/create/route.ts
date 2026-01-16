@@ -1,7 +1,154 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
-
 type StartOrderMode = "random" | "standings_asc";
+
+type PlayerRow = {
+  id: string;
+  name: string;
+  active: boolean;
+  profile_id?: string | null;
+};
+
+function pairKey(a: string, b: string) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function groupRepeatCost(group: PlayerRow[], pairCounts: Map<string, number>) {
+  let cost = 0;
+  for (let i = 0; i < group.length; i++) {
+    for (let j = i + 1; j < group.length; j++) {
+      cost += pairCounts.get(pairKey(group[i].id, group[j].id)) ?? 0;
+    }
+  }
+  return cost;
+}
+
+function buildPairCountsFromHistory(mpByMatch: Record<string, { player_id: string }[]>) {
+  const pairCounts = new Map<string, number>();
+  for (const mps of Object.values(mpByMatch)) {
+    const ids = (mps ?? []).map((x) => x.player_id).filter(Boolean);
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const k = pairKey(ids[i], ids[j]);
+        pairCounts.set(k, (pairCounts.get(k) ?? 0) + 1);
+      }
+    }
+  }
+  return pairCounts;
+}
+
+function makeMatchplayGroupsAvoidingRepeats(
+  players: PlayerRow[],
+  groupSize: 2 | 3 | 4,
+  pairCounts: Map<string, number>
+): { groups: PlayerRow[][]; lone?: PlayerRow } {
+  const ps = players.slice();
+
+  // --- 1vs1 (groupSize=2): exakte Suche nach der besten Paarung (minimale Wiederholungen) ---
+  if (groupSize === 2) {
+    const byId = new Map(ps.map((p) => [p.id, p] as const));
+    const idsAll = ps.map((p) => p.id);
+
+    function bestMatchingForIds(ids: string[]): { pairs: [string, string][]; cost: number } {
+      let best: { pairs: [string, string][]; cost: number } | null = null;
+
+      const idsSet = new Set(ids);
+      const idsArr = Array.from(idsSet);
+
+      function rec(remaining: string[], pairs: [string, string][], cost: number) {
+        if (best && cost > best.cost) return;
+        if (remaining.length < 2) {
+          if (!best || cost < best.cost || (cost === best.cost && Math.random() < 0.5)) {
+            best = { pairs: pairs.slice(), cost };
+          }
+          return;
+        }
+
+        const a = remaining[0];
+        const rest = remaining.slice(1);
+
+        // Kandidaten nach "wie oft schon gegeneinander" sortieren (aufsteigend), bei Gleichstand zufällig.
+        const candidates = rest
+          .map((b) => ({ b, w: pairCounts.get(pairKey(a, b)) ?? 0 }))
+          .sort((x, y) => (x.w !== y.w ? x.w - y.w : Math.random() < 0.5 ? -1 : 1));
+
+        for (const c of candidates) {
+          const b = c.b;
+          const w = c.w;
+          const nextRemaining = rest.filter((x) => x !== b);
+          pairs.push([a, b]);
+          rec(nextRemaining, pairs, cost + w);
+          pairs.pop();
+          // Wenn wir schon die perfekte Lösung gefunden haben: früh raus.
+          if (best && best.cost === 0) return;
+        }
+      }
+
+      rec(idsArr.sort(() => (Math.random() < 0.5 ? -1 : 1)), [], 0);
+      return best ?? { pairs: [], cost: Number.POSITIVE_INFINITY };
+    }
+
+    // Bei ungerader Spielerzahl: probiere jede Bye-Option und nimm die beste.
+    let bestOverall: {
+      pairs: [string, string][];
+      cost: number;
+      lone?: string;
+    } | null = null;
+
+    const candidatesForBye = idsAll.length % 2 === 1 ? idsAll : [null];
+
+    for (const byeId of candidatesForBye as any[]) {
+      const ids = byeId ? idsAll.filter((x) => x !== byeId) : idsAll.slice();
+      const res = bestMatchingForIds(ids);
+      const totalCost = res.cost;
+      if (
+        !bestOverall ||
+        totalCost < bestOverall.cost ||
+        (totalCost === bestOverall.cost && Math.random() < 0.5)
+      ) {
+        bestOverall = { pairs: res.pairs, cost: totalCost, lone: byeId ?? undefined };
+      }
+      if (bestOverall && bestOverall.cost === 0 && (idsAll.length % 2 === 0 || byeId)) {
+        // Für den Bye-Fall gibt es nicht zwingend "0" als bestes. Trotzdem reicht hier ein sehr früher Abbruch.
+        break;
+      }
+    }
+
+    const groups: PlayerRow[][] = (bestOverall?.pairs ?? []).map(([a, b]) => [byId.get(a)!, byId.get(b)!]);
+    const lone = bestOverall?.lone ? byId.get(bestOverall.lone) : undefined;
+    return { groups, lone };
+  }
+
+  // --- 3/4er Matchplay: viele Zufallsversuche und den besten nehmen (minimale Wiederholungen) ---
+  const maxAttempts = 400;
+  let bestGroups: PlayerRow[][] = [];
+  let bestCost = Number.POSITIVE_INFINITY;
+  let bestLone: PlayerRow | undefined;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const shuffled = shuffle(ps);
+    const groups: PlayerRow[][] = [];
+    const pool = shuffled.slice();
+    while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
+
+    let lone: PlayerRow | undefined;
+    if (pool.length >= 2) {
+      groups.push(pool.splice(0));
+    } else if (pool.length === 1) {
+      lone = pool[0];
+    }
+
+    const cost = groups.reduce((sum, g) => sum + groupRepeatCost(g, pairCounts), 0);
+    if (cost < bestCost || (cost === bestCost && Math.random() < 0.5)) {
+      bestCost = cost;
+      bestGroups = groups;
+      bestLone = lone;
+      if (bestCost === 0) break;
+    }
+  }
+
+  return { groups: bestGroups, lone: bestLone };
+}
 
 function shuffle<T>(arr: T[]): T[] {
   return arr
@@ -205,43 +352,49 @@ export async function POST(req: Request) {
   const standingByPlayerId = new Map<string, Standing>();
   for (const st of standings) standingByPlayerId.set(st.player_id, st);
 
-  // Spieler-Reihenfolge für Gruppeneinteilung
-  let orderedPlayersForGrouping: any[] = [];
+  // Wie oft haben Spieler schon gegeneinander (oder im selben Match) gespielt?
+  // Für 1vs1 ist das exakt "A vs B". Für 3/4er Matchplay zählt es als "zusammen gespielt".
+  const pairCounts = buildPairCountsFromHistory(mpByMatch);
+
+  const warnings: string[] = [];
+
+  // Gruppen bilden
+  let groups: PlayerRow[][] = [];
 
   if (format === "swiss") {
+    // Swiss: wie bisher nach Standings (und innerhalb gleicher Punkte random), dann in Gruppen schneiden.
+    let orderedPlayersForGrouping: PlayerRow[] = [];
     if ((rounds ?? []).length === 0) {
-      orderedPlayersForGrouping = shuffle(players);
+      orderedPlayersForGrouping = shuffle(players as PlayerRow[]);
     } else {
-      orderedPlayersForGrouping = players.slice().sort((a: any, b: any) => {
+      orderedPlayersForGrouping = (players as PlayerRow[]).slice().sort((a, b) => {
         const sa = standingByPlayerId.get(a.id)?.points ?? 0;
         const sb = standingByPlayerId.get(b.id)?.points ?? 0;
         if (sa !== sb) return sb - sa;
         return Math.random() < 0.5 ? -1 : 1;
       });
     }
+
+    const pool = orderedPlayersForGrouping.slice();
+    while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
+
+    if (pool.length >= 2) {
+      groups.push(pool.splice(0));
+    } else if (pool.length === 1) {
+      const lone = pool[0];
+      warnings.push(`Ein Spieler ohne Gruppe: ${lone.name ?? "?"} (setzt diese Runde aus)`);
+    }
+  } else if (format === "matchplay") {
+    // Matchplay: zufällig, aber Wiederholungen so lange wie möglich vermeiden.
+    const res = makeMatchplayGroupsAvoidingRepeats(players as PlayerRow[], groupSize, pairCounts);
+    groups = res.groups;
+    if (res.lone) warnings.push(`Ein Spieler ohne Gruppe: ${res.lone.name ?? "?"} (setzt diese Runde aus)`);
   } else {
-    orderedPlayersForGrouping = shuffle(players);
-  }
-
-  // Gruppen bilden
-  const groups: any[][] = [];
-  const pool = orderedPlayersForGrouping.slice();
-
-  while (pool.length >= groupSize) {
-    groups.push(pool.splice(0, groupSize));
-  }
-
-  const warnings: string[] = [];
-
-  if (pool.length >= 2) {
-    groups.push(pool.splice(0));
-  } else if (pool.length === 1) {
-    const lone = pool[0];
-    warnings.push(
-      `Ein Spieler ohne Gruppe: ${
-        lone.name ?? "?"
-      } (setzt diese Runde aus)`
-    );
+    // Round Robin: aktuell wie vorher (random). Wenn du hier einen echten Round-Robin-Plan willst, sag Bescheid.
+    const pool = shuffle(players as PlayerRow[]).slice();
+    while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
+    if (pool.length >= 2) groups.push(pool.splice(0));
+    else if (pool.length === 1) warnings.push(`Ein Spieler ohne Gruppe: ${pool[0].name ?? "?"} (setzt diese Runde aus)`);
   }
 
   if (!groups.length) {

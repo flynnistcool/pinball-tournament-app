@@ -131,6 +131,10 @@ const COLOR_OPTIONS = [
 
 
 
+
+
+
+
 function Avatar({
   url,
   name,

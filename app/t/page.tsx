@@ -156,6 +156,8 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
   );
 }
 
+
+
 function Avatar({ url, name }: { url: string | null; name: string }) {
   const initials = name
     .trim()
@@ -328,8 +330,11 @@ function ShareModal({
   );
 }
 
+
+
 function PlayersList({
   players,
+  profiles,   
   profAvatar,
   profRating,
   playersById,
@@ -338,9 +343,14 @@ function PlayersList({
   busy,
   locked,
   eloDeltas,
+  eloShieldedByProfile, // ✅ NEU
 }: any) {
   const active = (players ?? []).filter((p: any) => p.active);
   const inactive = (players ?? []).filter((p: any) => !p.active);
+  const profilesById: Record<string, any> = {};
+  for (const pr of profiles ?? []) {
+    if (pr?.id) profilesById[pr.id] = pr;
+  }
 
   return (
     <Card>
@@ -365,6 +375,26 @@ function PlayersList({
 
             const delta =
               p.profile_id && eloDeltas ? eloDeltas[p.profile_id] ?? 0 : 0;
+
+const prof = p.profile_id ? profilesById[p.profile_id] : null;
+
+const k =
+  prof
+    ? (Number(prof.provisional_matches ?? 0) > 0
+        ? 32
+        : Number(prof.matches_played ?? 0) < 30
+        ? 24
+        : 16)
+    : null;
+
+const kBadgeClass =
+  k === 32
+    ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+    : k === 24
+    ? "text-amber-700 bg-amber-50 border-amber-200"
+    : "text-neutral-600 bg-neutral-50 border-neutral-200";
+
+
             const hasDelta = typeof delta === "number" && delta !== 0;
             const deltaSign = delta > 0 ? "+" : "";
             const deltaClass =
@@ -376,7 +406,26 @@ function PlayersList({
                 className="flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3"
               >
                 <div className="flex items-center gap-3">
-                  <PlayerPill player={pv} />
+                      <div className="flex items-center gap-2 min-w-0">
+                        <PlayerPill player={pv} />
+
+                        {typeof k === "number" && (
+                          <span
+                            className={
+                              "shrink-0 rounded-full border px-2 py-[1px] text-[11px] font-bold tabular-nums " +
+                              kBadgeClass
+                            }
+                            title={
+                              prof
+                                ? `K=${k} • matches_played=${prof.matches_played ?? 0} • provisional=${prof.provisional_matches ?? 0}`
+                                : "Kein Profil gefunden"
+                            }
+                          >
+                            K{k}
+                          </span>
+                        )}
+                      </div>
+
 
                   {p.profile_id && profRating?.[p.profile_id] != null ? (
                     <span className="ml-2 inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-sm">
@@ -397,6 +446,16 @@ function PlayersList({
                       )}
                     </span>
                   ) : null}
+
+                  {hasDelta && eloShieldedByProfile?.[p.profile_id] === true && (
+                    <span
+                      className="ml-1 text-xs text-sky-700"
+                      title="Elo-Schutz aktiv (×0.5 gegen Provisional-Gegner)"
+                    >
+                      🛡
+                    </span>
+                  )}
+
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -5387,6 +5446,7 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   const prevRatingsRef = useRef<Record<string, number>>({});
   const expectEloUpdateRef = useRef(false);
   const [eloDeltas, setEloDeltas] = useState<Record<string, number>>({});   
+  const [eloShieldedByProfile, setEloShieldedByProfile] = useState<Record<string, boolean>>({});
 
   // ⭐ NEU: Start-Elo pro Profil (vor diesem Turnier)
   const [tournamentStartRatings, setTournamentStartRatings] = useState<
@@ -5940,6 +6000,9 @@ useEffect(() => {
     expectEloUpdateRef.current = true;
 
     setBusy(true);
+
+   
+
     setNotice(null);
 
     const res = await fetch("/api/tournaments/recalc-elo", {
@@ -5951,7 +6014,11 @@ useEffect(() => {
     const j = await res.json().catch(() => ({}));
     setBusy(false);
 
+    setEloShieldedByProfile(j.shieldedByProfile ?? {});
+    console.log("shieldedByProfile payload:", j.shieldedByProfile);
+
     if (!res.ok) {
+      setEloShieldedByProfile({});
       setNotice(j.error ?? "Elo-Neuberechnung fehlgeschlagen");
       return;
     }
@@ -6748,7 +6815,7 @@ const machinesInfoById = useMemo(
       >
         Runde erzeugen + Maschinen zuweisen
       </Button>
-      {/*
+      
       <Button
       
         variant="secondary"
@@ -6760,7 +6827,7 @@ const machinesInfoById = useMemo(
       >
         Elo neu berechnen
       </Button>
-      */}
+      
 
       {/* ⭐ Toggle in einer cleanen Zeile */}
       <div className="flex items-center gap-3 text-sm text-neutral-600">
@@ -6797,6 +6864,7 @@ const machinesInfoById = useMemo(
 
       <PlayersList
         players={data?.players ?? []}
+        profiles={profiles}     
         profAvatar={profAvatar}
         profRating={profRating}
         playersById={playersById}
@@ -6805,6 +6873,7 @@ const machinesInfoById = useMemo(
         busy={busy}
         locked={locked}
         eloDeltas={eloDeltas} 
+        eloShieldedByProfile={eloShieldedByProfile}  // ✅ HIER
       />
       <div ref={tournamentLeaderboardRef} />
       <Stats code={code} tournamentName={tournamentName} />

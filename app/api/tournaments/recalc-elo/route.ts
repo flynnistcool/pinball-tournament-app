@@ -5,6 +5,7 @@ type EloState = {
   rating: number;
   matches_played: number;
   provisional_matches: number;
+  shielded: boolean; // ✅ NEU: wurde in diesem Recalc mindestens einmal geschützt?
 };
 
 function expectedScore(rA: number, rB: number) {
@@ -46,9 +47,7 @@ export async function POST(req: Request) {
   // 2) Startwerte aus tournament_ratings laden
   const { data: trRows, error: trErr } = await sb
     .from("tournament_ratings")
-    .select(
-      "profile_id, rating_before, provisional_before, matches_before"
-    )
+    .select("profile_id, rating_before, provisional_before, matches_before")
     .eq("tournament_id", t.id);
 
   if (trErr) {
@@ -75,6 +74,7 @@ export async function POST(req: Request) {
       rating: Number(row.rating_before),
       matches_played: Number(row.matches_before),
       provisional_matches: Number(row.provisional_before),
+      shielded: false, // ✅ NEU
     });
   }
 
@@ -113,6 +113,7 @@ export async function POST(req: Request) {
       ok: true,
       message:
         "Keine fertigen Elo-Runden – Profile wurden auf Startwerte zurückgesetzt.",
+      shieldedByProfile: {}, // ✅ NEU
     });
   }
 
@@ -187,7 +188,7 @@ export async function POST(req: Request) {
   }
 
   // Hilfsfunktion: Elo-Update für ein Match
-  function applyMatchElo(mpList: MPItem[]) {
+  function applyMatchElo(mpList: MPItem[], shieldedThisRound: Record<string, boolean>) {
     // nur Spieler mit gesetzter Position berücksichtigen
     const players = mpList.filter((p) => p.position != null);
     if (players.length < 2) return;
@@ -216,8 +217,21 @@ export async function POST(req: Request) {
         const eA = expectedScore(sAState.rating, sBState.rating);
         const eB = expectedScore(sBState.rating, sAState.rating);
 
-        sAState.rating = sAState.rating + kA * (sA - eA);
-        sBState.rating = sBState.rating + kB * (sB - eB);
+        // 🛡️ Provisional-Schutz: gegen Provisional zählt das Duell nur 50 %
+        const wA = sBState.provisional_matches > 0 ? 0.5 : 1.0;
+        const wB = sAState.provisional_matches > 0 ? 0.5 : 1.0;
+
+        if (wA < 1) {
+          sAState.shielded = true;
+          shieldedThisRound[A.profile_id] = true;
+        }
+        if (wB < 1) {
+          sBState.shielded = true;
+          shieldedThisRound[B.profile_id] = true;
+        }
+
+        sAState.rating = sAState.rating + wA * kA * (sA - eA);
+        sBState.rating = sBState.rating + wB * kB * (sB - eB);
       }
     }
 
@@ -240,13 +254,19 @@ export async function POST(req: Request) {
     matchesByRound.set(m.round_id, arr);
   }
 
-  for (const r of rounds ?? []) {
-    const mids = matchesByRound.get(r.id) ?? [];
-    for (const mid of mids) {
-      const mpl = mpByMatch.get(mid) ?? [];
-      applyMatchElo(mpl);
-    }
+  let lastRoundShieldedByProfile: Record<string, boolean> = {};
+for (const r of rounds ?? []) {
+  const shieldedThisRound: Record<string, boolean> = {}; // ✅ reset pro Runde
+
+  const mids = matchesByRound.get(r.id) ?? [];
+  for (const mid of mids) {
+    const mpl = mpByMatch.get(mid) ?? [];
+    applyMatchElo(mpl, shieldedThisRound); // ✅ Map übergeben
   }
+
+  // ✅ merken: das ist immer die zuletzt verarbeitete (höchste) finished Runde
+  lastRoundShieldedByProfile = shieldedThisRound;
+}
 
   // 6) Profile aktualisieren
   for (const [profileId, st] of stateByProfile.entries()) {
@@ -263,5 +283,6 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     message: "Elo für dieses Turnier wurde neu berechnet.",
+    shieldedByProfile: lastRoundShieldedByProfile, // ✅ nur letzte Runde
   });
 }
