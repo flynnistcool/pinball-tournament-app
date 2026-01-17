@@ -4283,6 +4283,34 @@ async function handleChangeMachine(matchId: string, machineId: string | null) {
 }
 
 
+async function saveStartOrder(matchId: string, orderedPlayerIds: string[]) {
+  const res = await fetch(`/api/match_players/set-start-order?ts=${Date.now()}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+    cache: "no-store",
+    body: JSON.stringify({
+      matchId,
+      orderedPlayerIds,
+    }),
+  });
+
+  if (!res.ok) {
+    // versuche Fehlermeldung vom Server zu lesen (falls JSON)
+    const j = await res.json().catch(() => ({} as any));
+    const msg =
+      (j && (j.error || j.message)) ||
+      (await res.text().catch(() => "")) ||
+      `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+}
+
+
+
+
 
 return (
   <Card>
@@ -4539,6 +4567,8 @@ return (
                                 </div>
                               </div>
 
+                              
+
 <div className="p-3 sm:p-4">
   {(() => {
     const ids = mps.map((x) => x.player_id).filter(Boolean);
@@ -4548,7 +4578,10 @@ return (
       <DndContext
         sensors={dndSensors}
         collisionDetection={closestCenter}
-        onDragEnd={({ active, over }) => {
+
+
+        
+        onDragEnd={async({ active, over }) => {
           if (dndDisabled) return;
           if (!over) return;
           if (active.id === over.id) return;
@@ -4558,7 +4591,14 @@ return (
           if (oldIndex < 0 || newIndex < 0) return;
 
           const newIds = arrayMove(ids, oldIndex, newIndex);
-          saveStartOrder(m.id, newIds);
+
+          try {
+            await saveStartOrder(m.id, newIds);
+            onSaved(); // reloadAll
+            } catch (e: any) {
+              console.error(e);
+              alert(`Konnte Startreihenfolge nicht speichern:\n${e?.message ?? e}`);
+            }
         }}
       >
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
@@ -6323,6 +6363,7 @@ useEffect(() => {
 
 
 
+
   async function reload() {
     const res = await fetch("/api/tournaments/load", {
       method: "POST",
@@ -6459,25 +6500,7 @@ useEffect(() => {
     ]);
   }
 
-  async function saveStartOrder(matchId: string, orderedPlayerIds: string[]) {
-    const res = await fetch(`/api/match_players/set-start-order?ts=${Date.now()}`, {
-      method: "POST",
-      cache: "no-store",
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-store",
-      },
-      body: JSON.stringify({ matchId, orderedPlayerIds }),
-    });
 
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      alert(j.error ?? "Reihenfolge speichern fehlgeschlagen");
-      return;
-    }
-
-    await reloadAll(); // ✅ jetzt ist reloadAll im Scope
-  }
 
 
 
