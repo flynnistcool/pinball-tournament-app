@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
-type StartOrderMode = "random" | "standings_asc";
+type StartOrderMode = "random" | "standings_asc" | "last_round_asc";
 
 type PlayerRow = {
   id: string;
@@ -196,9 +196,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Code fehlt" }, { status: 400 });
   }
 
-  const startOrderModeRaw = String(body.startOrderMode ?? "random");
+  const startOrderModeRaw = String(body.startOrderMode ?? "random").trim();
   const startOrderMode: StartOrderMode =
-    startOrderModeRaw === "standings_asc" ? "standings_asc" : "random";
+    startOrderModeRaw === "standings_asc"
+      ? "standings_asc"
+      : startOrderModeRaw === "last_round_asc"
+      ? "last_round_asc"
+      : "random";
 
   const useElo = Boolean(body.useElo);
 
@@ -404,6 +408,45 @@ export async function POST(req: Request) {
     );
   }
 
+  // --- Startreihenfolge "nach letzter Runde" ist nur sinnvoll, wenn
+  // (a) diese Runde genau 1 Match erzeugt UND
+  // (b) die letzte Runde ebenfalls genau 1 Match hatte.
+  const singleMatchThisRound = groups.length === 1;
+  let effectiveStartOrderMode: StartOrderMode = startOrderMode;
+
+  // Map: player_id -> position in letzter Runde (1=best, höher=schlechter)
+  const lastRoundPosByPlayerId = new Map<string, number | null>();
+
+  if (startOrderMode === "last_round_asc") {
+    // letzte Runde bestimmen
+    const lastRound = (rounds ?? []).reduce(
+      (best: any | null, r: any) => (!best || (r.number ?? 0) > (best.number ?? 0) ? r : best),
+      null
+    );
+    const lastRoundId = lastRound?.id as string | undefined;
+
+    // Wie viele Matches hatte die letzte Runde?
+    const lastRoundMatchIds = lastRoundId
+      ? (matches ?? []).filter((m: any) => m.round_id === lastRoundId).map((m: any) => m.id)
+      : [];
+
+    const singleMatchLastRound = lastRoundMatchIds.length === 1;
+
+    if (!singleMatchThisRound || !singleMatchLastRound) {
+      effectiveStartOrderMode = "random";
+      warnings.push(
+        "Start-Reihenfolge 'Schlechtester zuerst (nach letzter Runde)' ist nur möglich, wenn pro Runde genau ein Match existiert. Es wird zufällig sortiert."
+      );
+    } else {
+      // Positionen aus der letzten Runde einsammeln
+      const lastMatchId = lastRoundMatchIds[0];
+      for (const mp of matchPlayers ?? []) {
+        if (mp.match_id !== lastMatchId) continue;
+        lastRoundPosByPlayerId.set(mp.player_id, mp.position ?? null);
+      }
+    }
+  }
+
   // Maschinen-Historie pro Spieler laden
   const { data: hist } = await sb
     .from("match_players")
@@ -524,11 +567,26 @@ export async function POST(req: Request) {
     // Startreihenfolge
     let playersInThisMatch = group.slice();
 
-    if (startOrderMode === "standings_asc") {
+    if (effectiveStartOrderMode === "standings_asc") {
       playersInThisMatch.sort((a: any, b: any) => {
         const sa = standingByPlayerId.get(a.id)?.points ?? 0;
         const sb = standingByPlayerId.get(b.id)?.points ?? 0;
         if (sa !== sb) return sa - sb;
+        return String(b.name ?? "").localeCompare(String(a.name ?? ""));
+      });
+    } else if (effectiveStartOrderMode === "last_round_asc") {
+      // Nur sinnvoll bei genau 1 Match pro Runde (siehe Checks oben).
+      playersInThisMatch.sort((a: any, b: any) => {
+        const pa = lastRoundPosByPlayerId.get(a.id) ?? null;
+        const pb = lastRoundPosByPlayerId.get(b.id) ?? null;
+
+        // Spieler ohne Position (z.B. kein Ergebnis) ans Ende
+        if (pa == null && pb == null) return a.name.localeCompare(b.name);
+        if (pa == null) return 1;
+        if (pb == null) return -1;
+
+        // schlechter (höhere Zahl) zuerst
+        if (pa !== pb) return pb - pa;
         return a.name.localeCompare(b.name);
       });
     } else {
@@ -592,5 +650,6 @@ export async function POST(req: Request) {
     warnings,
     round_number: nextRoundNumber,
     startOrderMode,
+    effectiveStartOrderMode, // ✅ NEU (Debug)
   });
 }

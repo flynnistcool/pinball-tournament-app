@@ -11,6 +11,15 @@ function first<T>(v: T | T[] | null | undefined): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
+// Strenge Normalisierung für Keys (inkl. NBSP)
+function normMachineKeyName(s: any) {
+  return String(s ?? "")
+    .replace(/\u00A0/g, " ") // NBSP -> normales Leerzeichen
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " "); // mehrere Leerzeichen -> eins
+}
+
 export async function GET() {
   const sb = supabaseAdmin();
 
@@ -77,7 +86,8 @@ export async function GET() {
     });
   }
 
-  // Gruppieren: Location + Maschine
+  // Gruppieren: Location (NAME) + Maschine (NAME)
+  // WICHTIG: Location-Name als Key, damit doppelte location_id mit gleichem Namen zusammenfallen.
   const machinesMap = new Map<
     string,
     {
@@ -115,9 +125,11 @@ export async function GET() {
         ? locationMap.get(tournament.location_id) ?? "Unbekannte Location"
         : "Unbekannte Location";
 
-    // key nach location + machine (maschinen-id ist stabiler als name)
+    // key nach location-name + machine-name (streng normalisiert)
     const machineName = (machine.name ?? "Unbekannte Maschine").trim();
-    const key = `${tournament.location_id ?? "none"}::${machineName.toLowerCase()}`;
+    const locKey = normMachineKeyName(locationName);
+    const machineKeyName = normMachineKeyName(machineName);
+    const key = `${locKey}::${machineKeyName}`;
 
     if (!machinesMap.has(key)) {
       machinesMap.set(key, {
@@ -129,7 +141,11 @@ export async function GET() {
       });
     }
 
-    machinesMap.get(key)!.top.push({
+    // Icon auffuellen, falls erste Zeile kein Icon hatte, spaeter aber schon
+    const bucket = machinesMap.get(key)!;
+    if (!bucket.icon && machine.icon_emoji) bucket.icon = machine.icon_emoji;
+
+    bucket.top.push({
       score: scoreNum,
       player: player?.name ?? "Unbekannt",
       tournament: tournament.name ?? "Unbekanntes Turnier",
@@ -144,6 +160,47 @@ export async function GET() {
     return m;
   });
 
+  // --- Globales Highscore-Leaderboard pro Spieler ---
+  // Punkte: 🥇=3, 🥈=2, 🥉=1
+  const ptsForRank = (idx: number) => (idx === 0 ? 3 : idx === 1 ? 2 : idx === 2 ? 1 : 0);
+
+  const playerMap = new Map<
+    string,
+    { player: string; hsWins: number; hsPoints: number; totalScoreSum: number }
+  >();
+
+  for (const m of machines) {
+    const top = m.top ?? [];
+    for (let i = 0; i < Math.min(3, top.length); i++) {
+      const entry = top[i];
+      if (!entry?.player) continue;
+
+      const pkey = entry.player;
+      const prev = playerMap.get(pkey) ?? {
+        player: entry.player,
+        hsWins: 0,
+        hsPoints: 0,
+        totalScoreSum: 0,
+      };
+
+      const addPts = ptsForRank(i);
+
+      playerMap.set(pkey, {
+        player: prev.player,
+        hsWins: prev.hsWins + (i === 0 ? 1 : 0),
+        hsPoints: prev.hsPoints + addPts,
+        totalScoreSum: prev.totalScoreSum + (Number(entry.score) || 0),
+      });
+    }
+  }
+
+  // Sortierung: 1) Points, 2) Wins, 3) ScoreSum
+  const players = Array.from(playerMap.values()).sort((a, b) => {
+    if (b.hsPoints !== a.hsPoints) return b.hsPoints - a.hsPoints;
+    if (b.hsWins !== a.hsWins) return b.hsWins - a.hsWins;
+    return (b.totalScoreSum ?? 0) - (a.totalScoreSum ?? 0);
+  });
+
   // Sortierung: Location, dann Name
   machines.sort(
     (a, b) =>
@@ -152,7 +209,7 @@ export async function GET() {
   );
 
   return NextResponse.json(
-    { machines },
+    { machines, players },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

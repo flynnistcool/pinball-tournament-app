@@ -2,6 +2,23 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, Fragment  } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+
+import { CSS } from "@dnd-kit/utilities";
+
 import { Button, Card, CardBody, CardHeader, Input, Pill, Select } from "@/components/ui";
 import { BarChart, Sparkline } from "@/components/charts";
 import QRCode from "qrcode";
@@ -155,6 +172,48 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
     </div>
   );
 }
+
+function SortablePlayerRow({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled: boolean;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({
+      id,
+      disabled,
+    });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.75 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative">
+      {/* Drag Handle links */}
+      {!disabled ? (
+        <button
+          type="button"
+          className="absolute left-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-md border bg-white text-sm hover:bg-neutral-50"
+          title="Ziehen zum Umordnen"
+          {...attributes}
+          {...listeners}
+        >
+          ⋮⋮
+        </button>
+      ) : null}
+
+      <div className={!disabled ? "pl-12" : ""}>{children}</div>
+    </div>
+  );
+}
+
 
 
 
@@ -1649,6 +1708,62 @@ const [highscoreMachines, setHighscoreMachines] = useState<HighscoreMachine[]>([
 const [highscoreLoading, setHighscoreLoading] = useState(false);
 const [highscoreError, setHighscoreError] = useState<string | null>(null);
 
+// --- Highscores (global pro Spieler) ---
+type HighscorePlayerRow = {
+  player: string;
+  wins: number;     // 🥇
+  podiums: number;  // 🥇+🥈+🥉  ← NEU
+  points: number;   // 🥇=3, 🥈=2, 🥉=1
+};
+
+const globalHighscorePlayers = useMemo<HighscorePlayerRow[]>(() => {
+  const map = new Map<string, HighscorePlayerRow>();
+
+  for (const m of highscoreMachines ?? []) {
+    const top = (m.top ?? []).slice(0, 3);
+
+    top.forEach((s, idx) => {
+      const name = (s.player ?? "Unbekannt").trim() || "Unbekannt";
+      const points = idx === 0 ? 3 : idx === 1 ? 2 : 1;
+
+      if (!map.has(name)) {
+        map.set(name, { player: name, wins: 0, podiums: 0, points: 0 });
+      }
+
+      const row = map.get(name)!;
+
+      // jeder Top-3 Eintrag ist ein Podium
+      row.podiums += 1;
+
+      // Punkte
+      row.points += points;
+
+      // Siege
+      if (idx === 0) row.wins += 1;
+
+    });
+  }
+
+  const arr = Array.from(map.values());
+  arr.sort(
+  (a, b) =>
+    b.points - a.points ||
+    b.wins - a.wins ||
+    b.podiums - a.podiums ||
+    a.player.localeCompare(b.player)
+  );
+
+  return arr;
+}, [highscoreMachines]);
+
+const top3Global = useMemo(() => globalHighscorePlayers.slice(0, 3), [globalHighscorePlayers]);
+
+function fmtScore(n: any) {
+  // du wolltest 3er-Blöcke mit Komma → en-US passt genau: 5,675,223
+  return Number(n ?? 0).toLocaleString("en-US");
+}
+
+
 async function loadHighscores() {
   setHighscoreMachines([]);        // HARD RESET
   setHighscoreError(null);
@@ -2598,7 +2713,17 @@ async function loadMatchHistory() {
 
         {/* ✅ Detailbereich (aufklappbar) */}
         {isExpanded && (
-          <tr className="border-b last:border-0">
+          <tr
+            className={`border-b last:border-0 hover:bg-neutral-50 ${
+              idx === 0
+                ? "bg-yellow-50"
+                : idx === 1
+                ? "bg-neutral-100"
+                : idx === 2
+                ? "bg-amber-50"
+                : ""
+            }`}
+          >
             <td colSpan={9} className="py-2 pr-2">
               <div className="rounded-xl border border-neutral-200 bg-white p-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -3292,6 +3417,94 @@ return (
 {/* ---------------- Highscores ---------------- */}
 {subTab === "highscores" && (
   <div className="space-y-3">
+
+
+              {/* A) Globales Highscore-Leaderboard (Spieler) */}
+              <div className="mb-5 rounded-2xl border bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-neutral-800">
+                      Globales Highscore-Leaderboard
+                    </div>
+                    <div className="text-xs text-neutral-500">
+                      Punkte: 🥇=3, 🥈=2, 🥉=1 (über alle Maschinen)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Podium Top-3 */}
+                {top3Global.length > 0 && (
+                  <div className="mt-3 grid grid-cols-3 items-end gap-2">
+                    {/* 🥈 links */}
+                    <div className="rounded-2xl border bg-neutral-50 p-3 text-center">
+                      <div className="text-lg">🥈</div>
+                      <div className="mt-1 truncate text-sm font-semibold">
+                        {top3Global[1]?.player ?? "—"}
+                      </div>
+                      <div className="mt-1 text-xs text-neutral-600">
+                        Siege: {top3Global[1]?.wins ?? 0} • Punkte: {top3Global[1]?.points ?? 0}
+                      </div>
+                    </div>
+
+                    {/* 🥇 groß Mitte */}
+                    <div className="rounded-2xl border bg-amber-50 p-4 text-center">
+                      <div className="text-2xl">🥇</div>
+                      <div className="mt-1 truncate text-base font-bold">
+                        {top3Global[0]?.player ?? "—"}
+                      </div>
+                      <div className="mt-1 text-xs text-neutral-700">
+                        Siege: {top3Global[0]?.wins ?? 0} • Punkte: {top3Global[0]?.points ?? 0}
+                      </div>
+                    </div>
+
+                    {/* 🥉 rechts */}
+                    <div className="rounded-2xl border bg-neutral-50 p-3 text-center">
+                      <div className="text-lg">🥉</div>
+                      <div className="mt-1 truncate text-sm font-semibold">
+                        {top3Global[2]?.player ?? "—"}
+                      </div>
+                      <div className="mt-1 text-xs text-neutral-600">
+                        Siege: {top3Global[2]?.wins ?? 0} • Punkte: {top3Global[2]?.points ?? 0}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tabelle */}
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-neutral-500 border-b">
+                        <th className="py-2 pr-2">#</th>
+                        <th className="py-2 pr-2">Spieler</th>
+                        <th className="py-2 pr-2 text-right">Highscore-Siege</th>
+                        <th className="py-2 pr-2 text-right">Podiums</th>
+                        <th className="py-2 pr-2 text-right">Highscore-Punkte</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {globalHighscorePlayers.map((r, idx) => (
+                        <tr key={r.player + idx} className="border-b last:border-0">
+                          <td className="py-2 pr-2 text-neutral-500 tabular-nums">{idx + 1}</td>
+                          <td className="py-2 pr-2 font-medium">{r.player}</td>
+                          <td className="py-2 pr-2 text-right tabular-nums">{r.wins}</td>
+                          <td className="py-2 pr-2 text-right tabular-nums">{r.podiums}</td>
+                          <td className="py-2 pr-2 text-right tabular-nums font-semibold">{r.points}</td>
+                        </tr>
+                      ))}
+                      {globalHighscorePlayers.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="py-2 text-sm text-neutral-500">
+                            Noch keine Highscores.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+
     <div className="flex items-center justify-between gap-2">
       <div>
         <div className="text-sm font-semibold text-neutral-700">
@@ -3326,6 +3539,9 @@ return (
       </div>
     ) : (
       <div className="space-y-3">
+
+
+
         {highscoreMachines.map((m) => (
           <div key={m.key} className="rounded-2xl border bg-white p-3">
             <div className="flex items-center justify-between gap-3">
@@ -3893,6 +4109,33 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
     return out;
   }, [matchPlayers]);
 
+
+    // ✅ Wie oft wurde diese Spieler-Kombination schon gespielt (egal ob 1v1 / 3er / 4er …)?
+    // Wir zählen nur Matches, die bereits ein Ergebnis haben.
+    const matchGroupCounts = useMemo(() => {
+      const map = new Map<string, number>();
+
+      for (const m of matches ?? []) {
+        const mps = mpByMatch[m.id] ?? [];
+        if (mps.length < 2) continue;
+
+        // nur zählen, wenn Ergebnis gesetzt ist (inkl. Override)
+        const hasResults = mps.some((mp) => getPos(mp) != null);
+        if (!hasResults) continue;
+
+        const ids = mps.map((x) => x.player_id).filter(Boolean);
+        if (ids.length < 2) continue;
+
+        // gleiche Gruppe = gleiche IDs sortiert
+        const key = ids.slice().sort().join("::");
+        map.set(key, (map.get(key) ?? 0) + 1);
+      }
+
+      return map;
+    }, [matches, mpByMatch, posOverride]);
+
+
+
   function k(matchId: string, playerId: string) {
     return `${matchId}:${playerId}`;
   }
@@ -4000,6 +4243,14 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
       setSavingScore((prev) => ({ ...prev, [key]: false }));
     }
   }
+
+
+  const dndSensors = useSensors(
+  useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+);
+
+
+
 
 
 async function handleChangeMachine(matchId: string, machineId: string | null) {
@@ -4179,6 +4430,17 @@ return (
                           {/*const hasResults = mps.some((mp) => mp.position != null);*/}
                           const hasResults = mps.some((mp) => getPos(mp) != null);
 
+
+
+                          const groupIds = mps.map((x) => x.player_id).filter(Boolean);
+                          const groupKey = groupIds.slice().sort().join("::");
+                          const rawPlayed = matchGroupCounts.get(groupKey) ?? 0;
+
+                          // falls dieses Match schon Ergebnis hat: nicht sich selbst mitzählen
+                          const playedCount = hasResults ? Math.max(0, rawPlayed - 1) : rawPlayed;
+
+
+
                           return (
                             <div
                               key={m.id}
@@ -4233,6 +4495,9 @@ return (
                                   ) : (
                                     <>0 x im Turnier verwendet</>
                                   )}
+
+
+                                  
                                 </div>
 
 
@@ -4248,6 +4513,13 @@ return (
                                       ? "Ergebnisse gesetzt – Maschine kann nicht mehr geändert werden."
                                       : "Solange noch keine Ergebnisse gesetzt sind, kann die Maschine geändert werden."}
                                   </div>
+
+
+                                  <div className="text-xs font-normal text-neutral-500">
+                                    Diese Paarung wurde schon {playedCount}× im Turnier gespielt.
+                                  </div>
+
+
                                 </div>
 
                                 {/* Rechte Seite: Match-ID / Speichern-Status */}
@@ -4267,205 +4539,242 @@ return (
                                 </div>
                               </div>
 
-                              <div className="p-3 sm:p-4 space-y-2">
-                                {mps.map((mp) => {
-                                  const pos = getPos(mp);
+<div className="p-3 sm:p-4">
+  {(() => {
+    const ids = mps.map((x) => x.player_id).filter(Boolean);
+    const dndDisabled = locked || hasResults; // ✅ nur solange keine Ergebnisse gesetzt sind
 
-                                  // ✅ Welche Plätze sind in diesem Match schon vergeben – und von wem?
-                                  const takenBy = new Map<number, string>();
+    return (
+      <DndContext
+        sensors={dndSensors}
+        collisionDetection={closestCenter}
+        onDragEnd={({ active, over }) => {
+          if (dndDisabled) return;
+          if (!over) return;
+          if (active.id === over.id) return;
 
-                                  for (const other of mps) {
-                                    if (other.player_id === mp.player_id) continue;
-                                    const op = getPos(other);
+          const oldIndex = ids.indexOf(String(active.id));
+          const newIndex = ids.indexOf(String(over.id));
+          if (oldIndex < 0 || newIndex < 0) return;
 
-                                    if (typeof op === "number" && op > 0) {
-                                      const otherName = playersById[other.player_id]?.name ?? "jemand";
-                                      takenBy.set(op, otherName);
-                                    }
-                                  }
+          const newIds = arrayMove(ids, oldIndex, newIndex);
+          saveStartOrder(m.id, newIds);
+        }}
+      >
+        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {mps.map((mp) => {
+              const pos = getPos(mp);
 
+              // ✅ Welche Plätze sind in diesem Match schon vergeben – und von wem?
+              const takenBy = new Map<number, string>();
+              for (const other of mps) {
+                if (other.player_id === mp.player_id) continue;
+                const op = getPos(other);
 
-                                  const isWinner = pos === 1;
-                                  const isSaving =
-                                    saving[k(mp.match_id, mp.player_id)] === true;
+                if (typeof op === "number" && op > 0) {
+                  const otherName = playersById[other.player_id]?.name ?? "jemand";
+                  takenBy.set(op, otherName);
+                }
+              }
 
-                                  return (
-                                    <div
-                                      key={k(mp.match_id, mp.player_id)}
-                                      className={
-                                        "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-4 sm:py-3 " +
-                                        (isWinner
-                                          ? "bg-amber-200 border-amber-300"
-                                          : "bg-white")
-                                      }
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <PlayerPill
-                                          player={
-                                            playersById[mp.player_id] ?? {
-                                              name: "Unbekannt",
-                                            }
-                                          }
-                                        />
-                                        {pos ? <Pill>#{pos}</Pill> : <Pill>—</Pill>}
-                                        {isWinner ? <Pill>🏆 Sieger</Pill> : null}
-                                        {isSaving ? (
-                                          <span className="text-xs text-neutral-500">
-                                            speichere…
-                                          </span>
-                                        ) : null}
-                                      </div>
+              const isWinner = pos === 1;
+              const isSaving = saving[k(mp.match_id, mp.player_id)] === true;
 
-                                      <div className="w-44 flex flex-col gap-1">
-                                        <Select
-                                          value={pos ?? ""}
-                                          className="rounded-lg px-3 py-2 text-sm sm:px-4 sm:py-3 sm:text-base"
-                                          disabled={locked}
-                                          onChange={async (e) => {
-                                            if (locked) return;
+              return (
+                <SortablePlayerRow
+                  key={k(mp.match_id, mp.player_id)}
+                  id={mp.player_id}
+                  disabled={dndDisabled}
+                >
+                  <div
+                    className={
+                      "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-4 sm:py-3 " +
+                      (isWinner ? "bg-amber-200 border-amber-300" : "bg-white")
+                    }
+                  >
+                    <div className="flex items-center gap-2">
+                      <PlayerPill
+                        player={
+                          playersById[mp.player_id] ?? {
+                            name: "Unbekannt",
+                          }
+                        }
+                      />
+                      {pos ? <Pill>#{pos}</Pill> : <Pill>—</Pill>}
+                      {isWinner ? <Pill>🏆 Sieger</Pill> : null}
+                      {isSaving ? (
+                        <span className="text-xs text-neutral-500">speichere…</span>
+                      ) : null}
+                    </div>
 
-                                            const v = e.target.value;
-                                            const next = v === "" ? null : Number(v);
+                    <div className="w-44 flex flex-col gap-1">
+                      <Select
+                        value={pos ?? ""}
+                        className="rounded-lg px-3 py-2 text-sm sm:px-4 sm:py-3 sm:text-base"
+                        disabled={locked}
+                        onChange={async (e) => {
+                          if (locked) return;
 
-                                            const currentPos =
-                                              typeof pos === "number" && pos > 0 ? pos : null;
+                          const v = e.target.value;
+                          const next = v === "" ? null : Number(v);
 
-                                            // =========================
-                                            // 🥇 1vs1: Auto-Complete
-                                            // =========================
-                                            if (mps.length === 2) {
-                                              const other = mps.find((x) => x.player_id !== mp.player_id);
-                                              if (!other) return;
+                          const currentPos =
+                            typeof pos === "number" && pos > 0 ? pos : null;
 
-                                              // Reset: Platz — -> beide —
-                                              if (next == null) {
-                                                await setPosition(m.id, mp.player_id, null);
-                                                await setPosition(m.id, other.player_id, null);
-                                                return;
-                                              }
+                          // =========================
+                          // 🥇 1vs1: Auto-Complete
+                          // =========================
+                          if (mps.length === 2) {
+                            const other = mps.find(
+                              (x) => x.player_id !== mp.player_id
+                            );
+                            if (!other) return;
 
-                                              // 1 oder 2 gesetzt -> anderer bekommt automatisch den Gegenplatz
-                                              const otherNext = next === 1 ? 2 : 1;
+                            // Reset: Platz — -> beide —
+                            if (next == null) {
+                              await setPosition(m.id, mp.player_id, null);
+                              await setPosition(m.id, other.player_id, null);
+                              return;
+                            }
 
-                                              await setPosition(m.id, mp.player_id, next);
+                            // 1 oder 2 gesetzt -> anderer bekommt automatisch den Gegenplatz
+                            const otherNext = next === 1 ? 2 : 1;
 
-                                              const otherPos = getPos(other);
-                                              if (otherPos !== otherNext) {
-                                                await setPosition(m.id, other.player_id, otherNext);
-                                              }
+                            await setPosition(m.id, mp.player_id, next);
 
-                                              return;
-                                            }
+                            const otherPos = getPos(other);
+                            if (otherPos !== otherNext) {
+                              await setPosition(m.id, other.player_id, otherNext);
+                            }
 
-                                            // =========================
-                                            // 🧩 3–4 Spieler: 1:1 Swap
-                                            // =========================
+                            return;
+                          }
 
-                                            // Platz — -> freimachen
-                                            if (next == null) {
-                                              await setPosition(m.id, mp.player_id, null);
-                                              return;
-                                            }
+                          // =========================
+                          // 🧩 3–4 Spieler: 1:1 Swap
+                          // =========================
 
-                                            // Wer hält diesen Platz?
-                                            const otherMp = mps.find(
-                                              (x) => x.player_id !== mp.player_id && getPos(x) === next
-                                            );
+                          // Platz — -> freimachen
+                          if (next == null) {
+                            await setPosition(m.id, mp.player_id, null);
+                            return;
+                          }
 
-                                            // Platz frei -> normal setzen
-                                            if (!otherMp) {
-                                              await setPosition(m.id, mp.player_id, next);
-                                              return;
-                                            }
+                          // Wer hält diesen Platz?
+                          const otherMp = mps.find(
+                            (x) =>
+                              x.player_id !== mp.player_id && getPos(x) === next
+                          );
 
-                                            // 1:1 SWAP (nur 2 Spieler betroffen)
-                                            if (currentPos === next) return;
+                          // Platz frei -> normal setzen
+                          if (!otherMp) {
+                            await setPosition(m.id, mp.player_id, next);
+                            return;
+                          }
 
-                                            await setPosition(m.id, otherMp.player_id, currentPos);
-                                            await setPosition(m.id, mp.player_id, next);
-                                          }}
+                          // 1:1 SWAP (nur 2 Spieler betroffen)
+                          if (currentPos === next) return;
 
-                                        >
-                                          <option value="">Platz —</option>
+                          await setPosition(m.id, otherMp.player_id, currentPos);
+                          await setPosition(m.id, mp.player_id, next);
+                        }}
+                      >
+                        <option value="">Platz —</option>
 
-                                          {Array.from({ length: n }, (_, i) => i + 1).map((p) => {
-                                            const holder = takenBy.get(p);
+                        {Array.from({ length: n }, (_, i) => i + 1).map((p) => {
+                          const holder = takenBy.get(p);
 
-                                            return (
-                                              <option key={p} value={p}>
-                                                {holder
-                                                  ? `⛔ Platz ${p} (belegt durch ${holder})`
-                                                  : `✅ Platz ${p}`}
-                                              </option>
-                                            );
-                                          })}
-                                        </Select>
+                          return (
+                            <option key={p} value={p}>
+                              {holder
+                                ? `⛔ Platz ${p} (belegt durch ${holder})`
+                                : `✅ Platz ${p}`}
+                            </option>
+                          );
+                        })}
+                      </Select>
 
-                                        {/* ✅ NEU: Flipperpunkte/Score (unter Platz-Dropdown) */}
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
-                                            Punkte
-                                          </span>
-                                          <Input
-                                           value={
-                                              scoreFocusKey === k(mp.match_id, mp.player_id)
-                                                ? getScoreStr(mp)
-                                                : formatScoreStr(getScoreStr(mp))
-                                            }
-                                            onFocus={() => setScoreFocusKey(k(mp.match_id, mp.player_id))}
-                                            inputMode="numeric"
-                                            placeholder="0"
-                                            className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
-                                            disabled={locked}
-                                            onChange={(e) => {
-                                              const raw = e.target.value;
-                                              const cleaned = raw.replace(/[^0-9]/g, "");
-                                              const key = k(mp.match_id, mp.player_id);
-                                              setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
-                                            }}
-                                            onBlur={async () => {
-                                              setScoreFocusKey(null);
-                                              const key = k(mp.match_id, mp.player_id);
-                                              const raw = (scoreOverride[key] ?? (mp.score == null ? "" : String(mp.score))).trim();
-                                              if (raw === "") {
-                                                await setScore(mp.match_id, mp.player_id, null);
-                                                setScoreOverride((prev) => {
-                                                  const cp = { ...prev };
-                                                  delete cp[key];
-                                                  return cp;
-                                                });
-                                                return;
-                                              }
+                      {/* ✅ NEU: Flipperpunkte/Score (unter Platz-Dropdown) */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
+                          Punkte
+                        </span>
+                        <Input
+                          value={
+                            scoreFocusKey === k(mp.match_id, mp.player_id)
+                              ? getScoreStr(mp)
+                              : formatScoreStr(getScoreStr(mp))
+                          }
+                          onFocus={() =>
+                            setScoreFocusKey(k(mp.match_id, mp.player_id))
+                          }
+                          inputMode="numeric"
+                          placeholder="0"
+                          className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
+                          disabled={locked}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const cleaned = raw.replace(/[^0-9]/g, "");
+                            const key = k(mp.match_id, mp.player_id);
+                            setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
+                          }}
+                          onBlur={async () => {
+                            setScoreFocusKey(null);
+                            const key = k(mp.match_id, mp.player_id);
+                            const raw = (
+                              scoreOverride[key] ??
+                              (mp.score == null ? "" : String(mp.score))
+                            ).trim();
 
-                                              const n = Number(raw);
-                                              if (!Number.isFinite(n) || n < 0) {
-                                                alert("Ungültige Punkte");
-                                                return;
-                                              }
+                            if (raw === "") {
+                              await setScore(mp.match_id, mp.player_id, null);
+                              setScoreOverride((prev) => {
+                                const cp = { ...prev };
+                                delete cp[key];
+                                return cp;
+                              });
+                              return;
+                            }
 
-                                              await setScore(mp.match_id, mp.player_id, n);
-                                              setScoreOverride((prev) => {
-                                                const cp = { ...prev };
-                                                delete cp[key];
-                                                return cp;
-                                              });
-                                            }}
-                                            onKeyDown={(e) => {
-                                              if (e.key === "Enter") {
-                                                (e.target as HTMLInputElement).blur();
-                                              }
-                                            }}
-                                          />
+                            const n = Number(raw);
+                            if (!Number.isFinite(n) || n < 0) {
+                              alert("Ungültige Punkte");
+                              return;
+                            }
 
-                                          {savingScore[k(mp.match_id, mp.player_id)] ? (
-                                            <span className="text-[10px] sm:text-xs text-neutral-500">speichere…</span>
-                                          ) : null}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                            await setScore(mp.match_id, mp.player_id, n);
+                            setScoreOverride((prev) => {
+                              const cp = { ...prev };
+                              delete cp[key];
+                              return cp;
+                            });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                        />
+
+                        {savingScore[k(mp.match_id, mp.player_id)] ? (
+                          <span className="text-[10px] sm:text-xs text-neutral-500">
+                            speichere…
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </SortablePlayerRow>
+              );
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
+    );
+  })()}
+</div>
+
                             </div>
                           );
                         })}
@@ -5572,7 +5881,7 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   );
 
   const [startOrderMode, setStartOrderMode] = useState<
-    "random" | "standings_asc"
+    "random" | "standings_asc" | "last_round_asc"
   >("random");
 
   const [finalState, setFinalState] = useState<any | null>(null);
@@ -5601,6 +5910,25 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
 
   // locked = entweder Turnier beendet ODER Zuschauer
   const locked = isFinished || isViewer;
+
+  // ✅ "Letzte Runde (schlechtester zuerst)" ist nur sinnvoll,
+  // wenn die neue Runde genau 1 Match erzeugt.
+  const activePlayersCount = (data?.players ?? []).filter((p: any) => p?.active !== false).length;
+
+  // WICHTIG: falls dein Feld anders heißt (z.B. players_per_match),
+  // hier anpassen. Default: 4
+  const matchSize = Math.max(2, Math.min(4, Number((data as any)?.tournament?.match_size ?? 4)));
+
+  const matchesPerRound = Math.ceil(activePlayersCount / matchSize);
+  const canUseLastRoundOrder = matchesPerRound === 1;
+
+  useEffect(() => {
+    if (startOrderMode === "last_round_asc" && !canUseLastRoundOrder) {
+      setStartOrderMode("random");
+    }
+  }, [startOrderMode, canUseLastRoundOrder]);
+
+
 
   function playWinnerSounds() {
     try {
@@ -6131,6 +6459,25 @@ useEffect(() => {
     ]);
   }
 
+  async function saveStartOrder(matchId: string, orderedPlayerIds: string[]) {
+    const res = await fetch(`/api/match_players/set-start-order?ts=${Date.now()}`, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+      body: JSON.stringify({ matchId, orderedPlayerIds }),
+    });
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(j.error ?? "Reihenfolge speichern fehlgeschlagen");
+      return;
+    }
+
+    await reloadAll(); // ✅ jetzt ist reloadAll im Scope
+  }
 
 
 
@@ -6989,6 +7336,9 @@ const machinesInfoById = useMemo(
         <option value="standings_asc">
           Schlechtester zuerst (nach aktueller Wertung)
         </option>
+        <option value="last_round_asc" disabled={!canUseLastRoundOrder}>
+          Schlechtester zuerst (nach letzter Runde)
+        </option>
       </Select>
 
       <p className="text-sm text-neutral-500 leading-snug">
@@ -6996,6 +7346,12 @@ const machinesInfoById = useMemo(
         <b>innerhalb der Matches</b>, nicht die Gruppenzuordnung.
         Swiss- oder Matchplay-Logik bleiben unverändert.
       </p>
+      {!canUseLastRoundOrder && (
+        <p className="text-sm text-neutral-500 leading-snug">
+          „Schlechtester zuerst (nach letzter Runde)“ geht nur, wenn pro Runde{" "}
+          <b>genau ein Match</b> erzeugt wird (alle Spieler in einem Spiel).
+        </p>
+      )}
     </div>
 
     {/* 🔹 RECHTER BLOCK — Buttons + Toggle sauber in Leiste */}
@@ -7301,8 +7657,17 @@ const machinesInfoById = useMemo(
             </thead>
             <tbody>
               {categoryTournamentRows.map((r: any, idx: number) => (
-                <tr key={r.profileId ?? r.name ?? idx} className="border-b last:border-0">
-                  <td className="py-1 pr-2 text-neutral-500 tabular-nums">{idx + 1}</td>
+                <tr key={r.profileId ?? r.name ?? idx}   
+                  className={`border-b last:border-0 hover:bg-neutral-50 ${
+                  idx === 0
+                    ? "bg-yellow-50"
+                    : idx === 1
+                    ? "bg-neutral-100"
+                    : idx === 2
+                    ? "bg-orange-50"
+                    : ""
+                }`}>
+                  <td className="py-1 pr-2 text-neutral-500 tabular-nums">{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</td>
                   <td className="py-1 pr-2">{r.name ?? "—"}</td>
                   <td className="py-1 pr-2 text-right tabular-nums font-semibold">
                     {Number(r.tournamentPoints ?? 0).toLocaleString("en-US")}
@@ -7337,9 +7702,20 @@ const machinesInfoById = useMemo(
             </thead>
             <tbody>
               {playerHighscores.map((r, idx) => (
-                <tr key={r.profile_id} className="border-b last:border-0">
+                <tr
+                  key={r.profile_id}
+                  className={`border-b last:border-0 hover:bg-neutral-50 ${
+                    idx === 0
+                      ? "bg-yellow-50"
+                      : idx === 1
+                      ? "bg-neutral-100"
+                      : idx === 2
+                      ? "bg-orange-50"
+                      : ""
+                  }`}
+                >
                   <td className="py-1 pr-2 text-neutral-500 tabular-nums">
-                    {idx + 1}
+                    {idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}
                   </td>
                   <td className="py-1 pr-2">{r.name}</td>
                   <td className="py-1 pr-2 text-right tabular-nums font-semibold">
@@ -7361,47 +7737,81 @@ const machinesInfoById = useMemo(
     </CardBody>
   </Card>
 
-  {/* C) Maschinen-Highscores */}
-  <Card>
-    <CardHeader>
-      <div className="font-semibold">🕹️ Maschinen-Highscores</div>
-    </CardHeader>
-    <CardBody>
-      {hsLoading ? (
-        <div className="text-sm text-neutral-500">Lade…</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-neutral-500 border-b">
-                <th className="py-1 pr-2">Maschine</th>
-                <th className="py-1 pr-2">Spieler</th>
-                <th className="py-1 pr-2 text-right">Score</th>
+{/* C) Maschinen-Highscores */}
+<Card>
+  <CardHeader>
+    <div className="font-semibold">🕹️ Maschinen-Highscores</div>
+  </CardHeader>
+
+  <CardBody>
+    {hsLoading ? (
+      <div className="text-sm text-neutral-500">Lade…</div>
+    ) : machineHighscores.length === 0 ? (
+      <div className="text-sm text-neutral-500">Noch keine Scores.</div>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-neutral-500 border-b">
+              <th className="py-2 pr-3">Maschine</th>
+              <th className="py-2 pr-3">Spieler</th>
+              <th className="py-2 pr-0 text-right">Score</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {machineHighscores.map((r, idx) => (
+                <tr
+                  key={`${r.machine_id}-${r.profile_id}-${idx}`}
+                  className={`border-b last:border-0 hover:bg-neutral-50 ${
+                  idx === 0
+                    ? "bg-yellow-50"
+                    : idx === 1
+                    ? "bg-neutral-100"
+                    : idx === 2
+                    ? "bg-orange-50"
+                    : ""
+                }`}
+                >
+                {/* Maschine */}
+                <td className="py-2 pr-3 align-top">
+                  <div className="max-w-[180px]">
+                    <div className="font-semibold text-[12px] leading-5">
+                      {r.machine_name}
+                                          {/* optional: kleines Badge für “Top 1 insgesamt” 
+                                          {idx === 0 ? (
+                                            <span className="absolute mr-12 text-[12px] px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700 border border-yellow-200">
+                                              Top
+                                            </span>
+                                          ) : null} */}
+                    </div>
+                    {/* kleine Subline optional */}
+                    <div className=" text-[11px] text-neutral-500">
+                      Highscore #{idx + 1}
+                    </div>
+                  </div>
+                </td>
+
+                {/* Spieler */}
+                <td className="py-2 pr-3 align-top">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="font-medium  text-[12px]">{r.name}</span>
+                  </span>
+                </td>
+
+                {/* Score */}
+                <td className="py-2 pr-0  text-[12px] text-right align-top tabular-nums font-bold">
+                  {Number(r.score ?? 0).toLocaleString("en-US")}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {machineHighscores.map((r, idx) => (
-                <tr key={`${r.machine_id}-${r.profile_id}-${idx}`} className="border-b last:border-0">
-                  <td className="py-1 pr-2">{r.machine_name}</td>
-                  <td className="py-1 pr-2">{r.name}</td>
-                  <td className="py-1 pr-2 text-right tabular-nums font-semibold">
-                    {Number(r.score ?? 0).toLocaleString("en-US")}
-                  </td>
-                </tr>
-              ))}
-              {machineHighscores.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="py-2 text-sm text-neutral-500">
-                    Noch keine Scores.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </CardBody>
-  </Card>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </CardBody>
+</Card>
+
 </div>
 
 
