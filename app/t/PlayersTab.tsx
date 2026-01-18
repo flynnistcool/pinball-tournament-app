@@ -1,13 +1,15 @@
 // @ts-nocheck
 "use client";
-{/*
+
+/*
 type PlayersTabProps = {
   isAdmin: boolean;
-}; */}
+};
+*/
 
 import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input } from "@/components/ui";
-import { Sparkline } from "@/components/charts";
+import { EloSparkline } from "@/components/charts";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 
 
@@ -107,6 +109,26 @@ type MachineStat = {
   avgPosition: number | null;
 };
 
+type PlayerMachineBest = {
+  machineId: string;
+  machineName: string;
+  machineIconEmoji?: string | null;
+  // "global" ist hier pro (Location + Maschine)
+  locationId?: string | null;
+  locationName?: string | null;
+  bestScore: number;
+  isGlobalHighscore: boolean;
+  // 🆕 Platzierung global innerhalb der Location für diese Maschine (Dense Rank)
+  globalRank?: number | null;
+};
+
+type PlayerTournamentHighscore = {
+  tournamentId: string;
+  tournamentName: string;
+  created_at: string | null;
+  machineHighscores: number; // Anzahl Maschinen, wo Spieler in diesem Turnier Platz 1 ist
+};
+
 const COLOR_OPTIONS = [
   // Pastell-Reihe 1
   "#fcd9b6", // peach orange
@@ -130,6 +152,51 @@ const COLOR_OPTIONS = [
 ];
 
 
+
+function SectionTitle({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: string;
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <div className="text-lg leading-none">{icon}</div>
+      <div>
+        <div className="text-base font-semibold text-neutral-900">{title}</div>
+        {subtitle ? (
+          <div className="text-xs text-neutral-500">{subtitle}</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+  function MachineBadge({
+    name,
+    emoji,
+  }: {
+    name: string;
+    emoji?: string | null;
+  }) {
+    const initials = (name || "")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((s) => (s[0] ? s[0].toUpperCase() : ""))
+      .join("");
+
+    const e = (emoji || "").trim();
+
+    return (
+    <div className="h-8 w-8 rounded-xl bg-neutral-60 flex items-center justify-center text-[14px] font-black text-neutral-800 shrink-0">
+        {e ? <span>{e}</span> : <span className="text-[11px]">{initials || "?"}</span>}
+      </div>
+    );
+  }
 
 
 
@@ -298,6 +365,22 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
   const [machineStatsError, setMachineStatsError] = useState<
     Record<string, string | null>
   >({});
+
+  // 🆕 Turniererfolge-Tabellen (2 Tabellen) pro Profil
+  const [successByProfile, setSuccessByProfile] = useState<
+    Record<
+      string,
+      { machineBests: PlayerMachineBest[]; tournaments: PlayerTournamentHighscore[] } | null
+    >
+  >({});
+
+  const [successLoading, setSuccessLoading] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [successError, setSuccessError] = useState<Record<string, string | null>>(
+    {}
+  );
+
 
   // aktiver Unter-Tab pro Profil ("edit" | "stats")
   const [detailTabs, setDetailTabs] = useState<
@@ -595,6 +678,47 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
     }
   }
 
+  async function loadSuccessTables(profileId: string) {
+  setSuccessLoading((prev) => ({ ...prev, [profileId]: true }));
+  setSuccessError((prev) => ({ ...prev, [profileId]: null }));
+
+  try {
+    const res = await fetch(`/api/players/success-tables?ts=${Date.now()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ profileId }),
+    });
+
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setSuccessError((prev) => ({
+        ...prev,
+        [profileId]: j.error ?? "Konnte Turniererfolge nicht laden.",
+      }));
+      setSuccessByProfile((prev) => ({ ...prev, [profileId]: null }));
+    } else {
+      setSuccessByProfile((prev) => ({
+        ...prev,
+        [profileId]: {
+          machineBests: Array.isArray(j.machineBests) ? j.machineBests : [],
+          tournaments: Array.isArray(j.tournaments) ? j.tournaments : [],
+        },
+      }));
+    }
+  } catch (e: any) {
+    setSuccessError((prev) => ({
+      ...prev,
+      [profileId]: "Netzwerkfehler: " + String(e?.message ?? e),
+    }));
+    setSuccessByProfile((prev) => ({ ...prev, [profileId]: null }));
+  } finally {
+    setSuccessLoading((prev) => ({ ...prev, [profileId]: false }));
+  }
+}
+
+
   function openRow(id: string) {
     if (openId === id) {
       setOpenId(null);
@@ -609,6 +733,8 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
       loadStats(id);
       // 🆕 Machine-Stats laden
       loadMachineStats(id);
+      // 🆕 Turniererfolge-Tabellen laden
+      loadSuccessTables(id);
     }
     setOpenId(id);
   }
@@ -801,6 +927,23 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
         delete cp[id];
         return cp;
       });
+      // 🆕 Success-Tables mit aufräumen
+      setSuccessByProfile((prev) => {
+        const cp = { ...prev };
+        delete cp[id];
+        return cp;
+      });
+      setSuccessError((prev) => {
+        const cp = { ...prev };
+        delete cp[id];
+        return cp;
+      });
+      setSuccessLoading((prev) => {
+        const cp = { ...prev };
+        delete cp[id];
+        return cp;
+      });
+
     } finally {
       setSavingKey(null);
     }
@@ -1414,6 +1557,15 @@ const headToHeadPanel =
             const machineStatsErr = machineStatsError[p.id] ?? null;
 
             const machineStatsArray: MachineStat[] = machineStatsRaw ?? [];
+
+            // 🆕 Success-Tabellen Daten
+            const success = successByProfile[p.id] ?? null;
+            const loadingSuccess = successLoading[p.id] === true;
+            const successErr = successError[p.id] ?? null;
+
+            const machineBests = success?.machineBests ?? [];
+            const tournamentHighscores = success?.tournaments ?? [];
+
 
             const eloValues = history.map((h) => h.rating);
 
@@ -2308,6 +2460,10 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                                 </div>
                               </div>
 
+
+
+
+
                               {/* Vollständige Maschinenliste */}
                               <div className="pt-2 border-t border-neutral-100 mt-2"> {/*Scrollbar*/}
                                   <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
@@ -2366,23 +2522,9 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
 
                         {/* Elo-Verlauf + Trend / Bestes / Schlechtestes Turnier */}
                         <div className="mt-1">
-                          <div className="text-sm font-semibold text-neutral-700 mb-1 text-center">
-                            Elo-Verlauf über abgeschlossene Turniere
-                          </div>
+                          
 
-                          {/* Achievements / Meilensteine (oben) */}
-                          {achievements.length > 0 && (
-                            <div className="mb-2 flex flex-wrap gap-1.5">
-                              {achievements.map((a, idx) => (
-                                <span
-                                  key={idx}
-                                  className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-[3px] text-[11px] font-medium text-indigo-700"
-                                >
-                                  {a.icon} {a.label}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          
 
                           {loadingElo ? (
                             <div className="text-xs text-neutral-500">
@@ -2401,6 +2543,33 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                             <div className="space-y-3">
                               {/* Überblick-Card mit Graph + Peak/Tiefster */}
                               <div className="rounded-xl border bg-white p-3">
+
+
+                          <div className="mb-3">
+                            <SectionTitle
+                              icon="📈"
+                              title="Elo-Verlauf"
+                              subtitle="Entwicklung über abgeschlossene Turniere"
+                            />
+                          </div>
+
+                          {/* Achievements / Meilensteine (oben) */}
+                          {achievements.length > 0 && (
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              {achievements.map((a, idx) => (
+                                <span
+                                  key={idx}
+                                  className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-[3px] text-[11px] font-medium text-indigo-700"
+                                >
+                                  {a.icon} {a.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="my-3 h-px w-full bg-neutral-200" /> {/*Strick*/}
+
+
                                 <div className="flex items-center justify-between mb-1">
                                   <div className="flex flex-col">
                                     <span className="text-sm font-semibold text-neutral-700">
@@ -2430,11 +2599,15 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                                     )}
                                   </div>
                                 </div>
-
+ 
                                 {/* Graph */}
-                                <div className="h-24 flex items-center">
-                                  <Sparkline values={eloValues} />
+                                
+                                <div className="h-32 mt-1 mb-4 flex items-center min-h-[112px]">
+                                  <EloSparkline values={eloValues} />
                                 </div>
+
+
+
 
                                 {/* Achievements-Leiste direkt unter dem Graph */}
                                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -2454,6 +2627,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                                     </span>
                                   )}
                                 </div>
+                                
 
                                 {/* Peak-Elo / Tiefster Elo */}
                                 <div className="mt-3 flex items-center justify-between text-xs text-neutral-700">
@@ -2477,6 +2651,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                                       </div>
                                     )}
                                   </div>
+                                  
 
                                   <div className="text-right">
                                     <div className="font-semibold">
@@ -2498,11 +2673,18 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                                   </div>
                                 </div>
                               </div>
+                              
+  
+
 
                               {/* Liste pro Turnier */}
                               <div className="rounded-xl border bg-white p-3">
-                                <div className="mb-1 text-sm font-semibold text-neutral-700">
-                                  Turniererfolge <span className="text-neutral-500 text-xs ">(Turnierpunke, Turnierplatzierung, Super-Finale Platzierung, Elo)</span>
+                                <div className="mb-3">
+                                  <SectionTitle
+                                    icon="🏅"
+                                    title="Turniererfolge"
+                                    subtitle="Turnierpunkte, Turnierplatzierung, Super-Finale Platzierung, Elo"
+                                  />
                                 </div>
 <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
   {withDelta
@@ -2557,6 +2739,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
     ⤴️
   </button>
 )}
+
 
               {isStartRow ? "Start-Elo" : pt.tournamentName}
               {!isStartRow && isBest && (
@@ -2625,6 +2808,157 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
       );
     })}
 </div>
+
+                              </div>
+
+
+
+                              {/* Liste pro Turnier */}
+                              <div className="rounded-xl border bg-white p-3">
+
+{/* Turniererfolge: 2 Tabellen nebeneinander */}
+<div className="rounded-xl border bg-white p-3">
+<div className="mb-3">
+  <SectionTitle
+    icon="🔥"
+    title="Highscores"
+    subtitle="Bestscore je Maschine + Turnier-Highscores"
+  />
+</div>
+
+  {loadingSuccess ? (
+    <div className="text-[13px] text-neutral-500">Lade Turniererfolge…</div>
+  ) : successErr ? (
+    <div className="text-[13px] text-red-600">{successErr}</div>
+  ) : (
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {/* LINKS */}
+      <div className="rounded-xl border bg-neutral-50 p-2">
+        <div className="mb-1 text-[13px] font-semibold text-neutral-700">
+          🕹️ Beste globale Scores je Maschine & Location
+        </div>
+
+        {machineBests.length === 0 ? (
+          <div className="text-[13px] text-neutral-500">
+            Keine Daten vorhanden.
+          </div>
+        ) : (
+          <div className="max-h-48 overflow-y-auto pr-1">
+            <table className="w-full text-[13px]">
+              <thead className="text-left text-neutral-500">
+                <tr>
+                  <th className="py-1 font-medium">Maschine</th>
+                  <th className="py-1 text-right font-medium">Bestscore</th>
+                  <th className="py-1 text-right"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {machineBests.map((r) => (
+                  <tr
+                    key={`${r.machineId}__${r.locationId ?? "null"}`}
+                    className="border-t border-neutral-200/60"
+                  >
+                    <td className="py-1.5 pr-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MachineBadge
+                          name={r.machineName}
+                          emoji={r.machineIconEmoji ?? null}
+                        />
+                        <div className="min-w-0">
+                          <div className="font-semibold text-neutral-900 truncate">
+                            {r.machineName}
+                          </div>
+                          <div className="text-[11px] text-neutral-500 truncate">
+                            {r.locationName ?? "Unbekannte Location"}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums">
+                      {Number(r.bestScore ?? 0).toLocaleString("de-DE")}
+                    </td>
+                    <td className="py-1.5 text-right">
+                      {typeof r.globalRank === "number" ? (
+                        <span
+                          className={
+                            "inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-semibold " +
+                            (r.globalRank === 1
+                              ? "bg-amber-100 text-amber-900"
+                              : "bg-neutral-100 text-neutral-700")
+                          }
+                          title="Platzierung global innerhalb dieser Location"
+                        >
+                          {r.globalRank === 1
+                            ? "Highscore #1"
+                            : `Rang #${r.globalRank}`}
+                        </span>
+                      ) : r.isGlobalHighscore ? (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-[2px] text-[11px] font-semibold text-amber-900">
+                          Highscore
+                        </span>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* RECHTS */}
+      <div className="rounded-xl border bg-neutral-50 p-2">
+        <div className="mb-1 text-[13px] font-semibold text-neutral-700">
+          🏆 Turniere: Maschinen-Highscores
+        </div>
+
+        {tournamentHighscores.length === 0 ? (
+          <div className="text-[13px] text-neutral-500">
+            Keine Turnier-Daten vorhanden.
+          </div>
+        ) : (
+          <div className="max-h-48 overflow-y-auto pr-1">
+            <table className="w-full text-[13px]">
+              <thead className="text-left text-neutral-500">
+                <tr>
+                  <th className="py-1 font-medium">Turnier</th>
+                  <th className="py-1 text-right font-medium">Highscores</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tournamentHighscores
+                  .filter((t) => t.machineHighscores > 0)
+                  .map((t) => {
+                  const dateLabel = t.created_at
+                    ? new Date(t.created_at).toLocaleDateString("de-DE")
+                    : "";
+                  return (
+                    <tr key={t.tournamentId} className="border-t border-neutral-200/60">
+                      <td className="py-1.5 pr-2">
+                        <div className="font-semibold text-neutral-900 truncate">
+                          {t.tournamentName}
+                        </div>
+                        {dateLabel && (
+                          <div className="text-[11px] text-neutral-500">
+                            {dateLabel}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right tabular-nums">
+                        {t.machineHighscores}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+</div>
+
 
                               </div>
                             </div>

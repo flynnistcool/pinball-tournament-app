@@ -4084,7 +4084,286 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
   const [savingScore, setSavingScore] = useState<Record<string, boolean>>({});
   const [scoreFocusKey, setScoreFocusKey] = useState<string | null>(null);
 
+  // ================================
+// OCR pro Match (Foto NICHT speichern)
+// ================================
+type OcrState = {
+  dataUrl: string;     // Preview + Base64 Quelle (nur im Browser)
+  busy: boolean;
+  error: string;
+  text: string;        // OCR Rohtext
+  scores: number[];    // erkannte Scores in Reihenfolge P1..Pn
+  notice?: string;
+};
+
+const [ocrByMatch, setOcrByMatch] = useState<Record<string, OcrState>>({});
+
+const isOcrOpen = (st?: OcrState) =>
+  !!(st?.dataUrl || st?.busy || (st?.scores?.length ?? 0) > 0 || st?.error || st?.text);
+
+
+function setOcr(matchId: string, patch: Partial<OcrState>) {
+  setOcrByMatch((prev) => ({
+    ...prev,
+    [matchId]: {
+      dataUrl: prev[matchId]?.dataUrl ?? "",
+      busy: prev[matchId]?.busy ?? false,
+      error: prev[matchId]?.error ?? "",
+      text: prev[matchId]?.text ?? "",
+      scores: prev[matchId]?.scores ?? [],
+      ...patch,
+    },
+  }));
+}
+
+function stripDataUrl(s: string) {
+  const idx = (s ?? "").indexOf("base64,");
+  return idx >= 0 ? s.slice(idx + "base64,".length) : (s ?? "");
+}
+
+// Downscale im Browser -> schneller + stabiler (Base64 Payload kleiner)
+async function fileToDownscaledDataUrl(file: File, maxW = 1400, quality = 0.85) {
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(new Error("Konnte Bild nicht lesen"));
+    r.readAsDataURL(file);
+  });
+
+  const img = document.createElement("img");
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("Bild konnte nicht geladen werden"));
+    img.src = dataUrl;
+  });
+
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h) return dataUrl;
+
+  const scale = Math.min(1, maxW / w);
+  const tw = Math.max(1, Math.round(w * scale));
+  const th = Math.max(1, Math.round(h * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = tw;
+  canvas.height = th;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+
+  ctx.drawImage(img, 0, 0, tw, th);
+
+  // LCD Fotos -> JPEG reicht + kleiner
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+// LCD OCR Parsing (pragmatisch): nimm "plausible" Zahlen
+function parseScoresFromText(text: string, wantCount: number) {
+  const t = (text || "").replace(/\u00A0/g, " ");
+
+  // 1) Label-basierte Erkennung: SPIELER 1 / PLAYER 1 / P1 / PL 1
+  const byIdx: Array<number | null> = new Array(wantCount).fill(null);
+
+  const labelPatterns = [
+    // SPIELER 1 12,345,678
+    (i: number) => new RegExp(`SPIELER\\s*${i}[^0-9]*([0-9][0-9\\s\\.,']{3,})`, "i"),
+    // PLAYER 1 12,345,678
+    (i: number) => new RegExp(`PLAYER\\s*${i}[^0-9]*([0-9][0-9\\s\\.,']{3,})`, "i"),
+    // P1 12,345,678  (oder P 1 ...)
+    (i: number) => new RegExp(`\\bP\\s*${i}\\b[^0-9]*([0-9][0-9\\s\\.,']{3,})`, "i"),
+    // PL 1 12,345,678
+    (i: number) => new RegExp(`\\bPL\\s*${i}\\b[^0-9]*([0-9][0-9\\s\\.,']{3,})`, "i"),
+  ];
+
+  for (let i = 1; i <= wantCount; i++) {
+    for (const make of labelPatterns) {
+      const m = t.match(make(i));
+      if (!m) continue;
+      const cleaned = String(m[1]).replace(/[^0-9]/g, "");
+      if (cleaned.length < 4) continue;
+      const n = Number(cleaned);
+      if (!Number.isFinite(n)) continue;
+      byIdx[i - 1] = n;
+      break;
+    }
+  }
+
+  // 2) Fallback: Zahlen nach Auftreten (Reihenfolge)
+  const occ = (() => {
+    const tokens = t.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+    const out: number[] = [];
+    const seen = new Set<string>();
+
+    for (const tok of tokens) {
+      if (!/[0-9]/.test(tok)) continue;
+      const cleaned = tok.replace(/[^0-9]/g, "");
+      if (cleaned.length < 4) continue;
+      if (seen.has(cleaned)) continue;
+      seen.add(cleaned);
+
+      const n = Number(cleaned);
+      if (!Number.isFinite(n)) continue;
+
+      out.push(n);
+      if (out.length >= wantCount) break;
+    }
+    return out;
+  })();
+
+  // 3) Final zusammenbauen: erst Labels, sonst Fallback auffüllen
+  const final: number[] = [];
+  const used = new Set<number>();
+
+  for (let i = 0; i < wantCount; i++) {
+    const v = byIdx[i];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      final.push(v);
+      used.add(v);
+    } else {
+      // nimm den nächsten aus occ, der nicht schon benutzt wurde
+      let next: number | undefined;
+      while (occ.length) {
+        const cand = occ.shift()!;
+        if (!used.has(cand)) {
+          next = cand;
+          used.add(cand);
+          break;
+        }
+      }
+      if (typeof next === "number") final.push(next);
+    }
+  }
+
+  return final.filter((x) => typeof x === "number" && Number.isFinite(x));
+}
+
+
+async function runOcrForMatch(matchId: string, playerCount: number, dataUrlOverride?: string) {
+  const st = ocrByMatch[matchId];
+  const dataUrl = dataUrlOverride ?? st?.dataUrl;
+
+  if (!dataUrl) {
+    setOcr(matchId, { error: "Bitte erst ein Foto auswählen." });
+    return;
+  }
+
+  setOcr(matchId, { busy: true, error: "", text: "", scores: [] });
+
+  try {
+    const base64 = stripDataUrl(dataUrl);
+
+    const res = await fetch(`/api/ocr?t=${Date.now()}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+      cache: "no-store",
+      body: JSON.stringify({ imageBase64: base64 }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setOcr(matchId, {
+        error: data?.error ? String(data.error) : `OCR failed (${res.status})`,
+        busy: false,
+      });
+      return;
+    }
+
+    const text = String(data?.text ?? "");
+    const scores = parseScoresFromText(text, playerCount);
+
+    setOcr(matchId, {
+      text,
+      scores,
+      busy: false,
+      error: scores.length
+        ? ""
+        : "Keinen plausiblen Score gefunden (Bild evtl. zu unscharf/dunkel).",
+    });
+  } catch (e: any) {
+    setOcr(matchId, { busy: false, error: e?.message || "OCR failed" });
+  }
+}
+
+async function applyOcrScoresToMatch(
+  matchId: string,
+  orderedPlayerIds: string[],
+  scores: number[]
+) {
+  // 1) Optimistic: alle erkannten Scores in EINEM State-Update setzen
+  const patch: Record<string, string> = {};
+  for (let i = 0; i < orderedPlayerIds.length; i++) {
+    const pid = orderedPlayerIds[i];
+    const s = scores[i];
+
+    if (!pid) continue;
+    if (typeof s !== "number" || !Number.isFinite(s)) continue;
+
+    patch[k(matchId, pid)] = String(s);
+  }
+  if (Object.keys(patch).length) {
+    setScoreOverride((prev) => ({ ...prev, ...patch }));
+  }
+
+  // 2) Dann speichern (DB)
+  for (let i = 0; i < orderedPlayerIds.length; i++) {
+    const pid = orderedPlayerIds[i];
+    const s = scores[i];
+
+    if (!pid) continue;
+    if (typeof s !== "number" || !Number.isFinite(s)) continue;
+
+    await setScore(matchId, pid, s);
+  }
+}
+
+
+async function autoAssignPositionsByExplicitScores(
+  matchId: string,
+  orderedPlayerIds: string[],
+  scores: number[]
+) {
+  const rows = orderedPlayerIds
+    .map((pid, idx) => ({ player_id: pid, score: scores[idx] }))
+    .filter(
+      (x) =>
+        Boolean(x.player_id) &&
+        typeof x.score === "number" &&
+        Number.isFinite(x.score)
+    ) as { player_id: string; score: number }[];
+
+  // müssen mind. 2 Spieler sein und für alle muss es einen Score geben
+  if (rows.length < 2 || rows.length !== orderedPlayerIds.length) return;
+
+  // bei Gleichstand: abbrechen
+  const uniq = new Set(rows.map((r) => r.score));
+  if (uniq.size !== rows.length) return;
+
+  // absteigend sortieren und Plätze setzen
+  rows.sort((a, b) => b.score - a.score);
+  for (let i = 0; i < rows.length; i++) {
+    await setPosition(matchId, rows[i].player_id, i + 1);
+  }
+}
+
+
+
+
+
   const [savingMachine, setSavingMachine] = useState<Record<string, boolean>>({});
+
+  // ✅ Optimistic UI: lokale Startreihenfolge pro Match (damit es beim Drag nicht "zurückspringt")
+  const [localStartOrderByMatchId, setLocalStartOrderByMatchId] =
+    useState<Record<string, string[]>>({});
+
+  // Wenn nach reloadAll neue matchPlayers reinkommen, lokale Reihenfolge verwerfen
+  useEffect(() => {
+    setLocalStartOrderByMatchId({});
+  }, [matchPlayers]);
+
+
 
   const matchesByRound = useMemo(() => {
     const out: Record<string, Match[]> = {};
@@ -4243,6 +4522,60 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
       setSavingScore((prev) => ({ ...prev, [key]: false }));
     }
   }
+
+  async function autoAssignPositionsByScore(matchId: string, mps: any[]) {
+  // nur Teilnehmer mit player_id
+  const rows = mps.filter((x) => x.player_id);
+
+  // müssen alle scores haben
+  const allHaveScores = rows.length >= 2 && rows.every((x) => typeof getScore(x) === "number");
+  if (!allHaveScores) return;
+
+  // wenn schon irgendeine position gesetzt ist -> NICHT anfassen (sicher)
+  //const anyPosSet = rows.some((x) => typeof getPos(x) === "number" && getPos(x) > 0);
+  //if (anyPosSet) return;
+
+  // Scores holen
+  const scored = rows.map((x) => ({ player_id: x.player_id, score: getScore(x) as number }));
+
+  // Optional: wenn Gleichstand -> abbrechen (sonst zufälliges Verhalten)
+  const uniq = new Set(scored.map((s) => s.score));
+  if (uniq.size !== scored.length) return;
+
+  // absteigend sortieren
+  scored.sort((a, b) => b.score - a.score);
+
+  // Positionen setzen
+  for (let i = 0; i < scored.length; i++) {
+    const pid = scored[i].player_id;
+    const pos = i + 1;
+    await setPosition(matchId, pid, pos);
+  }
+}
+
+// kleine helper (falls du die nicht hast)
+//function getScore(mp: any) {
+  // falls du scoreOverride benutzt, bitte hier NICHT, sondern DB-Wert mp.score
+//  return mp?.score ?? null;
+//}
+function getScore(mp: any) {
+  const key = k(mp.match_id, mp.player_id);
+
+  // ✅ 1) Optimistic: wenn es einen Override gibt, nimm den
+  const raw = scoreOverride[key];
+  if (raw != null) {
+    const cleaned = String(raw).replace(/[^0-9]/g, "");
+    if (cleaned !== "") {
+      const n = Number(cleaned);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+
+  // ✅ 2) Fallback: Daten aus DB/Reload
+  const v = mp.score;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 
 
   const dndSensors = useSensors(
@@ -4468,13 +4801,36 @@ return (
                           const playedCount = hasResults ? Math.max(0, rawPlayed - 1) : rawPlayed;
 
 
+                          const ocrState = ocrByMatch[m.id];
+
+                          // "offen", sobald wir irgendeinen OCR-Inhalt haben (Foto, busy, error, scores, text)
+                          const ocrOpen = Boolean(
+                            ocrState?.dataUrl ||
+                            ocrState?.busy ||
+                            ocrState?.error ||
+                            (ocrState?.scores?.length ?? 0) > 0 ||
+                            ocrState?.text
+                          );
+
+
 
                           return (
                             <div
                               key={m.id}
                               className="rounded-2xl border bg-white"
                             >
+
+
+                                      {/* ================================
+                                          OCR pro Match (Foto NICHT speichern)
+                                        ================================ */}
+
+
+
+
+
                               <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 sm:px-4 sm:py-3">
+                              
                                 {/* Linke Seite: Maschine + Spiel + Hinweis */}
                                 <div className="flex flex-col gap-1">
                                   <div className="flex items-center gap-2 sm:gap-3">
@@ -4512,6 +4868,18 @@ return (
                                         </option>
                                       ))}
                                     </Select>
+
+
+
+
+
+
+
+
+
+
+
+
 
                                 <div className="text-xs text-neutral-500 whitespace-nowrap">
                                   {savingMachine[m.id] ? (
@@ -4567,12 +4935,197 @@ return (
                                 </div>
                               </div>
 
-                              
+                                      {/* ================================
+                                          OCR pro Match (Foto NICHT speichern)
+                                        ================================ */}
+                                      <div className="px-2 sm:px-4">
+                                        <div className="rounded-2xl  bg-white p-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="text-xs font-semibold">{/*Foto → OCR → Punkte*/}</div>
 
-<div className="p-3 sm:p-4">
+                                            <div className="flex items-center gap-2">
+                                              {/* Hidden file input (öffnet Kamera / Foto-Auswahl) */}
+                                              <input
+                                                id={`ocr-${m.id}`}
+                                                type="file"
+                                                accept="image/*"
+                                                capture="environment"
+                                                className="hidden"
+                                                disabled={locked || ocrByMatch[m.id]?.busy}
+                                                onChange={async (e) => {
+                                                  const f = (e.target as HTMLInputElement).files?.[0] ?? null;
+                                                  if (!f) return;
+
+                                                  const dataUrl = await fileToDownscaledDataUrl(f);
+
+                                                  // State setzen (öffnet automatisch das Panel, weil dataUrl da ist)
+                                                  setOcr(m.id, { dataUrl, error: "", text: "", scores: [] });
+
+                                                  // OCR automatisch starten (WICHTIG: Override mitgeben!)
+                                                  runOcrForMatch(m.id, mps.length, dataUrl);
+
+                                                  // input resetten, damit man das gleiche Foto nochmal wählen kann
+                                                  (e.target as HTMLInputElement).value = "";
+                                                }}
+                                              />
+
+                                              {/* Sichtbarer Button: klickt eigentlich den Input an */}
+                                              <label
+                                                htmlFor={`ocr-${m.id}`}
+                                                className={[
+                                                  "inline-flex items-center justify-center rounded-xl px-2 py-1 text-xs font-semibold",
+                                                  "border bg-black text-white cursor-pointer select-none",
+                                                  (locked || ocrByMatch[m.id]?.busy) ? "opacity-50 pointer-events-none" : "",
+                                                ].join(" ")}
+                                              >
+                                                📷 OCR
+                                              </label>
+
+                                              {/* Optional: kleiner Status rechts daneben */}
+                                              {ocrByMatch[m.id]?.busy ? (
+                                                <span className="text-xs text-neutral-500">OCR läuft…</span>
+                                              ) : null}
+                                            </div>
+
+                                          </div>
+{ocrOpen ? (
+  <div className="mt-2 rounded-xl border bg-white p-3">
+    {ocrByMatch[m.id]?.dataUrl ? (
+      <div className="rounded-xl border p-2">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={ocrByMatch[m.id].dataUrl}
+          alt="OCR preview"
+          className="max-h-56 w-full object-contain"
+        />
+      </div>
+    ) : null}
+
+    {ocrByMatch[m.id]?.error ? (
+      <div className="mt-2 whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+        {ocrByMatch[m.id].error}
+      </div>
+    ) : null}
+
+    {ocrByMatch[m.id]?.notice ? (
+      <div className="mt-2 whitespace-pre-wrap rounded-xl border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800">
+        {ocrByMatch[m.id].notice}
+      </div>
+    ) : null}
+
+    {ocrByMatch[m.id]?.scores?.length ? (
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="text-xs text-neutral-600">
+          Erkannte Punkte (Reihenfolge = Startreihenfolge im Match):
+
+          {(() => {
+            const ids = mps.map((x: any) => x.player_id).filter(Boolean);
+            const orderIds = (localStartOrderByMatchId[m.id] ?? ids).map(String);
+
+            return (
+              <div className="mt-2 text-sm text-gray-600">
+                <div className="font-medium mb-1">Mapping (Startreihenfolge):</div>
+
+                {orderIds.map((pid, idx) => {
+                  const p = playersById[pid];
+                  const score = ocrByMatch[m.id]?.scores?.[idx];
+
+                  return (
+                    <div key={pid}>
+                      P{idx + 1} → {p?.name ?? pid}
+                      {typeof score === "number" ? ` (${score.toLocaleString("de-DE")})` : ""}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {ocrByMatch[m.id].scores.map((s, idx) => (
+            <span key={idx} className="rounded-full border bg-neutral-50 px-3 py-1 text-xs">
+              P{idx + 1}: {new Intl.NumberFormat("en-US").format(s)}
+            </span>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            disabled={locked || ocrByMatch[m.id]?.busy}
+            onClick={async () => {
+              const ids = mps.map((x: any) => x.player_id).filter(Boolean);
+              const orderIds = (localStartOrderByMatchId[m.id] ?? ids).map(String);
+
+              const scores = ocrByMatch[m.id].scores ?? [];
+              const playerCount = orderIds.length;
+              const recognizedCount = scores.length;
+
+              // ✅ immer: erkannte Scores übernehmen
+              await applyOcrScoresToMatch(m.id, orderIds, scores);
+
+              if (recognizedCount < playerCount) {
+                // ✅ unvollständig: KEINE Auto-Platzierung
+                setOcr(m.id, {
+                  notice: `Nur ${recognizedCount}/${playerCount} Scores erkannt. Bitte die fehlenden Scores manuell eintragen – Platzierung wird erst gesetzt, wenn alle Scores vorhanden sind.`,
+                });
+                return; // Panel bleibt offen
+              }
+
+              // ✅ vollständig: Plätze überschreiben
+              await autoAssignPositionsByExplicitScores(m.id, orderIds, scores);
+
+              // ✅ danach einklappen & reset OCR UI
+              setOcr(m.id, { dataUrl: "", text: "", scores: [], error: "", notice: "", busy: false });
+            }}
+
+          >
+            Übernehmen
+          </Button>
+
+          <Button
+            disabled={locked || ocrByMatch[m.id]?.busy}
+            onClick={() => setOcr(m.id, { dataUrl: "", text: "", scores: [], error: "", busy: false })}
+          >
+            Reset
+          </Button>
+        </div>
+      </div>
+    ) : null}
+
+    {ocrByMatch[m.id]?.text ? (
+      <details className="mt-2">
+        <summary className="cursor-pointer text-xs text-neutral-600">
+          OCR Rohtext anzeigen
+        </summary>
+        <pre className="mt-2 max-h-56 overflow-auto rounded-xl border bg-neutral-50 p-2 text-[11px]">
+          {ocrByMatch[m.id].text}
+        </pre>
+      </details>
+    ) : null}
+  </div>
+) : null}
+
+
+
+                                        </div>
+                                      </div>  
+
+
+<div className="px-2 pt-0 pb-2 sm:px-4 sm:pt-0 sm:pb-4">
   {(() => {
     const ids = mps.map((x) => x.player_id).filter(Boolean);
+
+    // ✅ wenn lokal schon gezogen wurde: diese Reihenfolge anzeigen
+    const orderIds = localStartOrderByMatchId[m.id] ?? ids;
+
     const dndDisabled = locked || hasResults; // ✅ nur solange keine Ergebnisse gesetzt sind
+
+        // ✅ HIERHIN (vor return!)
+    const mpByPlayerId = new Map(mps.map((mp) => [mp.player_id, mp]));
+    const orderedMps = orderIds
+      .map((pid) => mpByPlayerId.get(pid))
+      .filter(Boolean) as any[];
 
     return (
       <DndContext
@@ -4586,24 +5139,41 @@ return (
           if (!over) return;
           if (active.id === over.id) return;
 
-          const oldIndex = ids.indexOf(String(active.id));
-          const newIndex = ids.indexOf(String(over.id));
+          const oldIndex = orderIds.indexOf(String(active.id));
+          const newIndex = orderIds.indexOf(String(over.id));
           if (oldIndex < 0 || newIndex < 0) return;
 
-          const newIds = arrayMove(ids, oldIndex, newIndex);
+          const newIds = arrayMove(orderIds, oldIndex, newIndex);
+
+          // ✅ 1) sofort UI updaten (kein Zurückspringen)
+          setLocalStartOrderByMatchId((prev) => ({ ...prev, [m.id]: newIds }));
 
           try {
+            // ✅ 2) speichern
             await saveStartOrder(m.id, newIds);
+
+            // ✅ 3) reload (kann bleiben)
             onSaved(); // reloadAll
-            } catch (e: any) {
-              console.error(e);
-              alert(`Konnte Startreihenfolge nicht speichern:\n${e?.message ?? e}`);
-            }
+          } catch (e: any) {
+            console.error(e);
+
+            // ❌ bei Fehler zurücksetzen
+            setLocalStartOrderByMatchId((prev) => {
+              const next = { ...prev };
+              delete next[m.id];
+              return next;
+            });
+
+            alert(`Konnte Startreihenfolge nicht speichern:\n${e?.message ?? e}`);
+          }
         }}
       >
-        <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <SortableContext items={orderIds} strategy={verticalListSortingStrategy}>
+          
+          
           <div className="space-y-2">
-            {mps.map((mp) => {
+            
+            {orderedMps.map((mp) => {
               const pos = getPos(mp);
 
               // ✅ Welche Plätze sind in diesem Match schon vergeben – und von wem?
@@ -4784,6 +5354,10 @@ return (
                             }
 
                             await setScore(mp.match_id, mp.player_id, n);
+
+                            // ✅ wenn jetzt alle Scores da sind: Plätze automatisch setzen
+                            await autoAssignPositionsByScore(m.id, mps); 
+
                             setScoreOverride((prev) => {
                               const cp = { ...prev };
                               delete cp[key];
@@ -4814,6 +5388,12 @@ return (
     );
   })()}
 </div>
+
+
+                                      {/* ================================
+                                          OCR pro Match (Foto NICHT speichern)
+                                        ================================ */}
+
 
                             </div>
                           );
@@ -6304,25 +6884,30 @@ useEffect(() => {
 
 
   useEffect(() => {
-    if (!expectEloUpdateRef.current) return;
+  // ✅ nur nach einem Elo-Update rechnen
+  if (!expectEloUpdateRef.current) return;
 
-    const prev = prevRatingsRef.current;
-    if (!prev || Object.keys(prev).length === 0) return;
+  const prev = prevRatingsRef.current;
 
-    const deltas: Record<string, number> = {};
-    for (const p of profiles) {
-      const before = prev[p.id];
-      if (typeof before === "number" && typeof p.rating === "number") {
-        const diff = p.rating - before;
-        if (diff !== 0) {
-          deltas[p.id] = diff;
-        }
-      }
-    }
-
-    setEloDeltas(deltas);
+  // ✅ wenn prev leer ist: Flag zurücksetzen, sonst bleibt es "stuck"
+  if (!prev || Object.keys(prev).length === 0) {
     expectEloUpdateRef.current = false;
-  }, [profiles]);
+    return;
+  }
+
+  const deltas: Record<string, number> = {};
+
+  for (const p of profiles) {
+    const before = prev[p.id];
+    if (typeof before === "number" && typeof p.rating === "number") {
+      const diff = p.rating - before;
+      if (diff !== 0) deltas[p.id] = diff;
+    }
+  }
+
+  setEloDeltas(deltas);
+  expectEloUpdateRef.current = false;
+}, [profiles]);
 
 
   
@@ -6489,16 +7074,24 @@ useEffect(() => {
 
 
 
-  async function reloadAll() {
-    const next = await reload();
-
-    await Promise.all([
-      loadProfiles(),
-      reloadFinal(),
-      loadTournamentHighscores(),
-      loadCategoryTournamentLeaderboard(next?.tournament?.category),
-    ]);
+async function reloadAll() {
+  // Snapshot nur, wenn wir schon Profiles haben
+  if (profiles?.length) {
+    prevRatingsRef.current = Object.fromEntries(
+      profiles.map((p: any) => [p.id, typeof p.rating === "number" ? p.rating : 0])
+    );
+    expectEloUpdateRef.current = true;
   }
+
+  const next = await reload();
+
+  await Promise.all([
+    loadProfiles(),
+    reloadFinal(),
+    loadTournamentHighscores(),
+    loadCategoryTournamentLeaderboard(next?.tournament?.category),
+  ]);
+}
 
 
 
@@ -6560,6 +7153,10 @@ useEffect(() => {
 
   async function recalcElo() {
     // Stand VOR der Neuberechnung merken
+    // ✅ sicherstellen, dass profiles (Ratings) wirklich da sind
+    if (!profiles || profiles.length === 0) {
+      await loadProfiles();
+    }
     const prev: Record<string, number> = {};
     for (const p of profiles) {
       if (typeof p.rating === "number") {

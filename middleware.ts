@@ -13,6 +13,7 @@ const PUBLIC_PREFIXES = [
   "/s",
   "/api/public",
   "/api/health",
+  "/api/ocr", // ✅ HINZUFÜGEN
 ];
 
 export async function middleware(req: NextRequest) {
