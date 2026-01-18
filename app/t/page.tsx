@@ -6810,23 +6810,36 @@ useEffect(() => {
 
   let cancelled = false;
 
-  async function tick() {
-    if (cancelled) return;
+async function tick() {
+  if (cancelled) return;
 
-    try {
-      const next = await reload();
-
-      // ⚠️ KEIN Elo-Delta-Tracking hier
-      await Promise.all([
-        loadProfiles(),
-        reloadFinal(),
-        loadTournamentHighscores(),
-        loadCategoryTournamentLeaderboard(next?.tournament?.category),
-      ]);
-    } catch (e) {
-      // optional: console.error(e)
-    }
+  // ✅ HIER EINSETZEN – Snapshot für Elo-Δ (auch für Zuschauer)
+  if (profiles?.length) {
+    prevRatingsRef.current = Object.fromEntries(
+      profiles.map((p: any) => [
+        p.id,
+        typeof p.rating === "number" ? p.rating : 0,
+      ])
+    );
+    expectEloUpdateRef.current = true;
   }
+
+  try {
+    const next = await reload();
+
+    // ⚠️ KEIN Elo-Delta-Tracking hier (das passiert über den Snapshot oben)
+    await Promise.all([
+      loadProfiles(),
+      reloadFinal(),
+      loadTournamentHighscores(),
+      loadCategoryTournamentLeaderboard(next?.tournament?.category),
+    ]);
+  } catch (e) {
+    // optional
+  }
+}
+
+
 
   // sofort laden
   tick();
@@ -6935,13 +6948,10 @@ useEffect(() => {
     }
   }
 
-  // 2) sonst neu setzen (Start dieser Runde)
-  const baseline = Object.fromEntries(
-    profiles.map((p: any) => [p.id, typeof p.rating === "number" ? p.rating : 0])
-  );
-
-  localStorage.setItem(key, JSON.stringify(baseline));
-  setRoundBaseline(baseline);
+// 2) Keine Baseline vorhanden:
+// Für Zuschauer NICHT baseline=aktueller Stand setzen (sonst diff immer 0)
+setRoundBaseline({});
+return;
 }, [code, data?.tournament?.current_round, profiles]);
 
 

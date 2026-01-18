@@ -384,7 +384,7 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
 
   // aktiver Unter-Tab pro Profil ("edit" | "stats")
   const [detailTabs, setDetailTabs] = useState<
-    Record<string, "edit" | "stats">
+    Record<string, "edit" | "stats" | "single">
   >({});
 
   async function load() {
@@ -1922,6 +1922,22 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                       >
                         Statistiken
                       </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDetailTabs((prev) => ({
+                            ...prev,
+                            [p.id]: "single",
+                          }))
+                        }
+                        className={`px-3 py-1 rounded-full border ${
+                          currentDetailTab === "single"
+                            ? "bg-white shadow-sm font-semibold"
+                            : "bg-transparent text-neutral-500"
+                        }`}
+                      >
+                        Single Play
+                      </button>
                       {/*{isAdmin && ( */}
                       <button
                         type="button"
@@ -2118,6 +2134,27 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                         </div>
                       </div>
                     )}
+
+
+                    {/* Tab: SINGLE PLAY */}
+                    {currentDetailTab === "single" && (
+                      <div className="space-y-3">
+                        <div className="rounded-xl border bg-white p-4">
+                          <div className="font-semibold text-neutral-900 mb-1">
+                            Single Play
+                          </div>
+                          <div className="text-sm text-neutral-600">
+                            Hier kommen deine Single-Play-Runs rein (Solo-Spiele,
+                            Trainings, Bestscores etc.).
+                            <br />
+                            <span className="text-[12px] text-neutral-500">
+                              Aktuell ist das noch ein Platzhalter.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
 
                     {/* Tab: STATISTIKEN */}
                     {currentDetailTab === "stats" && (
