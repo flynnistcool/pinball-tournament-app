@@ -6512,10 +6512,7 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
 
   const prevRatingsRef = useRef<Record<string, number>>({});
   const expectEloUpdateRef = useRef(false);
-  const [eloDeltas, setEloDeltas] = useState<Record<string, number>>({});
-  // ✅ Baseline (Elo zu Beginn der aktuellen Runde) – für Zuschauer & Admin
-  const [roundBaseline, setRoundBaseline] = useState<Record<string, number>>({});
-
+  const [eloDeltas, setEloDeltas] = useState<Record<string, number>>({});   
   const [eloShieldedByProfile, setEloShieldedByProfile] = useState<Record<string, boolean>>({});
 
   // ⭐ NEU: Start-Elo pro Profil (vor diesem Turnier)
@@ -6911,73 +6908,21 @@ useEffect(() => {
 }, [scrollToMatchesNext, data, rounds.length, matches.length]);
 
 
-// ✅ Baseline pro Runde setzen/laden (damit Besucher auch Elo-Δ sehen)
-useEffect(() => {
-  if (!code) return;
 
-  const roundNo = data?.tournament?.current_round;
-  if (!roundNo) return;
-  if (!profiles || profiles.length === 0) return;
-
-  const key = `pb_eloBaseline:${code}:round:${roundNo}`;
-
-  // 1) existiert schon? -> laden
-  const stored = localStorage.getItem(key);
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored);
-      if (parsed && typeof parsed === "object") {
-        setRoundBaseline(parsed);
-        return;
-      }
-    } catch {
-      // kaputt -> neu setzen
-    }
-  }
-
-  // 2) sonst neu setzen (Start dieser Runde)
-  const baseline = Object.fromEntries(
-    profiles.map((p: any) => [p.id, typeof p.rating === "number" ? p.rating : 0])
-  );
-
-  localStorage.setItem(key, JSON.stringify(baseline));
-  setRoundBaseline(baseline);
-}, [code, data?.tournament?.current_round, profiles]);
-
-
-useEffect(() => {
-  if (!profiles || profiles.length === 0) {
-    setEloDeltas({});
-    expectEloUpdateRef.current = false;
-    return;
-  }
-
-  // ✅ 1) Standardfall für ALLE (Zuschauer + Admin): Δ seit Rundenstart via Baseline
-  if (roundBaseline && Object.keys(roundBaseline).length > 0) {
-    const deltas: Record<string, number> = {};
-    for (const p of profiles) {
-      const before = roundBaseline[p.id];
-      if (typeof before === "number" && typeof p.rating === "number") {
-        const diff = p.rating - before;
-        if (diff !== 0) deltas[p.id] = diff;
-      }
-    }
-    setEloDeltas(deltas);
-    // egal ob expect true/false – wir sind “up to date”
-    expectEloUpdateRef.current = false;
-    return;
-  }
-
-  // ✅ 2) Fallback: alte Admin-Logik (wenn aus irgendeinem Grund keine Baseline da ist)
+  useEffect(() => {
+  // ✅ nur nach einem Elo-Update rechnen
   if (!expectEloUpdateRef.current) return;
 
   const prev = prevRatingsRef.current;
+
+  // ✅ wenn prev leer ist: Flag zurücksetzen, sonst bleibt es "stuck"
   if (!prev || Object.keys(prev).length === 0) {
     expectEloUpdateRef.current = false;
     return;
   }
-  // ✅ Fallback: Δ seit letzter Runde (Admin-Logik, wenn keine Baseline existiert)
+
   const deltas: Record<string, number> = {};
+
   for (const p of profiles) {
     const before = prev[p.id];
     if (typeof before === "number" && typeof p.rating === "number") {
@@ -6988,9 +6933,7 @@ useEffect(() => {
 
   setEloDeltas(deltas);
   expectEloUpdateRef.current = false;
-}, [profiles, roundBaseline]);
-
-
+}, [profiles]);
 
 
   
