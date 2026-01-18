@@ -6802,41 +6802,15 @@ async function registerFinalWin(playerId: string, winnerName: string) {
   }, [rounds, data, locked]);
 
 
-useEffect(() => {
-  if (!code) return;
-
-  let cancelled = false;
-
-  async function tick() {
-    if (cancelled) return;
-
-    try {
+  useEffect(() => {
+    (async () => {
       const next = await reload();
-
-      // ⚠️ KEIN Elo-Delta-Tracking hier
-      await Promise.all([
-        loadProfiles(),
-        reloadFinal(),
-        loadTournamentHighscores(),
-        loadCategoryTournamentLeaderboard(next?.tournament?.category),
-      ]);
-    } catch (e) {
-      // optional: console.error(e)
-    }
-  }
-
-  // sofort laden
-  tick();
-
-  // alle 8 Sekunden für Besucher & Admin
-  const t = window.setInterval(tick, 8000);
-
-  return () => {
-    cancelled = true;
-    clearInterval(t);
-  };
-}, [code]);
-
+      await loadProfiles();
+      await reloadFinal();
+      await loadTournamentHighscores();
+      await loadCategoryTournamentLeaderboard(next?.tournament?.category);
+    })();
+  }, [code]);
 
   useEffect(() => {
     async function loadTournamentStartRatings() {
@@ -6975,24 +6949,19 @@ useEffect(() => {
 
 
 
-async function reload() {
-  const res = await fetch(`/api/tournaments/load?t=${Date.now()}`, {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    },
-    body: JSON.stringify({ code, _ts: Date.now() }),
-  });
+  async function reload() {
+    const res = await fetch("/api/tournaments/load", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const j = await res.json();
 
-  const j = await res.json();
-  const next = j.data ?? j;
+    const next = j.data ?? j; // ✅ DAS fehlte
+    setData(next);
 
-  setData(next);
-  return next;
-}
-
+    return next; // ✅ jetzt korrekt
+  }
 
   async function loadProfiles() {
     try {
