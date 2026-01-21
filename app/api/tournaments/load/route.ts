@@ -105,7 +105,8 @@ async function handle(codeRaw: string) {
   const { data: match_players } = matchIds.length
     ? await sb
         .from("match_players")
-        .select("match_id, player_id, position, start_position, score")
+        // 👇 team ist wichtig für DYP (2vs2)
+        .select("match_id, player_id, position, start_position, score, team")
         .in("match_id", matchIds)
         .order("start_position", { ascending: true })
     : { data: [] as any[] };

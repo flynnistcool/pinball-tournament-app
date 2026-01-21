@@ -1,6 +1,20 @@
 // @ts-nocheck
 "use client";
 
+
+
+// ---- safeText: verhindert React-Crash wenn versehentlich ein Object/Date gerendert wird
+const safeText = (v: any): string => {
+  if (v == null) return "";
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v instanceof Date) return v.toLocaleString("de-DE");
+  try {
+    // Falls es ein Objekt ist (auch leeres {}), nicht direkt rendern
+    if (typeof v === "object") return JSON.stringify(v);
+  } catch {}
+  return String(v);
+};
+
 /*
 type PlayersTabProps = {
   isAdmin: boolean;
@@ -8,7 +22,7 @@ type PlayersTabProps = {
 */
 
 import { useEffect, useMemo, useState } from "react";
-import { Button, Card, CardBody, CardHeader, Input } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/ui";
 import { EloSparkline } from "@/components/charts";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 
@@ -127,6 +141,33 @@ type PlayerTournamentHighscore = {
   tournamentName: string;
   created_at: string | null;
   machineHighscores: number; // Anzahl Maschinen, wo Spieler in diesem Turnier Platz 1 ist
+};
+
+
+// 🆕 Single Play (Training)
+type SinglePlayRun = {
+  id: string;
+  profile_id: string;
+  location_id: string | null;
+  machine_id: string | null;
+  status: "in_progress" | "finished" | "abandoned";
+  started_at: string | null;
+  finished_at: string | null;
+  total_score: number | null;
+  notes?: string | null;
+  machine?: { id: string; name: string; icon_emoji?: string | null } | null;
+};
+
+type SinglePlayBallEvent = {
+  id: string;
+  run_id: string;
+  ball_no: number;
+  ball_score: number | null;
+  drain_zone: string | null;
+  drain_detail: string | null;
+  save_action: string | null;
+  save_action_detail: string | null;
+  created_at: string | null;
 };
 
 const COLOR_OPTIONS = [
@@ -321,6 +362,69 @@ function ScoreboardRow({
   );
 }
 
+function extractQuotedParts(s: string): string[] {
+  const out: string[] = [];
+  const re = /'([^']+)'/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    const inner = (m[1] ?? "").trim();
+    if (inner) out.push(`'${inner}'`);
+  }
+  return out;
+}
+
+function fmtScore(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString("en-US") : "–";
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const w = 220;
+  const h = 48;
+  const pad = 4;
+
+  const data = (values || []).filter((v) => Number.isFinite(v));
+  if (data.length < 2) {
+    return (
+      <div className="h-12 w-[220px] rounded-md border bg-white text-[11px] text-neutral-500 flex items-center justify-center">
+        zu wenig Daten
+      </div>
+    );
+  }
+
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const span = Math.max(1, max - min);
+
+  const points = data
+    .map((v, i) => {
+      const x = pad + (i * (w - pad * 2)) / (data.length - 1);
+      const y = h - pad - ((v - min) * (h - pad * 2)) / span;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      className="block"
+      role="img"
+      aria-label="Score Verlauf"
+    >
+      <polyline
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        points={points}
+        className="text-neutral-900"
+      />
+    </svg>
+  );
+}
+
+
 
 export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabProps){
   const router = useRouter();
@@ -355,6 +459,10 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
     Record<string, string | null>
   >({});
 
+  const [spDetailSuggestions, setSpDetailSuggestions] = useState<
+    Record<string, { drain: string[]; save: string[]; run: string[] }>
+  >({});
+
   // 🆕 Machine-Stats-State pro Profil
   const [machineStatsByProfile, setMachineStatsByProfile] = useState<
     Record<string, MachineStat[] | null>
@@ -365,6 +473,10 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
   const [machineStatsError, setMachineStatsError] = useState<
     Record<string, string | null>
   >({});
+
+  const [spOpenedArchivedRun, setSpOpenedArchivedRun] = useState<Record<string, any | null>>({});
+  const [spOpenedArchivedEvents, setSpOpenedArchivedEvents] = useState<Record<string, any[]>>({});
+
 
   // 🆕 Turniererfolge-Tabellen (2 Tabellen) pro Profil
   const [successByProfile, setSuccessByProfile] = useState<
@@ -382,10 +494,64 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
   );
 
 
-  // aktiver Unter-Tab pro Profil ("edit" | "stats")
+  // aktiver Unter-Tab pro Profil ("stats" | "single" | "edit")
   const [detailTabs, setDetailTabs] = useState<
     Record<string, "edit" | "stats" | "single">
   >({});
+
+
+
+
+  // 🆕 Single Play State pro Profil
+  const [spActiveRun, setSpActiveRun] = useState<Record<string, SinglePlayRun | null>>({});
+  const [spBallEvents, setSpBallEvents] = useState<Record<string, SinglePlayBallEvent[]>>({});
+  const [spArchiveRuns, setSpArchiveRuns] = useState<Record<string, SinglePlayRun[]>>({});
+  const [spLoading, setSpLoading] = useState<Record<string, boolean>>({});
+  const [spError, setSpError] = useState<Record<string, string | null>>({});
+
+  const [spStatsEvents, setSpStatsEvents] = useState<Record<string, any[]>>({});
+  const [spStatsEventRuns, setSpStatsEventRuns] = useState<Record<string, any[]>>({});
+  const [spStatsEventsLoading, setSpStatsEventsLoading] = useState<Record<string, boolean>>({});
+  const [spStatsEventsError, setSpStatsEventsError] = useState<Record<string, string>>({});
+
+// Drilldown states (pro Profil)
+const [spDrainOpenZone, setSpDrainOpenZone] = useState<Record<string, string>>({});
+const [spDrainDetailFilter, setSpDrainDetailFilter] = useState<Record<string, string>>({});
+
+
+// Mirror-Drilldown states (Save-first) (pro Profil)
+const [spSaveOpenAction, setSpSaveOpenAction] = useState<Record<string, string>>({});
+const [spSaveDetailFilter, setSpSaveDetailFilter] = useState<Record<string, string>>({});
+const [spSaveDrainZoneFilter, setSpSaveDrainZoneFilter] = useState<Record<string, string>>({});
+const [spSaveDrainDetailFilter, setSpSaveDrainDetailFilter] = useState<Record<string, string>>({});
+
+
+  // Save-Detail Auswahl (Klick auf blaues Badge) -> zeigt passende Run-Details (pro Profil)
+  const [spSelectedSaveDetail, setSpSelectedSaveDetail] = useState<
+    Record<string, { zone: string; drainDetail: string; action: string; badge: string } | null>
+  >({});
+
+  // Save-Action Auswahl (Klick auf Rettungsversuch-Zeile) -> zeigt Run-Details (pro Profil)
+  const [spSelectedSaveAction, setSpSelectedSaveAction] = useState<
+    Record<string, { zone: string; drainDetail: string; action: string } | null>
+  >({});
+
+  // Maschinenliste (pro Location) für den Dropdown
+  const [spMachines, setSpMachines] = useState<any[]>([]);
+  const [spMachinesLoading, setSpMachinesLoading] = useState(false);
+  const [spMachinesError, setSpMachinesError] = useState<string | null>(null);
+
+  // Drafts für UI-Eingaben (pro Profil)
+  const [spStartMachineId, setSpStartMachineId] = useState<Record<string, string>>({});
+  const [spBallDraft, setSpBallDraft] = useState<Record<string, any>>({});
+  const [spTotalScoreDraft, setSpTotalScoreDraft] = useState<Record<string, string>>({});
+
+  // ✅ Single-Play Statistik Filter (pro Profil)
+  const [spStatsMachineId, setSpStatsMachineId] = useState<Record<string, string>>({});
+  const [spStatsRange, setSpStatsRange] = useState<Record<string, string>>({}); 
+  // Werte z.B. "10" | "20" | "50" | "all"
+
+  const [spRunDetailDraft, setSpRunDetailDraft] = useState<Record<string, string>>({});
 
   async function load() {
     setBusy(true);
@@ -425,6 +591,551 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
   useEffect(() => {
     load();
   }, []);
+
+  // ✅ Single-Play Player/Stats: Ball-Events (Drains & letzter Rettungsversuch) automatisch laden
+  // - sobald ein Profil im "Single"-Tab ist
+  // - und erneut, wenn der Machine-Filter wechselt
+  useEffect(() => {
+    const activeProfileIds = Object.entries(detailTabs)
+      .filter(([, tab]) => tab === "single")
+      .map(([pid]) => pid);
+
+    for (const pid of activeProfileIds) {
+      if (spStatsEventsLoading[pid]) continue;
+      const machineId = spStatsMachineId[pid] ?? "";
+      // ✅ Filter-Konsistenz: Beim ersten Laden sollen Sparkline/Runs und Ball-Stats
+      // denselben Zeitraum verwenden. Default oben ist "20".
+      const range = spStatsRange[pid] ?? "20";
+      loadSinglePlayStatsEvents(pid, machineId, range);
+    }
+    // bewusst: kein spStatsEvents als Dependency, sonst riskieren wir Reload-Loops
+  }, [detailTabs, spStatsMachineId, spStatsRange]);
+
+
+
+// ─────────────────────────────────────────────────────────
+// Single Play: Maschinen aus location_machines + locations laden
+// ─────────────────────────────────────────────────────────
+useEffect(() => {
+  (async () => {
+    setSpMachinesLoading(true);
+    setSpMachinesError(null);
+
+    try {
+      const res = await fetch(
+        `/api/location-machines/all?ts=${Date.now()}`,
+        { cache: "no-store" }
+      );
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSpMachines([]);
+        setSpMachinesError(j.error ?? "Konnte Maschinen nicht laden");
+        return;
+      }
+
+      setSpMachines(Array.isArray(j.machines) ? j.machines : []);
+    } catch {
+      setSpMachines([]);
+      setSpMachinesError("Konnte Maschinen nicht laden (Netzwerkfehler?)");
+    } finally {
+      setSpMachinesLoading(false);
+    }
+  })();
+}, []);
+
+
+async function loadSinglePlayDetailSuggestions(profileId: string) {
+  try {
+    const resS = await fetch(
+      `/api/single-play/detail-suggestions?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`,
+      { cache: "no-store" }
+    );
+    const s = await resS.json().catch(() => ({}));
+    if (resS.ok) {
+      setSpDetailSuggestions((prev) => ({
+        ...prev,
+        [profileId]: {
+          drain: Array.isArray(s.drain) ? s.drain : [],
+          save: Array.isArray(s.save) ? s.save : [],
+          run: Array.isArray(s.run) ? s.run : [],
+        },
+      }));
+    }
+  } catch {
+    // bewusst silent – UI soll nicht kaputtgehen
+  }
+}
+
+async function loadSinglePlayStatsEvents(profileId: string, machineId: string, range: string) {
+  // Hard reset (gegen stale data / gelöschte Runs)
+  setSpStatsEvents((prev) => ({ ...prev, [profileId]: [] }));
+  setSpStatsEventRuns((prev) => ({ ...prev, [profileId]: [] }));
+
+  setSpStatsEventsLoading((prev) => ({ ...prev, [profileId]: true }));
+  setSpStatsEventsError((prev) => ({ ...prev, [profileId]: "" }));
+
+  try {
+    const cleanMachineId = (machineId ?? "").trim();
+    // Default oben ist "20" (Sparkline/Runs). Range wird durchgereicht.
+    const cleanRange = String(range ?? "20").trim().toLowerCase();
+
+    const url =
+      `/api/single-play/ball-events?profileId=${encodeURIComponent(profileId)}` +
+      (cleanMachineId ? `&machineId=${encodeURIComponent(cleanMachineId)}` : "") +
+      `&range=${encodeURIComponent(cleanRange)}` +
+      `&ts=${Date.now()}`;
+
+    const res = await fetch(url, { cache: "no-store" });
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setSpStatsEventsError((prev) => ({
+        ...prev,
+        [profileId]: j?.error || `Stats Events Fehler (${res.status})`,
+      }));
+      return;
+    }
+
+    setSpStatsEvents((prev) => ({
+      ...prev,
+      [profileId]: Array.isArray(j.events) ? j.events : [],
+    }));
+
+    setSpStatsEventRuns((prev) => ({
+      ...prev,
+      [profileId]: Array.isArray(j.runs) ? j.runs : [],
+    }));
+  } catch (e: any) {
+    setSpStatsEventsError((prev) => ({
+      ...prev,
+      [profileId]: `Stats Events Netzwerkfehler: ${String(e?.message ?? e)}`,
+    }));
+  } finally {
+    setSpStatsEventsLoading((prev) => ({ ...prev, [profileId]: false }));
+  }
+}
+
+
+
+  async function loadSinglePlay(profileId: string) {
+    // Hard reset (gegen stale data)
+    setSpLoading((prev) => ({ ...prev, [profileId]: true }));
+    setSpError((prev) => ({ ...prev, [profileId]: null }));
+    setSpActiveRun((prev) => ({ ...prev, [profileId]: null }));
+    setSpBallEvents((prev) => ({ ...prev, [profileId]: [] }));
+    setSpArchiveRuns((prev) => ({ ...prev, [profileId]: [] }));
+    setSpDetailSuggestions((prev) => ({
+      ...prev,
+      [profileId]: { drain: [], save: [], run: []  },
+    }));
+
+    try {
+      // 1) Active Run
+      const resA = await fetch(
+        `/api/single-play/run/active?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`,
+        { cache: "no-store" }
+      );
+      const a = await resA.json().catch(() => ({}));
+      if (resA.ok) {
+        setSpActiveRun((prev) => ({ ...prev, [profileId]: a.run ?? null }));
+        setSpBallEvents((prev) => ({ ...prev, [profileId]: Array.isArray(a.events) ? a.events : [] }));
+      } else {
+        // nicht fatal, wir zeigen dann einfach keinen aktiven Run
+        console.warn("single-play active error", a.error);
+      }
+
+      // 2) Archive (finished)
+      const resL = await fetch(
+        `/api/single-play/runs/list?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`,
+        { cache: "no-store" }
+      );
+      const l = await resL.json().catch(() => ({}));
+
+
+// Detail-Suggestions (Badges) laden
+try {
+  const resS = await fetch(
+    `/api/single-play/detail-suggestions?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`,
+    { cache: "no-store" }
+  );
+
+  const s = await resS.json().catch(() => ({}));
+
+  if (resS.ok) {
+    setSpDetailSuggestions((prev) => ({
+      ...prev,
+      [profileId]: {
+        drain: Array.isArray(s.drain) ? s.drain : [],
+        save: Array.isArray(s.save) ? s.save : [],
+      },
+    }));
+  } else {
+    console.warn("detail-suggestions failed", resS.status, s);
+    setSpDetailSuggestions((prev) => ({
+      ...prev,
+      [profileId]: { drain: [], save: [], run: []  },
+    }));
+  }
+} catch {
+  setSpDetailSuggestions((prev) => ({
+    ...prev,
+    [profileId]: { drain: [], save: [] },
+  }));
+  // bewusst silent – UI soll nicht kaputtgehen
+}
+
+
+
+
+if (resL.ok) {
+  const runs = Array.isArray(l.runs) ? l.runs : [];
+  setSpArchiveRuns((prev) => ({ ...prev, [profileId]: runs }));
+
+  // ✅ Default-Maschine: letzte verwendete Maschine aus dem Archiv vorauswählen
+  // (nur setzen, wenn der User noch nichts ausgewählt hat)
+  const sorted = runs
+    .slice()
+    .sort((a: any, b: any) => {
+      const ta = a.finished_at ? new Date(a.finished_at).getTime() : 0;
+      const tb = b.finished_at ? new Date(b.finished_at).getTime() : 0;
+      return tb - ta; // neueste zuerst
+    });
+
+  const lastMachineId =
+    (sorted[0]?.machine_id as string | null) ??
+    (sorted[0]?.machine?.id as string | null) ??
+    null;
+
+  if (lastMachineId) {
+    setSpStartMachineId((prev) => {
+      // wenn schon gewählt: nicht überschreiben
+      if (prev[profileId]) return prev;
+      return { ...prev, [profileId]: lastMachineId };
+    });
+  }
+} else {
+  console.warn("single-play list error", l.error);
+}
+
+// ✅ NACHDEM Archiv geladen wurde: Suggestions laden
+await loadSinglePlayDetailSuggestions(profileId);
+
+    } catch {
+      setSpError((prev) => ({ ...prev, [profileId]: "Single Play konnte nicht geladen werden" }));
+    } finally {
+      setSpLoading((prev) => ({ ...prev, [profileId]: false }));
+    }
+  }
+
+  async function startSinglePlayRun(profileId: string, machineId: string) {
+    if (!machineId) return;
+    // ✅ Merken: letzte verwendete Maschine für dieses Profil
+
+    setSpStartMachineId((prev) => ({ ...prev, [profileId]: machineId }));
+
+    setSpError((prev) => ({ ...prev, [profileId]: null }));
+
+    try {
+      const res = await fetch(`/api/single-play/run/start?ts=${Date.now()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ profileId, machineId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSpError((prev) => ({ ...prev, [profileId]: j.error ?? "Run konnte nicht gestartet werden" }));
+        return;
+      }
+      setSpActiveRun((prev) => ({ ...prev, [profileId]: j.run ?? null }));
+      setSpBallEvents((prev) => ({ ...prev, [profileId]: [] }));
+
+      // ✅ Draft für neuen Run explizit auf Ball 1 zurücksetzen
+      setSpBallDraft((prev) => ({
+        ...prev,
+        [profileId]: {
+          ball_no: 1,
+          ball_score: "",
+          drain_zone: "",
+          drain_detail: "",
+          save_action: "",
+          save_action_detail: "",
+        },
+      }));
+
+
+      // Archive neu laden, damit „in_progress“ nicht im Archiv steckt, aber wir bleiben konsistent
+      await loadSinglePlay(profileId);
+    } catch {
+      setSpError((prev) => ({ ...prev, [profileId]: "Run konnte nicht gestartet werden (Netzwerkfehler?)" }));
+    }
+  }
+
+  async function openArchivedSinglePlayRun(profileId: string, runId: string) {
+  // Falls aktiver Run läuft: nicht öffnen (sonst UI Chaos)
+  if (spActiveRun[profileId]) return;
+
+  setSpError((prev) => ({ ...prev, [profileId]: null }));
+
+  try {
+    const res = await fetch(
+      `/api/single-play/run/get?profileId=${encodeURIComponent(profileId)}&runId=${encodeURIComponent(runId)}&ts=${Date.now()}`,
+      { cache: "no-store" }
+    );
+
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setSpError((prev) => ({
+        ...prev,
+        [profileId]: j.error ?? "Run konnte nicht geladen werden",
+      }));
+      return;
+    }
+
+    setSpOpenedArchivedRun((prev) => ({ ...prev, [profileId]: j.run ?? null }));
+    setSpOpenedArchivedEvents((prev) => ({ ...prev, [profileId]: Array.isArray(j.events) ? j.events : [] }));
+  } catch {
+    setSpError((prev) => ({
+      ...prev,
+      [profileId]: "Run konnte nicht geladen werden (Netzwerkfehler?)",
+    }));
+  }
+}
+
+function closeArchivedSinglePlayRun(profileId: string) {
+  setSpOpenedArchivedRun((prev) => ({ ...prev, [profileId]: null }));
+  setSpOpenedArchivedEvents((prev) => ({ ...prev, [profileId]: [] }));
+}
+
+
+  async function upsertSinglePlayBall(profileId: string, runId: string, payload: any) {
+    setSpError((prev) => ({ ...prev, [profileId]: null }));
+    try {
+      const res = await fetch(`/api/single-play/ball/upsert?ts=${Date.now()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ runId, ...payload }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSpError((prev) => ({ ...prev, [profileId]: j.error ?? "Ball konnte nicht gespeichert werden" }));
+        return;
+      }
+
+// ✅ Wenn Ball 3 gespeichert wurde: Gesamt-Score automatisch füllen
+if (payload.ballNo === 3) {
+  const raw = String(payload.ballScore ?? "").trim();
+  const n = Number(raw.replace(/[^0-9]/g, ""));
+  if (Number.isFinite(n) && n > 0) {
+    setSpTotalScoreDraft((prev) => ({ ...prev, [profileId]: String(n) }));
+  }
+}
+
+
+      // Events local aktualisieren
+      const newEvents = Array.isArray(j.events) ? j.events : (spBallEvents[profileId] || []);
+      setSpBallEvents((prev) => ({ ...prev, [profileId]: newEvents }));
+
+      // ✅ Badges sofort aktualisieren (neue '...' sollen direkt auftauchen)
+      await loadSinglePlayDetailSuggestions(profileId);   
+
+      // ✅ Draft reset + automatisch nächster Ball
+      const newExistingBalls = new Set((newEvents || []).map((e: any) => Number(e.ball_no)).filter(Boolean));
+      const newNextBall = [1, 2, 3].find((b) => !newExistingBalls.has(b)) ?? 3;
+
+      setSpBallDraft((prev) => ({
+        ...prev,
+        [profileId]: {
+          ball_no: newNextBall,
+          ball_score: "",
+          drain_zone: "",
+          drain_detail: "",
+          save_action: "",
+          save_action_detail: "",
+        },
+      }));
+
+    } catch {
+      setSpError((prev) => ({ ...prev, [profileId]: "Ball konnte nicht gespeichert werden (Netzwerkfehler?)" }));
+    }
+  }
+
+  function appendToDraft(profileId: string, field: "drain_detail" | "save_action_detail", text: string) {
+  setSpBallDraft((prev) => {
+    const cur = prev[profileId] ?? {
+      ball_no: 1,
+      ball_score: "",
+      drain_zone: "",
+      drain_detail: "",
+      save_action: "",
+      save_action_detail: "",
+    };
+
+    const existing = String((cur as any)[field] ?? "");
+    const next =
+      existing.trim().length > 0
+        ? existing.replace(/\s+$/, "") + " " + text
+        : text;
+
+    return {
+      ...prev,
+      [profileId]: {
+        ...cur,
+        [field]: next,
+      },
+    };
+  });
+}
+
+function appendToRunDetailDraft(profileId: string, text: string) {
+  setSpRunDetailDraft((prev) => {
+    const existing = String(prev[profileId] ?? "");
+    const next =
+      existing.trim().length > 0
+        ? existing.replace(/\s+$/, "") + " " + text
+        : text;
+
+    return { ...prev, [profileId]: next };
+  });
+}
+
+
+
+  async function finishSinglePlayRun(profileId: string, runId: string, totalScore: number, runDetail?: string) {
+
+    setSpError((prev) => ({ ...prev, [profileId]: null }));
+    try {
+      const res = await fetch(`/api/single-play/run/finish?ts=${Date.now()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ runId, totalScore, runDetail }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSpError((prev) => ({ ...prev, [profileId]: j.error ?? "Run konnte nicht abgeschlossen werden" }));
+        return;
+      }
+
+      // ✅ Gesamt-Score Input zurücksetzen (sonst bleibt alter Wert stehen)
+      setSpTotalScoreDraft((prev) => {
+        const cp = { ...prev };
+        delete cp[profileId];
+        return cp;
+      });
+
+
+      // Refresh alles
+      await loadSinglePlay(profileId);
+    } catch {
+      setSpError((prev) => ({ ...prev, [profileId]: "Run konnte nicht abgeschlossen werden (Netzwerkfehler?)" }));
+    }
+  }
+
+  async function deleteArchivedSinglePlayRun(profileId: string, runId: string, runLabel: string) {
+  const ok = confirm(`Run "${runLabel}" wirklich löschen?\n(Das löscht Run + Ball-Events endgültig.)`);
+  if (!ok) return;
+
+  setSpError((prev) => ({ ...prev, [profileId]: null }));
+
+  try {
+    const res = await fetch(`/api/single-play/run/delete-archive?ts=${Date.now()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ runId, profileId }),
+    });
+
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setSpError((prev) => ({
+        ...prev,
+        [profileId]: j.error ?? "Run konnte nicht gelöscht werden",
+      }));
+      return;
+    }
+
+    // ✅ danach alles neu laden (damit Archiv sofort aktuell ist)
+    await loadSinglePlay(profileId);
+  } catch {
+    setSpError((prev) => ({
+      ...prev,
+      [profileId]: "Run konnte nicht gelöscht werden (Netzwerkfehler?)",
+    }));
+  }
+}
+
+
+  
+async function deleteSinglePlayRun(profileId: string, runId: string) {
+  if (!runId) return;
+
+  const ok = confirm(
+    "Aktiven Run wirklich LÖSCHEN?\n\nDabei werden auch alle gespeicherten Bälle entfernt.\nDieser Vorgang kann nicht rückgängig gemacht werden."
+  );
+  if (!ok) return;
+
+  setSpError((prev) => ({ ...prev, [profileId]: null }));
+
+  try {
+    const res = await fetch(`/api/single-play/run/delete?ts=${Date.now()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ profileId, runId }),
+    });
+
+    const raw = await res.text();
+    let j: any = {};
+    try {
+      j = raw ? JSON.parse(raw) : {};
+    } catch {
+      // wenn HTML oder sonstwas kommt, bleibt j leer
+    }
+
+    if (!res.ok) {
+      console.log("DELETE RUN failed:", res.status, raw);
+
+      setSpError((prev) => ({
+        ...prev,
+        [profileId]:
+          j.error ??
+          `Run konnte nicht gelöscht werden (HTTP ${res.status})`,
+      }));
+      return;
+    }
+
+
+    // ✅ Hard reset states, damit kein alter Run “hängen bleibt”
+    setSpActiveRun((prev) => ({ ...prev, [profileId]: null }));
+    setSpBallEvents((prev) => ({ ...prev, [profileId]: [] }));
+    setSpBallDraft((prev) => {
+      const cp = { ...prev };
+      delete cp[profileId];
+      return cp;
+    });
+    setSpTotalScoreDraft((prev) => {
+      const cp = { ...prev };
+      delete cp[profileId];
+      return cp;
+    });
+
+    // ✅ neu laden (Archiv + Maschinen-Preselect usw.)
+    await loadSinglePlay(profileId);
+  } catch {
+    setSpError((prev) => ({
+      ...prev,
+      [profileId]: "Run konnte nicht gelöscht werden (Netzwerkfehler?)",
+    }));
+  }
+}
+
+
+
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -1905,58 +2616,55 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                 {isOpen && (
                   <div className="border-t bg-neutral-50/70 px-4 py-3 space-y-3">
                     {/* Tab-Navigation */}
-                    <div className="flex gap-2 text-xs mb-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDetailTabs((prev) => ({
-                            ...prev,
-                            [p.id]: "stats",
-                          }))
-                        }
-                        className={`px-3 py-1 rounded-full border ${
-                          currentDetailTab === "stats"
-                            ? "bg-white shadow-sm font-semibold"
-                            : "bg-transparent text-neutral-500"
-                        }`}
-                      >
-                        Statistiken
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDetailTabs((prev) => ({
-                            ...prev,
-                            [p.id]: "single",
-                          }))
-                        }
-                        className={`px-3 py-1 rounded-full border ${
-                          currentDetailTab === "single"
-                            ? "bg-white shadow-sm font-semibold"
-                            : "bg-transparent text-neutral-500"
-                        }`}
-                      >
-                        Single Play
-                      </button>
-                      {/*{isAdmin && ( */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDetailTabs((prev) => ({
-                            ...prev,
-                            [p.id]: "edit",
-                          }))
-                        }
-                        className={`px-3 py-1 rounded-full border ${
-                          currentDetailTab === "edit"
-                            ? "bg-white shadow-sm font-semibold"
-                            : "bg-transparent text-neutral-500"
-                        }`}
-                      >
-                        Profil bearbeiten
-                      </button>
-                      {/*})}*/}
-                    </div>
+{/* Tab-Navigation */}
+<div className="flex gap-2 text-xs mb-1">
+  <button
+    type="button"
+    onClick={() => {
+      setDetailTabs((prev) => ({ ...prev, [p.id]: "stats" }));
+    }}
+    className={`px-3 py-1 rounded-full border ${
+      currentDetailTab === "stats"
+        ? "bg-white shadow-sm font-semibold"
+        : "bg-transparent text-neutral-500"
+    }`}
+  >
+    Statistiken
+  </button>
+
+  <button
+    type="button"
+    onClick={() => {
+      setDetailTabs((prev) => ({ ...prev, [p.id]: "single" }));
+      loadSinglePlay(p.id);
+    }}
+    className={`px-3 py-1 rounded-full border ${
+      currentDetailTab === "single"
+        ? "bg-white shadow-sm font-semibold"
+        : "bg-transparent text-neutral-500"
+    }`}
+  >
+    Single Play
+  </button>
+
+  {isAdmin ? (
+    <button
+      type="button"
+      onClick={() => {
+        setDetailTabs((prev) => ({ ...prev, [p.id]: "edit" }));
+      }}
+      className={`px-3 py-1 rounded-full border ${
+        currentDetailTab === "edit"
+          ? "bg-white shadow-sm font-semibold"
+          : "bg-transparent text-neutral-500"
+      }`}
+    >
+      Profil bearbeiten
+    </button>
+  ) : null}
+</div>
+
+
 
                     {/* Tab: EDIT */}
                     {currentDetailTab === "edit" && (
@@ -2135,28 +2843,2009 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                       </div>
                     )}
 
+                    
 
                     {/* Tab: SINGLE PLAY */}
                     {currentDetailTab === "single" && (
                       <div className="space-y-3">
-                        <div className="rounded-xl border bg-white p-4">
-                          <div className="font-semibold text-neutral-900 mb-1">
-                            Single Play
-                          </div>
-                          <div className="text-sm text-neutral-600">
-                            Hier kommen deine Single-Play-Runs rein (Solo-Spiele,
-                            Trainings, Bestscores etc.).
-                            <br />
-                            <span className="text-[12px] text-neutral-500">
-                              Aktuell ist das noch ein Platzhalter.
-                            </span>
+                        {/* Header */}
+                        <div className="rounded-xl border bg-white p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-semibold text-neutral-900">Single Play Training</div>
+                              <div className="text-xs text-neutral-600">
+                                Run starten, dann nach jeder Kugel sofort eintragen. Am Ende Gesamt-Score speichern.
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-neutral-500">pro Spieler-Profil</div>
                           </div>
                         </div>
+
+                        {/* Error */}
+                        {spError[p.id] ? (
+                          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                            {spError[p.id]}
+                          </div>
+                        ) : null}
+
+                        {/* Maschinen-Ladefehler */}
+                        {spMachinesError ? (
+                          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                            {spMachinesError}
+                          </div>
+                        ) : null}
+
+
+{/* Active Run oder Start */}
+{(() => {
+  const run = spActiveRun[p.id] ?? null;
+  const events = spBallEvents[p.id] ?? [];
+
+  // ✅ Archiv-Run geöffnet?
+  const opened = spOpenedArchivedRun[p.id] ?? null;
+  const openedEvents = spOpenedArchivedEvents[p.id] ?? [];
+
+  const machines = (spMachines || []).filter((m: any) => m && (m.active !== false));
+
+  const drainOptions = [
+    { v: "left_outlane", l: "Linke Outlane" },
+    { v: "middle", l: "Mitte" },
+    { v: "right_outlane", l: "Rechte Outlane" },
+    { v: "tilt", l: "Tilt" },
+    { v: "danger_room", l: "Danger Room" },
+    { v: "other", l: "Sonstiges" },
+  ];
+
+const saveOptionGroups = [
+  {
+    label: "Nudge",
+    options: [
+      { v: "nudge_double", l: "Nudge Double Up" },
+      { v: "nudge_left", l: "Nudge Left" },
+      { v: "nudge_left_up", l: "Nudge Left Up" },
+      { v: "nudge_left_up_right", l: "Nudge Left Up Right" },
+      { v: "nudge_right", l: "Nudge Right" },
+      { v: "nudge_right_up", l: "Nudge Right Up" },
+      { v: "nudge_right_up_left", l: "Nudge Right Up Left" },
+    ],
+  },
+  {
+    label: "Slap / Save",
+    options: [
+      { v: "single_slap_save", l: "Single Slap Save" },
+      { v: "single_slap_save_nudge", l: "Single Slap Save Nudge" },
+      { v: "double_slap_save", l: "Double Slap Save" },
+      { v: "one_finger_nudge", l: "One Finger Nudge" },
+      { v: "dead_bounce", l: "Dead Bounce" },
+      { v: "death_save", l: "Death Save" },
+    ],
+  },
+  {
+    label: "Sonstiges",
+    options: [
+      { v: "shake_it", l: "Shake it" },
+      { v: "shatz", l: "Shatz" },
+      { v: "confused", l: "Confused" },
+      { v: "too_slow", l: "Too Slow" },
+      { v: "other", l: "Other" },
+    ],
+  },
+];
+
+// Flatten for quick lookup in saveLabel()
+const saveOptions = saveOptionGroups.flatMap((g) => g.options);
+
+  // ✅ Helfer: hübsche Labels aus values
+  const drainLabel = (v: any) => {
+    const s = String(v ?? "");
+    const hit = drainOptions.find((o) => o.v === s);
+    return hit?.l ?? (s ? s : "–");
+  };
+
+  const saveLabel = (v: any) => {
+    const s = String(v ?? "");
+    const hit = saveOptions.find((o) => o.v === s);
+    return hit?.l ?? (s ? s : "–");
+  };
+
+  // ✅ NEU: EIN Render-Block für Ball-Karten (wird für Live + Archiv benutzt)
+  const renderBallCards = (list: any[]) => {
+    const sorted = (list ?? []).slice().sort((a: any, b: any) => (a.ball_no ?? 0) - (b.ball_no ?? 0));
+
+    return (
+      <div className="space-y-2">
+        {sorted.map((e: any, idx: number) => {
+          const ballNo = Number(e.ball_no ?? 0);
+
+          // "Score nach Ball" ist kumuliert (wie in deinem UI)
+          const scoreCum =
+            Number.isFinite(Number(e.ball_score)) ? Number(e.ball_score) : null;
+
+          const prev = idx > 0 ? sorted[idx - 1] : null;
+          const prevCum =
+            prev && Number.isFinite(Number(prev.ball_score)) ? Number(prev.ball_score) : 0;
+
+          // "Ball-Score (relativ)" = Differenz zum vorherigen kumulierten Score
+          const scoreRel =
+            scoreCum == null ? null : Math.max(0, scoreCum - (Number.isFinite(prevCum) ? prevCum : 0));
+
+          const dz = drainLabel(e.drain_zone);
+          const sa = saveLabel(e.save_action);
+
+          return (
+            <div key={e.id ?? `${ballNo}-${idx}`} className="rounded-xl border bg-white p-3 text-[12px] text-neutral-800">
+              {/* Header: 🎱 Ball X • Score gesamt • Ball-Score relativ */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <div className="font-semibold flex items-center gap-2">
+                  <span aria-hidden>🎱</span>
+                  <span>Ball {ballNo || "–"}</span>
+                </div>
+
+                <span className="text-neutral-300">•</span>
+
+                <div className="text-neutral-700">
+                  Score (gesamt):{" "}
+                  <span className="font-semibold tabular-nums">{Number(scoreCum).toLocaleString("en-US") ?? "–"}</span>
+                </div>
+
+                <span className="text-neutral-300">•</span>
+
+                <div className="text-neutral-700">
+                  Ball-Score (relativ):{" "}
+                  <span className="font-semibold tabular-nums">{Number(scoreRel).toLocaleString("en-US") ?? "–"}</span>
+                </div>
+              </div>
+
+              {/* 2 Spalten: Drain / Save */}
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-lg bg-neutral-50 p-2">
+                  <div className="text-[11px] font-medium text-neutral-500">
+                    Wo ist die Kugel raus?
+                  </div>
+                  <div className="mt-0.5 font-medium text-neutral-800">{dz}</div>
+                </div>
+
+                <div className="rounded-lg bg-neutral-50 p-2">
+                  <div className="text-[11px] font-medium text-neutral-500">
+                    Was getan um zu retten?
+                  </div>
+                  <div className="mt-0.5 font-medium text-neutral-800">{sa}</div>
+                </div>
+              </div>
+
+              {/* Details */}
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-lg bg-neutral-50 p-2">
+                  <div className="text-[11px] font-medium text-neutral-500">Drain Detail</div>
+                  <div className="mt-0.5 text-neutral-700">{e.drain_detail ? String(e.drain_detail) : "–"}</div>
+                </div>
+
+                <div className="rounded-lg bg-neutral-50 p-2">
+                  <div className="text-[11px] font-medium text-neutral-500">Save Detail</div>
+                  <div className="mt-0.5 text-neutral-700">{e.save_action_detail ? String(e.save_action_detail) : "–"}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ✅ 1) Archiv-Run (read-only), nur wenn KEIN aktiver Run läuft
+  if (!run && opened) {
+    const machineName = opened.machine?.name ?? "–";
+    const machineEmoji = opened.machine?.icon_emoji ? String(opened.machine.icon_emoji).trim() : "";
+
+    return (
+      <div className="space-y-3">
+        <div className="rounded-xl border bg-white p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold text-neutral-700">
+                <div className="flex items-center gap-2 text-xs font-semibold text-blue-500">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-400" />
+                    Archiv-Run (Read-only)
+                </div>
+              </div>
+              <div className="mt-1 text-sm font-semibold text-neutral-900">
+                {machineEmoji ? `${machineEmoji} ` : ""}{machineName}
+              </div>
+              <div className="mt-1 text-[11px] text-neutral-500">
+                Start: {opened.started_at ? new Date(opened.started_at).toLocaleString() : "–"}
+                {" · "}
+                Ende: {opened.finished_at ? new Date(opened.finished_at).toLocaleString() : "–"}
+              </div>
+              <div className="mt-1 text-[12px] text-neutral-700">
+                Gesamt-Score: <span className="font-semibold tabular-nums">{Number(opened.total_score ).toLocaleString("en-US") ?? "–"}</span>
+              </div>
+              {opened.run_detail && opened.run_detail.trim().length > 0 ? (
+                <div className="mt-1 text-[12px] text-neutral-600">
+                  <span className="font-medium text-neutral-700">Run-Detail:</span>{" "}
+                  <span className="italic">{opened.run_detail}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                closeArchivedSinglePlayRun(p.id);
+              }}
+            >
+              Schließen
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-3">
+          <div className="text-xs font-semibold text-neutral-700 mb-2">Gespeicherte Bälle</div>
+
+          {openedEvents.length === 0 ? (
+            <div className="text-[12px] text-neutral-500">Keine Ball-Daten.</div>
+          ) : (
+            renderBallCards(openedEvents)
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ✅ 2) Kein aktiver Run → Start UI
+  if (!run) {
+    const startMachineId = spStartMachineId[p.id] ?? "";
+    return (
+      <div className="rounded-xl border bg-white p-3 space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="block text-xs font-medium text-neutral-600 mb-1">Maschine</label>
+            <Select
+              value={startMachineId}
+              onChange={(e) =>
+                setSpStartMachineId((prev) => ({ ...prev, [p.id]: e.target.value }))
+              }
+              disabled={spMachinesLoading}
+              className="bg-white text-neutral-900"
+            >
+              <option value="">{spMachinesLoading ? "Lade Maschinen…" : "Bitte wählen"}</option>
+
+              {machines.map((m: any) => {
+                const loc = m.location_name ?? m.locationName ?? "";
+                const machine = m.machine_name ?? m.machineName ?? m.name ?? "";
+                const label = loc ? `${loc} — ${machine}` : machine;
+
+                return (
+                  <option key={m.id} value={m.id} className="text-neutral-900">
+                    {label}
+                  </option>
+                );
+              })}
+            </Select>
+          </div>
+
+          <div className="flex items-end">
+            <Button
+              type="button"
+              className="w-full"
+              disabled={!startMachineId || spMachinesLoading}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                startSinglePlayRun(p.id, startMachineId);
+              }}
+            >
+              Run starten
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ✅ 3) Aktiver Run → Werte berechnen
+  const existingBalls = new Set((events || []).map((e: any) => Number(e.ball_no)).filter(Boolean));
+  const nextBall = [1, 2, 3].find((b) => !existingBalls.has(b)) ?? 3;
+
+  const draft = spBallDraft[p.id] ?? {
+    ball_no: nextBall,
+    ball_score: "",
+    drain_zone: "",
+    drain_detail: "",
+    save_action: "",
+    save_action_detail: "",
+  };
+
+  const ballNo = Number.isFinite(Number(draft.ball_no)) ? Number(draft.ball_no) : nextBall;
+
+  // ✅ Active Run UI
+  const machineName = run.machine?.name ?? "–";
+  const machineEmoji = run.machine?.icon_emoji ? String(run.machine.icon_emoji).trim() : "";
+
+  const totalScoreDraft =
+    spTotalScoreDraft[p.id] ?? (run.total_score != null ? String(run.total_score) : "");
+
+  const all3Done = [1, 2, 3].every((b) => existingBalls.has(b));
+  const ballAlreadySaved = existingBalls.has(ballNo);
+
+  return (
+    <div className="space-y-3">
+      {/* Header Aktiver Run */}
+      <div className="w-full rounded-xl border bg-white p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              Aktiver Run
+            </div>
+
+            <div className="mt-1 text-sm font-semibold text-neutral-900">
+              {machineEmoji ? `${machineEmoji} ` : ""}{machineName}
+            </div>
+
+            <div className="mt-1 text-[11px] text-neutral-500">
+              Start: {run.started_at ? new Date(run.started_at).toLocaleString() : "–"}
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="h-8 px-3 text-sm text-red-600 border-red-200 hover:bg-red-50"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              deleteSinglePlayRun(p.id, run.id);
+            }}
+          >
+            Löschen
+          </Button>
+        </div>
+      </div>
+
+      {/* Bereits gespeicherte Bälle (LIVE) */}
+      {events.length ? (
+        <div className="rounded-xl border bg-white p-3">
+          <div className="text-xs font-semibold text-neutral-700 mb-2">Gespeicherte Bälle</div>
+          {renderBallCards(events)}
+        </div>
+      ) : null}
+
+      {/* Ball-Form (nur solange nicht alle 3 Bälle gespeichert sind) */}
+      {all3Done ? (
+        <div className="rounded-xl border bg-emerald-50 p-3 text-sm text-emerald-800">
+          ✅ Alle 3 Bälle sind gespeichert – du kannst den Run jetzt abschließen.
+        </div>
+      ) : null}
+
+      {!all3Done ? (
+        <div className="rounded-xl border bg-white p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-neutral-700">Ball-Log</div>
+            <div className="text-[11px] text-neutral-500">Tipp: nach jeder Kugel sofort speichern</div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-neutral-600 mb-1">Ball</label>
+              <Select
+                value={String(ballNo)}
+                onChange={(e) =>
+                  setSpBallDraft((prev) => ({
+                    ...prev,
+                    [p.id]: { ...draft, ball_no: Number(e.target.value) },
+                  }))
+                }
+              >
+                {[1, 2, 3].map((b) => (
+                  <option key={b} value={String(b)} disabled={existingBalls.has(b)}>
+                    Ball {b}{existingBalls.has(b) ? " (gespeichert)" : ""}
+                  </option>
+                ))}
+              </Select>
+              <div className="mt-1 text-[11px] text-neutral-500">
+                Standard ist der nächste noch nicht gespeicherte Ball.
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-neutral-600 mb-1">Score nach Ball (optional)</label>
+              <Input
+                inputMode="numeric"
+                placeholder="z.B. 450000"
+                value={draft.ball_score}
+                onChange={(e) =>
+                  setSpBallDraft((prev) => ({
+                    ...prev,
+                    [p.id]: { ...draft, ball_score: e.target.value },
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-neutral-600 mb-1">Wo ist die Kugel raus?</label>
+              <Select
+                value={draft.drain_zone}
+                onChange={(e) =>
+                  setSpBallDraft((prev) => ({
+                    ...prev,
+                    [p.id]: { ...draft, drain_zone: e.target.value },
+                  }))
+                }
+              >
+                <option value="">Bitte wählen</option>
+                {drainOptions.map((o) => (
+                  <option key={o.v} value={o.v}>{o.l}</option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-neutral-600 mb-1">Was getan um zu retten?</label>
+              <Select
+                value={draft.save_action}
+                onChange={(e) =>
+                  setSpBallDraft((prev) => ({
+                    ...prev,
+                    [p.id]: { ...draft, save_action: e.target.value },
+                  }))
+                }
+              >
+                <option value="">Bitte wählen</option>
+                {saveOptionGroups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map((o) => (
+                      <option key={o.v} value={o.v}>
+                        {o.l}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-neutral-600 mb-1">Drain Detail (optional)</label>
+              <Input
+                placeholder="z.B. horizontal tick tack zwischen slings…"
+                value={draft.drain_detail}
+                onChange={(e) =>
+                  setSpBallDraft((prev) => ({
+                    ...prev,
+                    [p.id]: { ...draft, drain_detail: e.target.value },
+                  }))
+                }
+              />
+
+              {(spDetailSuggestions[p.id]?.drain ?? []).length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(spDetailSuggestions[p.id]?.drain ?? []).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className="rounded-full border bg-rose-50 border-rose-200 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-100"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        appendToDraft(p.id, "drain_detail", t);
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-neutral-600 mb-1">Save Detail (optional)</label>
+              <Input
+                placeholder="z.B. nudge spät / zu stark / nicht gecheckt…"
+                value={draft.save_action_detail}
+                onChange={(e) =>
+                  setSpBallDraft((prev) => ({
+                    ...prev,
+                    [p.id]: { ...draft, save_action_detail: e.target.value },
+                  }))
+                }
+              />
+
+              {(spDetailSuggestions[p.id]?.save ?? []).length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(spDetailSuggestions[p.id]?.save ?? []).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className="rounded-full border bg-blue-50 border-blue-200 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-100"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        appendToDraft(p.id, "save_action_detail", t);
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end">
+            {ballAlreadySaved ? (
+              <div className="text-[11px] text-neutral-500">
+                Dieser Ball ist bereits gespeichert. Bitte wähle den nächsten Ball.
+              </div>
+            ) : null}
+
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!draft.drain_zone || !draft.save_action || ballAlreadySaved}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                upsertSinglePlayBall(p.id, run.id, {
+                  ballNo: ballNo,
+                  ballScore: draft.ball_score,
+                  drainZone: draft.drain_zone,
+                  drainDetail: draft.drain_detail,
+                  saveAction: draft.save_action,
+                  saveActionDetail: draft.save_action_detail,
+                });
+              }}
+            >
+              Ball speichern
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+
+{/* Finish */}
+<div className="rounded-xl border bg-white p-3 space-y-1">
+  <div className="text-xs font-semibold text-neutral-700">
+    Run abschließen
+  </div>
+
+  {/* Zeile 1: Gesamt-Score + Button */}
+
+  {/* Zeile 2: Run Detail – volle Breite */}
+  <div>
+    <label className="block text-xs font-medium text-neutral-600 mb-1">
+      Run Detail
+    </label>
+
+    <textarea
+      rows={3}
+      className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+      placeholder="z.B. Setup, besondere Ereignisse, Probleme, Lernpunkte …"
+      value={spRunDetailDraft[p.id] ?? ""}
+      onChange={(e) =>
+        setSpRunDetailDraft((prev) => ({
+          ...prev,
+          [p.id]: e.target.value,
+        }))
+      }
+    />
+  </div>
+
+  {(spDetailSuggestions[p.id]?.run ?? []).length > 0 ? (
+  <div className="flex flex-wrap gap-2">
+    {(spDetailSuggestions[p.id]?.run ?? []).map((t) => (
+      <button
+        key={t}
+        type="button"
+        className="rounded-full border bg-green-50 border-green-200 px-2 py-1 text-[11px] text-green-700 hover:bg-green-100"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          appendToRunDetailDraft(p.id, t);
+        }}
+      >
+        {t}
+      </button>
+    ))}
+  </div>
+) : null}
+
+  <div className="grid gap-3 sm:grid-cols-2">
+
+
+    <div>
+      <label className="block text-xs font-medium text-neutral-600 mb-1 mt-2">
+        Gesamt-Score
+      </label>
+      <Input
+        inputMode="numeric"
+        placeholder="Endscore"
+        value={totalScoreDraft}
+        onChange={(e) =>
+          setSpTotalScoreDraft((prev) => ({
+            ...prev,
+            [p.id]: e.target.value,
+          }))
+        }
+      />
+    </div>
+
+    <div className="flex items-end">
+      <Button
+        type="button"
+        className="w-full"
+        disabled={!totalScoreDraft}
+        onClick={async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const n = Number(
+            String(totalScoreDraft).replace(/[^0-9]/g, "")
+          );
+          if (!Number.isFinite(n) || n <= 0) {
+            setSpError((prev) => ({
+              ...prev,
+              [p.id]: "Bitte einen gültigen Gesamt-Score eingeben",
+            }));
+            return;
+          }
+
+          await finishSinglePlayRun(
+            p.id,
+            run.id,
+            n,
+            spRunDetailDraft[p.id] // 👈 Run Detail mitsenden
+          );
+        }}
+      >
+        Run abschließen
+      </Button>
+    </div>
+  </div>
+
+
+</div>
+
+
+    </div>
+  );
+})()}
+
+
+
+                        {/* Archiv */}
+                        <div className="rounded-xl border bg-white p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-xs font-semibold text-neutral-700">Archiv (letzte Runs)</div>
+                            <button
+                              type="button"
+                              className="text-[11px] text-neutral-600 underline underline-offset-2"
+                              onClick={() => loadSinglePlay(p.id)}
+                            >
+                              neu laden
+                            </button>
+                          </div>
+
+                          {spLoading[p.id] ? (
+                            <div className="text-[12px] text-neutral-500">Lade…</div>
+                          ) : (spArchiveRuns[p.id] ?? []).length === 0 ? (
+                            <div className="text-[12px] text-neutral-500">Noch keine gespeicherten Runs.</div>
+                          ) : (
+                            <div className="space-y-2 overflow-y-auto pr-1" style={{ maxHeight: 390 }}>
+{(spArchiveRuns[p.id] ?? []).slice(0, 10).map((r) => {
+  const label = `${r.machine?.name ?? "–"}${r.finished_at ? " (" + new Date(r.finished_at).toLocaleString() + ")" : ""}`;
+
+  return (
+    <div
+      key={r.id}
+      className="rounded-lg border bg-neutral-50 p-2 text-[12px] text-neutral-700 flex items-center justify-between gap-3 cursor-pointer hover:bg-neutral-100"
+
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openArchivedSinglePlayRun(p.id, r.id);
+      }}
+    >
+      {/* links: Text */}
+      <div className="min-w-0">
+        <div className="font-semibold truncate">
+          {r.machine?.icon_emoji ? `${r.machine.icon_emoji} ` : ""}
+          {r.machine?.name ?? "–"}
+        </div>
+        <div>
+          Score: <span className="tabular-nums font-semibold">
+
+            {Number(r.total_score).toLocaleString("en-US") ?? "–"}
+
+          </span>
+          <span className="text-neutral-400"> • </span>
+          {r.finished_at ? new Date(r.finished_at).toLocaleString() : "–"}
+        </div>
+        {r.run_detail ? (
+
+
+                <div className="text-[12px] text-neutral-500">
+                  <span className="text-[12px] font-semibold">Run-Detail:</span>{" "}
+                  <span className="italic">{r.run_detail}</span>
+                </div>
+          
+        ) : null}
+      </div>
+
+
+      {/* rechts: Löschen */}
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        className="h-8 px-3 text-sm text-red-600 border-red-200 hover:bg-red-50"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteArchivedSinglePlayRun(p.id, r.id, label);
+        }}
+      >
+        Löschen
+      </Button>
+    </div>
+  );
+})}
+
+                            </div>
+                          )}
+                        </div>
+
+
+{/* ✅ Statistik (Single Play) */}
+<div className="rounded-xl border bg-white p-3 space-y-3">
+  <div className="flex items-center justify-between gap-3">
+    <div>
+      <div className="text-sm font-semibold text-neutral-800 flex items-center gap-2">
+                    <span>📊</span>
+                    <span>Statistik (Training)</span>
+      </div>
+      <div className="text-[11px] text-neutral-500">
+        Trend & Tabelle pro Maschine (älteste → neueste).
+      </div>
+    </div>
+    <div className="mt-4">
+                  {/* ✅ Neu laden (oben rechts): aktualisiert Sparkline/Runs + Ball-Stats */}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const curMachineId = spStatsMachineId[p.id] ?? "";
+                  const curRange = spStatsRange[p.id] ?? "20";
+
+                  // 1) Runs (Sparkline + Tabelle) neu laden
+                  await loadSinglePlay(p.id);
+
+                  // 2) Ball-Events neu laden
+                  await loadSinglePlayStatsEvents(p.id, curMachineId, curRange);
+                }}
+                disabled={(spLoading[p.id] ?? false) || (spStatsEventsLoading[p.id] ?? false)}
+              >
+                {(spLoading[p.id] ?? false) || (spStatsEventsLoading[p.id] ?? false)
+                  ? "Lade…"
+                  : "Neu laden"}
+              </Button>
+    </div>
+  </div>
+
+  {(() => {
+    const allRuns = spArchiveRuns[p.id] ?? [];
+
+    // Filter UI
+    const machineId = spStatsMachineId[p.id] ?? "";
+    const range = spStatsRange[p.id] ?? "20";
+
+    const machinesForFilter = [
+      { id: "", name: "Alle Maschinen" },
+      ...(spMachines || [])
+        .filter((m: any) => m && (m.active !== false))
+        .map((m: any) => ({
+          id: m.id,
+          name:
+            (m.location_name ? `${m.location_name} — ` : "") +
+            (m.machine_name ?? m.name ?? "–"),
+        })),
+    ];
+
+    // Runs filtern
+    let filtered = allRuns.slice();
+
+    if (machineId) {
+      filtered = filtered.filter((r: any) => String(r.machine_id ?? r.machine?.id ?? "") === machineId);
+    }
+
+    // Chronologisch (älteste -> neueste) für Sparkline
+    filtered.sort((a: any, b: any) => {
+      const ta = a.finished_at ? new Date(a.finished_at).getTime() : 0;
+      const tb = b.finished_at ? new Date(b.finished_at).getTime() : 0;
+      return ta - tb;
+    });
+
+    // Range anwenden
+    if (range !== "all") {
+      const n = Number(range);
+      if (Number.isFinite(n) && n > 0) {
+        filtered = filtered.slice(Math.max(0, filtered.length - n));
+      }
+    }
+
+    const scores = filtered
+      .map((r: any) => Number(r.total_score))
+      .filter((n: any) => Number.isFinite(n));
+
+    // UI: Runs-Tabelle soll nach 5 Einträgen scrollen (statt endlos zu wachsen)
+    // Hinweis: Einträge haben leicht unterschiedliche Höhe (Run-Detail optional).
+    // Daher nehmen wir eine robuste "Card-Höhe" als Richtwert.
+    const RUNS_TABLE_VISIBLE_ROWS = 5;
+    const RUNS_TABLE_ROW_EST_PX = 78; // ~1 Card (mit Datum + ggf. kurzer Detailzeile)
+    const runsTableMaxHeightPx = RUNS_TABLE_VISIBLE_ROWS * RUNS_TABLE_ROW_EST_PX;
+
+    return (
+      <div className="space-y-3">
+        {/* Filter */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="block text-xs font-medium text-neutral-600 mb-1">Maschine</label>
+            <Select
+              value={machineId}
+              onChange={(e) => setSpStatsMachineId((prev) => ({ ...prev, [p.id]: e.target.value }))}
+              className="bg-white text-neutral-900"
+            >
+              {machinesForFilter.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-neutral-600 mb-1">Zeitraum</label>
+            <Select
+              value={range}
+              onChange={(e) => setSpStatsRange((prev) => ({ ...prev, [p.id]: e.target.value }))}
+              className="bg-white text-neutral-900"
+            >
+              <option value="10">Letzte 10 Runs</option>
+              <option value="20">Letzte 20 Runs</option>
+              <option value="50">Letzte 50 Runs</option>
+              <option value="all">Alle (max. geladen)</option>
+            </Select>
+          </div>
+
+        </div>
+
+        {/* Sparkline */}
+        <div className="rounded-lg border bg-neutral-50 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold text-neutral-700">Score-Verlauf</div>
+            <div className="flex items-center gap-2">
+              <div className="text-[11px] text-neutral-500">{scores.length} Runs</div>
+
+
+            </div>
+          </div>
+          <Sparkline values={scores} />
+        </div>
+
+        {/* Tabelle */}
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-xs font-semibold text-neutral-700 mb-2">Runs (Tabelle)</div>
+
+          {filtered.length === 0 ? (
+            <div className="text-[12px] text-neutral-500">Keine Runs im Filter.</div>
+          ) : (
+            <div
+              className="space-y-2 overflow-y-auto pr-1"
+              style={{ maxHeight: runsTableMaxHeightPx }}
+            >
+              {filtered
+                .slice()
+                .reverse() // neueste oben in Tabelle
+                .map((r: any) => {
+                  const dt = r.finished_at ? new Date(r.finished_at).toLocaleString() : "–";
+                  const machineName = r.machine?.name ?? r.machine_name ?? "–";
+                  const icon = r.machine?.icon_emoji ? String(r.machine.icon_emoji).trim() : "";
+                  const runDetail = (r.run_detail ?? r.notes ?? "").trim();
+
+                  return (
+                    <div key={r.id} className="rounded-lg border bg-neutral-50 p-2 text-[12px] text-neutral-700">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold truncate">
+                          {icon ? `${icon} ` : ""}
+                          {machineName}
+                        </div>
+                        <div className="tabular-nums font-semibold">{fmtScore(r.total_score)}</div>
+                      </div>
+
+                      <div className="mt-1 text-[11px] text-neutral-500">{dt}</div>
+
+                      {runDetail ? (
+                        <div className="mt-1 text-[11px] text-neutral-700">
+                          <span className="font-semibold">Run-Detail:</span> {runDetail}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+
+        {/* ✅ Drilldown: Drains & letzter Rettungsversuch (letzte 50 Runs) */}
+        {(() => {
+          const machineId = spStatsMachineId[p.id] ?? "";
+          const events = spStatsEvents[p.id] ?? [];
+          const loading = spStatsEventsLoading[p.id] ?? false;
+          const err = spStatsEventsError[p.id] ?? "";
+
+          const range = spStatsRange[p.id] ?? "20";
+          const runsUsed = spStatsEventRuns[p.id] ?? [];
+
+          const machineLabel = machineId
+            ? (spMachines.find((m: any) => String(m.id) === String(machineId))?.machine_name ??
+               spMachines.find((m: any) => String(m.id) === String(machineId))?.machineName ??
+               spMachines.find((m: any) => String(m.id) === String(machineId))?.name ??
+               "–")
+            : "Alle";
+
+          const rangeLabel = String(range).toLowerCase() === "all" ? "Alle" : `Letzte ${range}`;
+          const runsLabel = `${runsUsed.length} Runs`;
+
+          // Labels
+          const drainLabel: Record<string, string> = {
+            left_outlane: "Linke Outlane",
+            middle: "Mitte",
+            right_outlane: "Rechte Outlane",
+            danger_room: "Danger Room",
+            other: "Sonstiges",
+            "": "–",
+          };
+
+          const saveLabel: Record<string, string> = {
+            nudge: "Nudge",
+            double_nudge: "Double Nudge",
+            nudge_left: "Nudge Left",
+            nudge_right: "Nudge Right",
+            nudge_left_under: "Nudge Left Under",
+            nudge_right_under: "Nudge Right Under",
+            nudge_left_under_right: "Nudge Left Under Right",
+            nudge_right_under_left: "Nudge Right Under Left",
+            slap_save: "Slap Save",
+            single_slap_save: "Single Slap Save",
+            double_slap_save: "Double Slap Save",
+            death_save: "Death Save",
+            dead_bounce: "Dead Bounce",
+            shatz: "Shatz",
+            confused: "Confused",
+            not_checked: "Nicht gecheckt",
+            other: "Sonstiges",
+            "": "–",
+          };
+
+          const humanizeSaveAction = (k: any) => {
+            const raw = String(k ?? "");
+            if (!raw) return "–";
+            return (saveLabel[raw] ?? raw.split("_").filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" "));
+          };
+
+          // Zone counts
+          const total = events.length || 0;
+          const zoneCounts = new Map<string, number>();
+          for (const ev of events) {
+            const z = String(ev.drain_zone ?? "");
+            zoneCounts.set(z, (zoneCounts.get(z) ?? 0) + 1);
+          }
+
+          const zones = Array.from(zoneCounts.entries())
+            .map(([zone, count]) => ({ zone, count }))
+            .sort((a, b) => b.count - a.count);
+
+          const openZone = spDrainOpenZone[p.id] ?? "";
+          const detailFilter = spDrainDetailFilter[p.id] ?? "";
+
+          // Helper: Events in open zone
+          const zoneEvents = openZone
+            ? events.filter((ev) => String(ev.drain_zone ?? "") === openZone)
+            : [];
+
+          // Drain detail badge counts (only in this zone)
+          const drainBadgeCounts = new Map<string, number>();
+          for (const ev of zoneEvents) {
+            for (const b of extractQuotedParts(String(ev.drain_detail ?? ""))) {
+              drainBadgeCounts.set(b, (drainBadgeCounts.get(b) ?? 0) + 1);
+            }
+          }
+
+          const drainBadges = Array.from(drainBadgeCounts.entries())
+            .map(([badge, count]) => ({ badge, count }))
+            .sort((a, b) => b.count - a.count);
+
+          // Save action counts – optionally filtered by selected drain detail badge
+          const saveCounts = new Map<string, number>();
+          for (const ev of zoneEvents) {
+            if (detailFilter) {
+              const badges = extractQuotedParts(String(ev.drain_detail ?? ""));
+              if (!badges.includes(detailFilter)) continue;
+            }
+            const a = String(ev.save_action ?? "");
+            saveCounts.set(a, (saveCounts.get(a) ?? 0) + 1);
+          }
+
+          const saveTotal = Array.from(saveCounts.values()).reduce((acc, n) => acc + n, 0);
+
+          const saveRows = Array.from(saveCounts.entries())
+            .map(([action, count]) => ({
+              action,
+              count,
+              pct: saveTotal ? Math.round((count / saveTotal) * 100) : 0,
+            }))
+            .sort((a, b) => b.count - a.count);
+
+
+// Save details grouped by save_action (so you know WHICH detail belongs to WHICH attempt)
+const saveDetailsByAction = new Map<string, Map<string, number>>();
+
+for (const ev of zoneEvents) {
+  // keep EXACT same filtering logic as saveRows:
+  if (detailFilter) {
+    const drainBadges = extractQuotedParts(String(ev.drain_detail ?? ""));
+    if (!drainBadges.includes(detailFilter)) continue;
+  }
+
+  const action = String(ev.save_action ?? "");
+  if (!action) continue;
+
+  const badges = extractQuotedParts(String(ev.save_action_detail ?? ""));
+  if (badges.length === 0) continue;
+
+  if (!saveDetailsByAction.has(action)) {
+    saveDetailsByAction.set(action, new Map<string, number>());
+  }
+  const m = saveDetailsByAction.get(action)!;
+
+  for (const b of badges) {
+    m.set(b, (m.get(b) ?? 0) + 1);
+  }
+}
+
+
+
+
+
+          // Save detail badge counts (same filter as saveRows: zone + optional drain-detail filter)
+          const saveDetailCounts = new Map<string, number>();
+          for (const ev of zoneEvents) {
+            if (detailFilter) {
+              const badges = extractQuotedParts(String(ev.drain_detail ?? ""));
+              if (!badges.includes(detailFilter)) continue;
+            }
+
+            for (const b of extractQuotedParts(String(ev.save_action_detail ?? ""))) {
+              saveDetailCounts.set(b, (saveDetailCounts.get(b) ?? 0) + 1);
+            }
+          }
+
+          const saveDetailBadges = Array.from(saveDetailCounts.entries())
+            .map(([badge, count]) => ({ badge, count }))
+            .sort((a, b) => b.count - a.count);
+
+
+          // Initial load trigger (when machine filter changes)
+          // -> IMPORTANT: do this in a useEffect normally, but we can also call in onChange handler.
+          // We do it properly below with an effect in section 4.
+
+          return (
+            <div className="rounded-lg border bg-white p-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-neutral-800 flex items-center gap-2">
+                    <span>🕳️</span>
+                    <span>Drains & letzter Rettungsversuch</span>
+                  </div>
+                  <div className="text-[11px] text-neutral-500">
+                    Basis: Ball-Events aus dem aktuellen Filter.
+                    <br />
+                    Maschine: <span className="font-semibold text-neutral-700">{machineLabel}</span>{" · "}Zeitraum: <span className="font-semibold text-neutral-700">{rangeLabel}</span>{" · "}Runs: <span className="font-semibold text-neutral-700">{runsLabel}</span>.
+                  </div>
+                </div>
+
+                {/* Button wurde nach oben in den Score-Verlauf-Header verschoben */}
+              </div>
+
+              {err ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-[12px] text-red-700">{err}</div>
+              ) : null}
+
+              {loading ? (
+                <div className="text-[12px] text-neutral-500">Lade Ball-Events…</div>
+              ) : total === 0 ? (
+                <div className="text-[12px] text-neutral-500">Keine Ball-Events gefunden.</div>
+              ) : (
+                <div className="space-y-2">
+                  {/* Zonen Tabelle */}
+                  <div className="text-[12px] font-semibold text-neutral-700">Wo ist die Kugel raus?</div>
+
+                  <div className="space-y-1">
+                    {zones.map((r) => {
+                      const pct = total ? Math.round((r.count / total) * 100) : 0;
+                      const isOpen = openZone === r.zone;
+
+                      return (
+                        <div key={r.zone} className="rounded-md border bg-neutral-50">
+                          <button
+                            type="button"
+                            className="w-full px-2 py-2 text-left flex items-center justify-between gap-2 cursor-pointer"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSpDrainDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                      setSpSelectedSaveAction((prev) => ({ ...prev, [p.id]: null }));
+                                      setSpSelectedSaveDetail((prev) => ({ ...prev, [p.id]: null })); // filter reset when switching zone
+                              setSpDrainOpenZone((prev) => ({ ...prev, [p.id]: isOpen ? "" : r.zone }));
+                            }}
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-[12px] text-neutral-800">
+                                {drainLabel[r.zone] ?? r.zone}
+                              </div>
+                              <div className="text-[11px] text-neutral-500">{r.count}x • {pct}%</div>
+                            </div>
+                            <div className="text-[12px] text-neutral-500">{isOpen ? "▲" : "▼"}</div>
+                          </button>
+
+                          {/* Drilldown Panel */}
+                          {isOpen ? (
+                            <div className="border-t bg-white p-2 space-y-2">
+                              {/* Active filters */}
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[11px] text-neutral-600">
+                                  Filter: <span className="font-semibold">{drainLabel[r.zone] ?? r.zone}</span>
+                                  {detailFilter ? (
+                                    <> {" · "} Detail: <span className="font-semibold">{detailFilter}</span></>
+                                  ) : null}
+                                </div>
+
+                                {detailFilter ? (
+                                  <button
+                                    type="button"
+                                    className="text-[11px] text-neutral-600 underline underline-offset-2"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setSpDrainDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                      setSpSelectedSaveAction((prev) => ({ ...prev, [p.id]: null }));
+                                      setSpSelectedSaveDetail((prev) => ({ ...prev, [p.id]: null }));
+                                    }}
+                                  >
+                                    Detail-Filter löschen
+                                  </button>
+                                ) : null}
+                              </div>
+
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {/* Drain detail badges */}
+                                <div className="rounded-md border bg-neutral-50 p-2">
+                                  <div className="text-[11px] font-semibold text-neutral-700 mb-2">Drain-Details</div>
+
+                                  {drainBadges.length === 0 ? (
+                                    <div className="text-[11px] text-neutral-500">Keine '...' Details gefunden.</div>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                      {drainBadges.slice(0, 30).map((b) => {
+                                        const active = detailFilter === b.badge;
+                                        return (
+                                          <button
+                                            key={b.badge}
+                                            type="button"
+                                            className={
+                                              "rounded-full border px-2 py-1 text-[11px] transition-colors " +
+                                              (active
+                                                ? "bg-red-600 text-white border-red-600"
+                                                : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100")
+                                            }
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              setSpDrainDetailFilter((prev) => ({
+                                                ...prev,
+                                                [p.id]: active ? "" : b.badge,
+                                              }));
+                                              setSpSelectedSaveAction((prev) => ({ ...prev, [p.id]: null }));
+                                              setSpSelectedSaveDetail((prev) => ({ ...prev, [p.id]: null }));
+                                            }}
+                                          >
+                                            {b.badge} <span className={active ? "opacity-80" : "text-neutral-400"}>({b.count})</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Save action counts (crossfiltered by badge) */}
+{/* Save action counts + Save-Details pro Rettungsversuch (crossfiltered by badge) */}
+{(() => {
+  // Save-Details pro Rettungsversuch (save_action) gruppieren
+  const saveDetailsByAction = new Map<string, Map<string, number>>();
+
+  for (const ev of zoneEvents) {
+    // gleiche Filterlogik wie bei saveRows:
+    // wenn ein Drain-Detail-Badge aktiv ist, nur diese Events
+    if (detailFilter) {
+      const drainBadges = extractQuotedParts(String(ev.drain_detail ?? ""));
+      if (!drainBadges.includes(detailFilter)) continue;
+    }
+
+    const action = String(ev.save_action ?? "");
+    if (!action) continue;
+
+    const badges = extractQuotedParts(String(ev.save_action_detail ?? ""));
+    if (badges.length === 0) continue;
+
+    if (!saveDetailsByAction.has(action)) {
+      saveDetailsByAction.set(action, new Map<string, number>());
+    }
+    const m = saveDetailsByAction.get(action)!;
+
+    for (const b of badges) {
+      m.set(b, (m.get(b) ?? 0) + 1);
+    }
+  }
+
+  return (
+    <div className="rounded-md border bg-neutral-50 p-2">
+      <div className="text-[11px] font-semibold text-neutral-700 mb-2">
+        Letzter Rettungsversuch
+      </div>
+
+      {saveRows.length === 0 ? (
+        <div className="text-[11px] text-neutral-500">Keine Daten im Filter.</div>
+      ) : (
+        <div className="space-y-2">
+          {saveRows.map((s) => {
+            const badgeMap = saveDetailsByAction.get(s.action);
+            const badges = badgeMap
+              ? Array.from(badgeMap.entries())
+                  .map(([badge, count]) => ({ badge, count }))
+                  .sort((a, b) => b.count - a.count)
+              : [];
+
+            return (
+              <button
+                key={s.action}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSpSelectedSaveAction((prev) => {
+                    const cur = prev[p.id];
+                    const next = { zone: r.zone, drainDetail: detailFilter ?? "", action: s.action };
+                    const same = cur && cur.zone === next.zone && cur.drainDetail === next.drainDetail && cur.action === next.action;
+                    return { ...prev, [p.id]: same ? null : next };
+                  });
+                  // wenn Action wechselt, Badge-Auswahl löschen
+                  setSpSelectedSaveDetail((prev) => ({ ...prev, [p.id]: null }));
+                }}
+                className={(() => {
+                  const selA = spSelectedSaveAction[p.id];
+                  const active = !!selA && selA.zone === r.zone && selA.drainDetail === (detailFilter ?? "") && selA.action === s.action;
+                  return (
+                    "w-full text-left rounded-lg border bg-white p-2 transition-shadow " +
+                    (active ? "ring-2 ring-neutral-300 border-neutral-300" : "hover:shadow-sm")
+                  );
+                })()}
+              >
+                <div className="flex items-center justify-between text-[12px] text-neutral-700">
+                  <div className="font-medium">{humanizeSaveAction(s.action)}</div>
+                  <div className="tabular-nums font-semibold">{s.count}x • {s.pct}%</div>
+                </div>
+
+
+                {badges.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {badges.slice(0, 12).map((b) => {
+                      const activeSel = spSelectedSaveDetail[p.id];
+                      const isActive =
+                        !!activeSel &&
+                        activeSel.zone === r.zone &&
+                        activeSel.drainDetail === (detailFilter ?? "") &&
+                        activeSel.action === s.action &&
+                        activeSel.badge === b.badge;
+
+                      return (
+                        <button
+                          key={b.badge}
+                          type="button"
+                          className={
+                            "rounded-full border px-2 py-1 text-[11px] bg-blue-50 text-blue-700 border-blue-200 transition-colors " +
+                            (isActive ? "ring-2 ring-blue-300" : "hover:bg-blue-100")
+                          }
+                          title={`${b.count}x`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setSpSelectedSaveAction((prev) => ({ ...prev, [p.id]: { zone: r.zone, drainDetail: detailFilter ?? "", action: s.action } }));
+                            setSpSelectedSaveDetail((prev) => {
+                              const cur = prev[p.id];
+                              const next = {
+                                zone: r.zone,
+                                drainDetail: detailFilter ?? "", 
+                                action: s.action,
+                                badge: b.badge,
+                              };
+                              const same =
+                                cur &&
+                                cur.zone === next.zone &&
+                                cur.drainDetail === next.drainDetail &&
+                                cur.action === next.action &&
+                                cur.badge === next.badge;
+                              return { ...prev, [p.id]: same ? null : next };
+                            });
+                          }}
+                        >
+                          {b.badge} <span className="text-blue-400">({b.count})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+})()}
+
+
+
+                         
+                              </div>
+
+                              
+
+                              {/* Run-Details: Klick auf Rettungsversuch (Save-Action) oder Save-Detail-Badge */}
+                              {(() => {
+                                const selDetail = spSelectedSaveDetail[p.id];
+                                const selAction = spSelectedSaveAction[p.id];
+
+                                // Kontext muss zum aktuellen Drilldown passen
+                                const ctxZone = r.zone;
+                                const ctxDrainDetail = detailFilter ?? "";
+
+                                const detailActive =
+                                  !!selDetail &&
+                                  selDetail.zone === ctxZone &&
+                                  (selDetail.drainDetail ?? "") === ctxDrainDetail;
+
+                                const actionActive =
+                                  !!selAction &&
+                                  selAction.zone === ctxZone &&
+                                  (selAction.drainDetail ?? "") === ctxDrainDetail;
+
+                                if (!detailActive && ! actionActive) {
+                                  return null;
+                                }
+
+                                // Filter-Mode
+                                const mode: "detail" | "action" = detailActive ? "detail" : "action";
+                                const actionKey = detailActive ? String(selDetail!.action) : String(selAction!.action);
+                                const badgeKey = detailActive ? String(selDetail!.badge) : "";
+
+                                // passende Events bestimmen
+                                const matchingEvents = zoneEvents.filter((ev: any) => {
+                                  // drain-detail filter ist bereits im ctx (detailFilter)
+                                  if (ctxDrainDetail) {
+                                    const drainBadges = extractQuotedParts(String(ev.drain_detail ?? ""));
+                                    if (!drainBadges.includes(ctxDrainDetail)) return false;
+                                  }
+
+                                  if (String(ev.save_action ?? "") !== actionKey) return false;
+
+                                  if (mode === "detail") {
+                                    const saveBadges = extractQuotedParts(String(ev.save_action_detail ?? ""));
+                                    if (!saveBadges.includes(badgeKey)) return false;
+                                  }
+
+                                  return true;
+                                });
+
+                                const runIds = Array.from(new Set(matchingEvents.map((ev: any) => ev.run_id).filter(Boolean)));
+                                const runsById = new Map((runsUsed ?? []).map((rr: any) => [rr.id, rr]));
+                                const matchingRuns = runIds
+                                  .map((id: any) => runsById.get(id))
+                                  .filter(Boolean);
+
+                                // Häufigste Run-Detail Texte (Top 5)
+                                const freq = new Map<string, { count: number; latestTs: number }>();
+                                for (const rr of matchingRuns as any[]) {
+                                  const txtRaw = String(rr?.run_detail ?? "").trim();
+                                  const txt = txtRaw ? txtRaw : "(kein Run-Detail)";
+                                  const ts = rr?.finished_at ? new Date(rr.finished_at).getTime() : 0;
+                                  const cur = freq.get(txt);
+                                  if (!cur) {
+                                    freq.set(txt, { count: 1, latestTs: ts });
+                                  } else {
+                                    cur.count += 1;
+                                    if (ts > cur.latestTs) cur.latestTs = ts;
+                                  }
+                                }
+
+                                const top = Array.from(freq.entries())
+                                  .map(([text, v]) => ({ text, count: v.count, latestTs: v.latestTs }))
+                                  .sort((a, b) => (b.count - a.count) || (b.latestTs - a.latestTs))
+                                  .slice(0, 5);
+
+                                const title = mode === "detail"
+                                  ? (<>Run-Notizen zu: <span className="text-blue-700">{badgeKey}</span></>)
+                                  : (<>Run-Notizen zum Rettungsversuch: <span className="text-neutral-900">{humanizeSaveAction(actionKey)}</span></>);
+
+                                const close = (e: any) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (mode === "detail") {
+                                    setSpSelectedSaveDetail((prev) => ({ ...prev, [p.id]: null }));
+                                  } else {
+                                    setSpSelectedSaveAction((prev) => ({ ...prev, [p.id]: null }));
+                                  }
+                                };
+
+                                return (
+                                  <div className="mt-2 rounded-md border bg-neutral-50 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        <div className="text-[12px] font-semibold text-neutral-800">{title}</div>
+                                        <div className="text-[11px] text-neutral-500">
+                                          {ctxDrainDetail ? (
+                                            <>
+                                              Drain-Detail: <span className="font-semibold text-neutral-700">{ctxDrainDetail}{" · "}</span>
+                                            </>
+                                          ) : null}
+                                          Save: <span className="font-semibold text-neutral-700">{humanizeSaveAction(actionKey)}</span>
+                                        </div>
+                                      </div>
+                                      <button type="button" className="text-[11px] text-neutral-500 hover:text-neutral-800 underline" onClick={close}>
+                                        schließen
+                                      </button>
+                                    </div>
+
+                                    {top.length === 0 ? (
+                                      <div className="mt-2 text-[12px] text-neutral-600">Keine passenden Runs gefunden.</div>
+                                    ) : (
+                                      <div className="mt-2 space-y-2">
+                                        {top.map((t) => {
+                                          const when = t.latestTs ? new Date(t.latestTs).toLocaleString() : "—";
+                                          return (
+                                            <div key={t.text} className="rounded-md border bg-white p-2">
+                                              <div className="flex items-center justify-between">
+                                                <div className="text-[11px] text-neutral-500">{when}</div>
+                                                <div className="text-[11px] font-semibold text-neutral-700 tabular-nums">{t.count}×</div>
+                                              </div>
+                                              <div className={"mt-1 text-[12px] whitespace-pre-wrap " + (t.text === "(kein Run-Detail)" ? "text-neutral-500 italic" : "text-neutral-800")}>{t.text}</div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+
+<div className="text-[11px] text-neutral-500">
+                                Tipp: Klick auf ein Detail-Badge filtert rechts die Rettungsversuche.
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+
+        
+        {/* ✅ Mirror-Drilldown: Letzte Rettungsversuche & Drains (Save-first) */}
+        {(() => {
+          const machineId = spStatsMachineId[p.id] ?? "";
+          const events = spStatsEvents[p.id] ?? [];
+          const loading = spStatsEventsLoading[p.id] ?? false;
+          const err = spStatsEventsError[p.id] ?? "";
+
+          const range = spStatsRange[p.id] ?? "20";
+          const runsUsed = spStatsEventRuns[p.id] ?? [];
+
+          const machineLabel = machineId
+            ? (spMachines.find((m: any) => String(m.id) === String(machineId))?.machine_name ??
+               spMachines.find((m: any) => String(m.id) === String(machineId))?.machineName ??
+               spMachines.find((m: any) => String(m.id) === String(machineId))?.name ??
+               "–")
+            : "Alle";
+
+          const rangeLabel =
+            String(range).toLowerCase() === "all"
+              ? "Alle"
+              : `Letzte ${range}`;
+
+          const runsLabel = `${runsUsed.length} Runs`;
+
+          // Labels (Drain-Zonen) – gleiche Übersetzung wie im anderen Drilldown
+          const drainLabel: Record<string, string> = {
+            left_outlane: "Linke Outlane",
+            middle: "Mitte",
+            right_outlane: "Rechte Outlane",
+            danger_room: "Danger Room",
+            other: "Sonstiges",
+            "": "–",
+          };
+
+          const saveLabel: Record<string, string> = {
+            nudge: "Nudge",
+            nudge_double: "Nudge Double",
+            nudge_left: "Nudge Left",
+            nudge_right: "Nudge Right",
+            nudge_left_under: "Nudge Left Under",
+            nudge_right_under: "Nudge Right Under",
+            nudge_left_under_right: "Nudge Left Under Right",
+            nudge_right_under_left: "Nudge Right Under Left",
+            slap_save: "Slap Save",
+            single_slap_save: "Single Slap Save",
+            double_slap_save: "Double Slap Save",
+            death_save: "Death Save",
+            dead_bounce: "Dead Bounce",
+            shatz: "Shatz",
+            confused: "Confused",
+            not_checked: "Nicht gecheckt",
+            other: "Sonstige",
+          };
+
+          // Save-Actions (Level 1)
+          const saveActionCounts = new Map<string, number>();
+          for (const ev of events) {
+            const a = String(ev.save_action ?? "").trim();
+            if (!a) continue;
+            saveActionCounts.set(a, (saveActionCounts.get(a) ?? 0) + 1);
+          }
+          const saveActions = Array.from(saveActionCounts.entries())
+            .map(([action, count]) => ({ action, count }))
+            .sort((a, b) => b.count - a.count);
+
+          const totalSave = saveActions.reduce((acc, r) => acc + r.count, 0);
+
+          const openAction = spSaveOpenAction[p.id] ?? "";
+
+          const runsById = new Map((runsUsed ?? []).map((r: any) => [r.id, r]));
+
+          return (
+            <div className="rounded-lg border bg-white p-3 space-y-3 mt-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-neutral-800 flex items-center gap-2">
+                    <span>🛟</span>
+                    <span>Letzte Rettungsversuche & Drains</span>
+                  </div>
+                  <div className="text-[11px] text-neutral-500">
+                    Basis: Ball-Events aus dem aktuellen Filter.
+                    <br />
+                    Maschine: <span className="font-semibold text-neutral-700">{machineLabel}</span>, Zeitraum:{" "}
+                    <span className="font-semibold text-neutral-700">{rangeLabel}</span>,{" "}
+                    <span className="font-semibold text-neutral-700">{runsLabel}</span>.
+                  </div>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="text-[12px] text-neutral-500">Lade Ball-Events…</div>
+              ) : err ? (
+                <div className="text-[12px] text-red-600">{err}</div>
+              ) : saveActions.length === 0 ? (
+                <div className="text-[12px] text-neutral-500">Keine Ball-Events im aktuellen Filter.</div>
+              ) : (
+                <div className="space-y-2">
+                  {saveActions.map((row) => {
+                    const isOpen = openAction === row.action;
+
+                    const pct = totalSave ? Math.round((row.count / totalSave) * 100) : 0;
+
+                    // Events in dieser Action
+                    const actionEvents = events.filter((ev: any) => String(ev.save_action ?? "") === row.action);
+
+                    // Save-Detail Badges (blau)
+                    const saveBadgeCounts = new Map<string, number>();
+                    for (const ev of actionEvents) {
+                      const badges = extractQuotedParts(String(ev.save_action_detail ?? ""));
+                      for (const b of badges) saveBadgeCounts.set(b, (saveBadgeCounts.get(b) ?? 0) + 1);
+                    }
+                    const saveBadges = Array.from(saveBadgeCounts.entries())
+                      .map(([badge, count]) => ({ badge, count }))
+                      .sort((a, b) => b.count - a.count);
+
+                    const activeSaveBadge = spSaveDetailFilter[p.id] ?? "";
+
+                    // ActionEvents gefiltert nach Save-Badge (wenn gesetzt)
+                    const actionEventsAfterSaveBadge = activeSaveBadge
+                      ? actionEvents.filter((ev: any) => extractQuotedParts(String(ev.save_action_detail ?? "")).includes(activeSaveBadge))
+                      : actionEvents;
+
+                    // Drain-Zonen (rechts)
+                    const zoneCounts = new Map<string, number>();
+                    for (const ev of actionEventsAfterSaveBadge) {
+                      const z = String(ev.drain_zone ?? "").trim();
+                      if (!z) continue;
+                      zoneCounts.set(z, (zoneCounts.get(z) ?? 0) + 1);
+                    }
+                    const zones = Array.from(zoneCounts.entries())
+                      .map(([zone, count]) => ({ zone, count }))
+                      .sort((a, b) => b.count - a.count);
+
+                    const totalZone = zones.reduce((acc, z) => acc + z.count, 0);
+
+                    const activeZone = spSaveDrainZoneFilter[p.id] ?? "";
+                    const activeDrainDetail = spSaveDrainDetailFilter[p.id] ?? "";
+
+                    // Run-Notizen: erst zeigen, wenn Kontext "später" ist:
+                    // - Drain-Detail gewählt ODER
+                    // - Save-Detail + Drain-Zone gewählt
+                    const showRunNotes = !!activeZone; // Ebene früher: sobald eine Drain-Zone gewählt ist
+
+                    // Matching Run IDs für Run-Notizen
+                    let matchingRunIds: string[] = [];
+                    if (showRunNotes && activeZone) {
+                      const filteredForNotes = actionEventsAfterSaveBadge.filter((ev: any) => {
+                        if (String(ev.drain_zone ?? "") !== activeZone) return false;
+                        if (activeDrainDetail) {
+                          const dBadges = extractQuotedParts(String(ev.drain_detail ?? ""));
+                          if (!dBadges.includes(activeDrainDetail)) return false;
+                        }
+                        return true;
+                      });
+                      matchingRunIds = Array.from(new Set(filteredForNotes.map((ev: any) => ev.run_id).filter(Boolean)));
+                    }
+
+                    // Top 5 häufigste Run-Detail Texte
+                    const getRunMachineLabel = (run: any) => {
+                      const mid = String(run?.machine_id ?? run?.machine?.id ?? "").trim();
+                      if (!mid) return "";
+                      const hit = (spMachines || []).find((m: any) => String(m?.id) === String(mid));
+                      return String(hit?.machine_name ?? hit?.machineName ?? hit?.name ?? "").trim();
+                    };
+
+                    const runDetailCounts = new Map<string, number>();
+                    const runDetailMeta = new Map<string, { finished_at?: string; machine?: string }>();
+                    for (const rid of matchingRunIds) {
+                      const r = runsById.get(rid);
+                      if (!r) continue;
+                      const txt = String(r.run_detail ?? "").trim();
+                      const key = txt || "(kein Run-Detail)";
+                      runDetailCounts.set(key, (runDetailCounts.get(key) ?? 0) + 1);
+                      if (!runDetailMeta.has(key)) runDetailMeta.set(key, { finished_at: r.finished_at, machine: getRunMachineLabel(r) });
+                    }
+                    const topRunDetails = Array.from(runDetailCounts.entries())
+                      .map(([text, count]) => ({ text, count, finished_at: runDetailMeta.get(text)?.finished_at, machine: runDetailMeta.get(text)?.machine }))
+                      .sort((a, b) => b.count - a.count)
+                      .slice(0, 5);
+
+                    return (
+                      <div key={safeText(row.action)} className="rounded-md border bg-neutral-50">
+                        <button
+                          type="button"
+                          className="w-full px-2 py-2 text-left flex items-center justify-between gap-2 cursor-pointer"
+                          onClick={() => {
+                            setSpSaveOpenAction((prev) => ({ ...prev, [p.id]: isOpen ? "" : row.action }));
+                            // Reset Detail-Filter beim Wechsel der Action
+                            setSpSaveDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                            setSpSaveDrainZoneFilter((prev) => ({ ...prev, [p.id]: "" }));
+                            setSpSaveDrainDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                          }}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-semibold text-[12px] text-neutral-800">
+                              {safeText(saveLabel[row.action] ?? row.action)}
+                            </div>
+                            <div className="text-[11px] text-neutral-500">{row.count}x • {pct}%</div>
+                          </div>
+                          <div className="text-[12px] text-neutral-500">{isOpen ? "▲" : "▼"}</div>
+                        </button>
+
+                        {isOpen ? (
+                          <div className="border-t bg-white p-2 space-y-2">
+                            <div className="grid gap-3 md:grid-cols-2">
+                              {/* Links: Save-Details */}
+                              <div className="rounded-md border bg-neutral-50 p-3">
+                                <div className="text-[11px] font-semibold text-neutral-700 mb-2">Save-Details</div>
+                                {saveBadges.length === 0 ? (
+                                  <div className="text-[11px] text-neutral-500">Keine Save-Details.</div>
+                                ) : (
+                                  <div className="flex flex-wrap gap-2">
+                                    {saveBadges.slice(0, 16).map((b) => {
+                                      const active = activeSaveBadge === b.badge;
+                                      return (
+                                        <button
+                                          key={safeText(b.badge)}
+                                          type="button"
+                                          className={
+                                            "rounded-full border px-2 py-1 text-[11px] " +
+                                            (active
+                                              ? "bg-blue-600 text-white border-blue-600"
+                                              : "bg-blue-50 text-blue-700 border-blue-200")
+                                          }
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setSpSaveDetailFilter((prev) => ({
+                                              ...prev,
+                                              [p.id]: active ? "" : b.badge,
+                                            }));
+                                            // beim Badge-Wechsel: Zone/Detail Reset
+                                            setSpSaveDrainZoneFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                            setSpSaveDrainDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                          }}
+                                          title={`${b.count}x`}
+                                        >
+                                          {safeText(b.badge)}{" "}
+                                          <span className={active ? "opacity-80" : "text-blue-400"}>({b.count})</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Rechts: Drains (Zonen + Drain-Details immer sichtbar) */}
+                              <div className="rounded-md border bg-neutral-50 p-3">
+                                <div className="text-[11px] font-semibold text-neutral-700">Drains</div>
+
+                                {zones.length === 0 ? (
+                                  <div className="text-[11px] text-neutral-500">Keine Drains.</div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {zones.map((z) => {
+                                      const zActive = activeZone === z.zone;
+
+                                      const zPct = totalZone ? Math.round((z.count / totalZone) * 100) : 0;
+
+                                      const zEvents = actionEventsAfterSaveBadge.filter(
+                                        (ev: any) => String(ev.drain_zone ?? "") === z.zone
+                                      );
+
+                                      // Drain-Details (rot) innerhalb dieser Zone
+                                      const drainBadgeCounts = new Map<string, number>();
+                                      for (const ev of zEvents) {
+                                        const db = extractQuotedParts(String(ev.drain_detail ?? ""));
+                                        for (const b of db) drainBadgeCounts.set(b, (drainBadgeCounts.get(b) ?? 0) + 1);
+                                      }
+                                      const drainBadges = Array.from(drainBadgeCounts.entries())
+                                        .map(([badge, count]) => ({ badge, count }))
+                                        .sort((a, b) => b.count - a.count);
+
+return (
+  <button
+    key={safeText(z.zone)}
+    type="button"
+    onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // WICHTIG: NICHT togglen, sonst schließt du andere Zonen.
+      // Wir merken nur, welche Zone "aktiv" ist (für Detail-Filter), aber öffnen/schließen machen wir nicht mehr.
+      setSpSaveDrainZoneFilter((prev) => ({
+        ...prev,
+        [p.id]: z.zone,
+      }));
+
+      // optional: Detail reset beim "Zone auswählen"
+      setSpSaveDrainDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+    }}
+    className={(() => {
+      const isOpen = drainBadges.length > 0; // Ebene 5 existiert => immer offen
+      // Optional: optisches "Active" nur wenn wirklich activeZone === z.zone
+      const active = activeZone === z.zone;
+
+      return (
+        "w-full text-left rounded-lg border bg-white p-2 transition-shadow " +
+        (active ? "ring-2 ring-neutral-300 border-neutral-300" : "hover:shadow-sm")
+      );
+    })()}
+  >
+    {(() => {
+      const isOpen = drainBadges.length > 0; // Ebene 5 existiert => immer offen
+
+      return (
+        <>
+          <div className="flex items-center justify-between text-[12px] text-neutral-700">
+            <div className="font-medium">
+              {safeText(drainLabel[z.zone] ?? z.zone)}
+            </div>
+            <div className="tabular-nums font-semibold">
+              {z.count}x • {zPct}%
+            </div>
+          </div>
+
+          {/* IMMER offen wenn Badges existieren */}
+          {isOpen && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {drainBadges.slice(0, 10).map((b) => {
+                // dActive soll nur gelten, wenn diese Zone gerade "ausgewählt" ist
+                const dActive = activeZone === z.zone && activeDrainDetail === b.badge;
+
+                return (
+                  <button
+                    key={safeText(b.badge)}
+                    type="button"
+                    className={
+                      "rounded-full border px-2 py-1 text-[11px] " +
+                      (dActive
+                        ? "bg-red-600 text-white border-red-600"
+                        : "bg-red-50 text-red-700 border-red-200")
+                    }
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+
+                      // Zone merken (damit dActive konsistent ist)
+                      setSpSaveDrainZoneFilter((prev) => ({ ...prev, [p.id]: z.zone }));
+
+                      // Detail togglen
+                      setSpSaveDrainDetailFilter((prev) => ({
+                        ...prev,
+                        [p.id]: dActive ? "" : b.badge,
+                      }));
+                    }}
+                    title={`${b.count}x`}
+                  >
+                    {safeText(b.badge)}{" "}
+                    <span className={dActive ? "opacity-80" : "text-red-400"}>
+                      ({b.count})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      );
+    })()}
+  </button>
+);
+
+
+
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Run-Notizen (Top 5) – erst später wie im oberen Block */}
+                            {showRunNotes ? (
+                              <div className="mt-3 rounded-md border bg-neutral-50 p-3">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <div className="text-[12px] font-semibold text-neutral-800">
+                                      Run-Notizen{" "}
+                                      {activeSaveBadge ? (
+                                        <>
+                                          zu: <span className="text-blue-700">{safeText(activeSaveBadge)}</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          zum Rettungsversuch: <span className="text-neutral-900">{safeText(saveLabel[row.action] ?? row.action)}</span>
+                                        </>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-neutral-500">
+                                      Drain-Detail:{" "}
+                                      <span className="font-medium text-neutral-700">
+                                        {activeDrainDetail ? `'${activeDrainDetail}'` : "—"}
+                                      </span>
+                                      {" · "}
+                                      Save:{" "}
+                                      <span className="font-medium text-neutral-700">
+                                        {safeText(saveLabel[row.action] ?? row.action)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="text-[11px] text-neutral-500 hover:text-neutral-800 underline"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setSpSaveDrainZoneFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                      setSpSaveDrainDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                      setSpSaveDetailFilter((prev) => ({ ...prev, [p.id]: "" }));
+                                    }}
+                                  >
+                                    schließen
+                                  </button>
+                                </div>
+
+                                {topRunDetails.length === 0 ? (
+                                  <div className="mt-2 text-[12px] text-neutral-500">Keine passenden Runs.</div>
+                                ) : (
+                                  <div className="mt-2 space-y-2">
+                                    {topRunDetails.map((r) => (
+                                      <div key={r.text} className="rounded-md border bg-white p-2">
+                                        <div className="flex items-center justify-between">
+                                          <div className="text-[11px] text-neutral-500">
+                                            {r.finished_at ? new Date(r.finished_at).toLocaleString() : "—"}                                            {r.count === 1 && r.machine ? (
+                                              <> · <span className="font-semibold text-neutral-700">{safeText(r.machine)}</span></>
+                                            ) : null}                                          </div>
+                                          <div className="text-[12px] font-semibold text-neutral-700">{r.count}×</div>
+                                        </div>
+                                        <div className="mt-1 text-[12px] text-neutral-800 whitespace-pre-wrap">
+                                          {r.text}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
+
+                            <div className="mt-2 text-[11px] text-neutral-500">
+                              Tipp: Klick auf ein Save-Detail (blau) filtert rechts die Drains.
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+
+{/* Platzhalter für die nächsten Statistik-Blöcke */}
+        <div className="">
+          <div className="">
+
+          </div>
+
+          <div className="">
+
+          </div>
+        </div>
+      </div>
+    );
+  })()}
+</div>
+
+
+
+
+
+
+
+
+
                       </div>
                     )}
 
-
-                    {/* Tab: STATISTIKEN */}
+                    
+{/* Tab: STATISTIKEN */}
                     {currentDetailTab === "stats" && (
                       <div className="space-y-3">
                         {/* Performance-Blöcke: Matches, Turniere, Super-Finale */}
@@ -3003,6 +5692,8 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                         </div>
                       </div>
                     )}
+
+                    
                   </div>
                 )}
               </div>

@@ -13,6 +13,90 @@ function pairKey(a: string, b: string) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+// DYP helpers (2vs2)
+function teamKey(a: string, b: string) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function matchupKey(teamA: string, teamB: string) {
+  return teamA < teamB ? `${teamA}||${teamB}` : `${teamB}||${teamA}`;
+}
+
+function buildDypCountsFromHistory(
+  mpByMatch: Record<string, { player_id: string; team?: number | null }[]>
+) {
+  const partnerCounts = new Map<string, number>();
+  const matchupCounts = new Map<string, number>();
+
+  for (const mps of Object.values(mpByMatch)) {
+    const t1 = (mps ?? [])
+      .filter((x) => x.team === 1)
+      .map((x) => x.player_id)
+      .filter(Boolean);
+    const t2 = (mps ?? [])
+      .filter((x) => x.team === 2)
+      .map((x) => x.player_id)
+      .filter(Boolean);
+
+    if (t1.length === 2) {
+      const k = pairKey(t1[0], t1[1]);
+      partnerCounts.set(k, (partnerCounts.get(k) ?? 0) + 1);
+    }
+    if (t2.length === 2) {
+      const k = pairKey(t2[0], t2[1]);
+      partnerCounts.set(k, (partnerCounts.get(k) ?? 0) + 1);
+    }
+
+    if (t1.length === 2 && t2.length === 2) {
+      const k1 = teamKey(t1[0], t1[1]);
+      const k2 = teamKey(t2[0], t2[1]);
+      const mk = matchupKey(k1, k2);
+      matchupCounts.set(mk, (matchupCounts.get(mk) ?? 0) + 1);
+    }
+  }
+
+  return { partnerCounts, matchupCounts };
+}
+
+function bestMatchingForIds(
+  ids: string[],
+  weight: (a: string, b: string) => number
+): { pairs: [string, string][]; cost: number } {
+  let best: { pairs: [string, string][]; cost: number } | null = null;
+  const idsSet = new Set(ids);
+  const idsArr = Array.from(idsSet);
+
+  function rec(remaining: string[], pairs: [string, string][], cost: number) {
+    if (best && cost > best.cost) return;
+    if (remaining.length < 2) {
+      if (!best || cost < best.cost || (cost === best.cost && Math.random() < 0.5)) {
+        best = { pairs: pairs.slice(), cost };
+      }
+      return;
+    }
+
+    const a = remaining[0];
+    const rest = remaining.slice(1);
+
+    const candidates = rest
+      .map((b) => ({ b, w: weight(a, b) }))
+      .sort((x, y) => (x.w !== y.w ? x.w - y.w : Math.random() < 0.5 ? -1 : 1));
+
+    for (const c of candidates) {
+      const b = c.b;
+      const w = c.w;
+      const nextRemaining = rest.filter((x) => x !== b);
+      pairs.push([a, b]);
+      rec(nextRemaining, pairs, cost + w);
+      pairs.pop();
+      if (best && best.cost === 0) return;
+    }
+  }
+
+  rec(idsArr.sort(() => (Math.random() < 0.5 ? -1 : 1)), [], 0);
+  return best ?? { pairs: [], cost: Number.POSITIVE_INFINITY };
+}
+
 function groupRepeatCost(group: PlayerRow[], pairCounts: Map<string, number>) {
   let cost = 0;
   for (let i = 0; i < group.length; i++) {
@@ -229,13 +313,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const format: "matchplay" | "swiss" | "round_robin" =
-    t.format === "swiss" || t.format === "round_robin" ? t.format : "matchplay";
+  const format: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" =
+    t.format === "swiss" || t.format === "round_robin" || t.format === "dyp_round_robin"
+      ? (t.format as any)
+      : "matchplay";
 
-  const groupSize = Math.min(
-    4,
-    Math.max(2, Number(t.match_size ?? 4))
-  ) as 2 | 3 | 4;
+  const groupSize =
+    format === "dyp_round_robin"
+      ? (4 as const)
+      : (Math.min(4, Math.max(2, Number(t.match_size ?? 4))) as 2 | 3 | 4);
 
   // Spieler + Maschinen holen (mit profile_id!)
   const [{ data: playersRaw }, { data: machinesRaw }] = await Promise.all([
@@ -295,20 +381,21 @@ export async function POST(req: Request) {
   const { data: matchPlayers } = matchIds.length
     ? await sb
         .from("match_players")
-        .select("match_id, player_id, position")
+        .select("match_id, player_id, position, team")
         .in("match_id", matchIds)
     : { data: [] as any[] };
 
   // Standings berechnen (wie Leaderboard)
   const mpByMatch: Record<
     string,
-    { player_id: string; position: number | null }[]
+    { player_id: string; position: number | null; team?: number | null }[]
   > = {};
   for (const mp of matchPlayers ?? []) {
     mpByMatch[mp.match_id] = mpByMatch[mp.match_id] || [];
     mpByMatch[mp.match_id].push({
       player_id: mp.player_id,
       position: mp.position,
+      team: (mp as any).team ?? null,
     });
   }
 
@@ -341,7 +428,16 @@ export async function POST(req: Request) {
       } else if (size === 3) {
         pts = pos === 1 ? 3 : pos === 2 ? 1 : 0;
       } else {
-        pts = pos === 1 ? 4 : pos === 2 ? 2 : pos === 3 ? 1 : 0;
+        // 4er-Match: normalerweise 4/2/1/0 (FFA). Für DYP (2vs2) wollen wir aber Win/Loss: 3/0.
+        // Heuristik: Wenn in einem 4er-Match nur Positionen 1/2 vorkommen (keine 3/4), behandeln wir es als Team-Match.
+        const only12 = mps.every(
+          (x) => x.position == null || x.position === 1 || x.position === 2
+        );
+        if (only12) {
+          pts = pos === 1 ? 3 : 0;
+        } else {
+          pts = pos === 1 ? 4 : pos === 2 ? 2 : pos === 3 ? 1 : 0;
+        }
       }
 
       addPoints(mp.player_id, pts);
@@ -363,45 +459,117 @@ export async function POST(req: Request) {
   const warnings: string[] = [];
 
   // Gruppen bilden
-  let groups: PlayerRow[][] = [];
+  type PlannedGroup = {
+    group: PlayerRow[];
+    // optional: DYP teams (1|2) pro Spieler
+    teamByPlayerId?: Record<string, 1 | 2>;
+  };
+  let plannedGroups: PlannedGroup[] = [];
 
-  if (format === "swiss") {
-    // Swiss: wie bisher nach Standings (und innerhalb gleicher Punkte random), dann in Gruppen schneiden.
-    let orderedPlayersForGrouping: PlayerRow[] = [];
-    if ((rounds ?? []).length === 0) {
-      orderedPlayersForGrouping = shuffle(players as PlayerRow[]);
-    } else {
-      orderedPlayersForGrouping = (players as PlayerRow[]).slice().sort((a, b) => {
-        const sa = standingByPlayerId.get(a.id)?.points ?? 0;
-        const sb = standingByPlayerId.get(b.id)?.points ?? 0;
-        if (sa !== sb) return sb - sa;
-        return Math.random() < 0.5 ? -1 : 1;
-      });
+  const byId = new Map((players as PlayerRow[]).map((p) => [p.id, p] as const));
+
+  if (format === "dyp_round_robin") {
+    // DYP Round Robin: 2vs2 (4 Spieler pro Match), Teams rotieren.
+    const idsAll = (players as PlayerRow[]).map((p) => p.id);
+
+    // 1) Bye (genau 1 Spieler setzt aus, wenn ungerade)
+    let idsForPairing = idsAll.slice();
+    if (idsAll.length % 2 === 1) {
+      // Fairness-Heuristik: Spieler mit den wenigsten gespielten Matches bekommt Bye.
+      const scored = idsAll
+        .map((id) => ({
+          id,
+          matches: standingByPlayerId.get(id)?.matches ?? 0,
+          r: Math.random(),
+        }))
+        .sort((a, b) => (a.matches !== b.matches ? a.matches - b.matches : a.r - b.r));
+
+      const byeId = scored[0]?.id;
+      if (byeId) {
+        idsForPairing = idsAll.filter((x) => x !== byeId);
+        const byeName = byId.get(byeId)?.name ?? "?";
+        warnings.push(`Ein Spieler ohne Match: ${byeName} (setzt diese Runde aus)`);
+      }
     }
 
-    const pool = orderedPlayersForGrouping.slice();
-    while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
+    // 2) Historie: Partner- und Matchup-Wiederholungen zählen
+    const { partnerCounts, matchupCounts } = buildDypCountsFromHistory(mpByMatch);
 
-    if (pool.length >= 2) {
-      groups.push(pool.splice(0));
-    } else if (pool.length === 1) {
-      const lone = pool[0];
-      warnings.push(`Ein Spieler ohne Gruppe: ${lone.name ?? "?"} (setzt diese Runde aus)`);
-    }
-  } else if (format === "matchplay") {
-    // Matchplay: zufällig, aber Wiederholungen so lange wie möglich vermeiden.
-    const res = makeMatchplayGroupsAvoidingRepeats(players as PlayerRow[], groupSize, pairCounts);
-    groups = res.groups;
-    if (res.lone) warnings.push(`Ein Spieler ohne Gruppe: ${res.lone.name ?? "?"} (setzt diese Runde aus)`);
+    // 3) Teams bauen: Spieler so paaren, dass Partner-Wiederholungen minimal sind
+    const teamPairs = bestMatchingForIds(idsForPairing, (a, b) => partnerCounts.get(pairKey(a, b)) ?? 0);
+    const teams = teamPairs.pairs.map(([a, b]) => ({ id: teamKey(a, b), a, b }));
+
+    // 4) Teams gegeneinander paaren: Matchup-Wiederholungen minimal halten
+    const teamById = new Map(teams.map((t) => [t.id, t] as const));
+    const matchPairs = bestMatchingForIds(
+      teams.map((t) => t.id),
+      (ta, tb) => matchupCounts.get(matchupKey(ta, tb)) ?? 0
+    );
+
+    plannedGroups = matchPairs.pairs
+      .map(([ta, tb]) => {
+        const A = teamById.get(ta);
+        const B = teamById.get(tb);
+        if (!A || !B) return null;
+
+        const pA1 = byId.get(A.a);
+        const pA2 = byId.get(A.b);
+        const pB1 = byId.get(B.a);
+        const pB2 = byId.get(B.b);
+        if (!pA1 || !pA2 || !pB1 || !pB2) return null;
+
+        const teamByPlayerId: Record<string, 1 | 2> = {
+          [pA1.id]: 1,
+          [pA2.id]: 1,
+          [pB1.id]: 2,
+          [pB2.id]: 2,
+        };
+
+        return { group: [pA1, pA2, pB1, pB2], teamByPlayerId } as PlannedGroup;
+      })
+      .filter(Boolean) as PlannedGroup[];
   } else {
-    // Round Robin: aktuell wie vorher (random). Wenn du hier einen echten Round-Robin-Plan willst, sag Bescheid.
-    const pool = shuffle(players as PlayerRow[]).slice();
-    while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
-    if (pool.length >= 2) groups.push(pool.splice(0));
-    else if (pool.length === 1) warnings.push(`Ein Spieler ohne Gruppe: ${pool[0].name ?? "?"} (setzt diese Runde aus)`);
+    // ✅ bestehende Formate wie bisher
+    let groups: PlayerRow[][] = [];
+
+    if (format === "swiss") {
+      let orderedPlayersForGrouping: PlayerRow[] = [];
+      if ((rounds ?? []).length === 0) {
+        orderedPlayersForGrouping = shuffle(players as PlayerRow[]);
+      } else {
+        orderedPlayersForGrouping = (players as PlayerRow[]).slice().sort((a, b) => {
+          const sa = standingByPlayerId.get(a.id)?.points ?? 0;
+          const sb = standingByPlayerId.get(b.id)?.points ?? 0;
+          if (sa !== sb) return sb - sa;
+          return Math.random() < 0.5 ? -1 : 1;
+        });
+      }
+
+      const pool = orderedPlayersForGrouping.slice();
+      while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
+
+      if (pool.length >= 2) {
+        groups.push(pool.splice(0));
+      } else if (pool.length === 1) {
+        const lone = pool[0];
+        warnings.push(`Ein Spieler ohne Gruppe: ${lone.name ?? "?"} (setzt diese Runde aus)`);
+      }
+    } else if (format === "matchplay") {
+      const res = makeMatchplayGroupsAvoidingRepeats(players as PlayerRow[], groupSize, pairCounts);
+      groups = res.groups;
+      if (res.lone) warnings.push(`Ein Spieler ohne Gruppe: ${res.lone.name ?? "?"} (setzt diese Runde aus)`);
+    } else {
+      const pool = shuffle(players as PlayerRow[]).slice();
+      while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
+      if (pool.length >= 2) groups.push(pool.splice(0));
+      else if (pool.length === 1)
+        warnings.push(`Ein Spieler ohne Gruppe: ${pool[0].name ?? "?"} (setzt diese Runde aus)`);
+    }
+
+    plannedGroups = groups.map((g) => ({ group: g }));
   }
 
-  if (!groups.length) {
+  if (!plannedGroups.length) {
     return NextResponse.json(
       { error: "Keine Gruppen gefunden (zu wenige Spieler?)" },
       { status: 400 }
@@ -411,7 +579,7 @@ export async function POST(req: Request) {
   // --- Startreihenfolge "nach letzter Runde" ist nur sinnvoll, wenn
   // (a) diese Runde genau 1 Match erzeugt UND
   // (b) die letzte Runde ebenfalls genau 1 Match hatte.
-  const singleMatchThisRound = groups.length === 1;
+  const singleMatchThisRound = plannedGroups.length === 1;
   let effectiveStartOrderMode: StartOrderMode = startOrderMode;
 
   // Map: player_id -> position in letzter Runde (1=best, höher=schlechter)
@@ -511,7 +679,10 @@ export async function POST(req: Request) {
   );
 
   // Für jede Gruppe: Match + Match-Players anlegen
-  for (const group of groups) {
+  for (const planned of plannedGroups) {
+    const group = planned.group;
+    const teamByPlayerId = planned.teamByPlayerId;
+
     const playerIds = group.map((p: any) => p.id);
     const playerProfileIds = group
       .map((p: any) => p.profile_id)
@@ -598,6 +769,8 @@ export async function POST(req: Request) {
       player_id: p.id,
       position: null,
       start_position: idx + 1,
+      // 👇 DYP: Teamzuordnung in match_players speichern
+      team: teamByPlayerId ? (teamByPlayerId[p.id] ?? null) : null,
     }));
 
     // ⭐ Startwerte nur für Profile eintragen, die noch keinen Eintrag haben
