@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import { useEffect, useMemo, useState, useRef, Fragment  } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -28,6 +28,72 @@ import PlayersTab from "./PlayersTab";
 import { ProfilePicker } from "@/components/ProfilePicker";
 import AdminTab from "./AdminTab";
 import Image from "next/image";
+
+
+
+// ================================
+// Hauptrunden-Farben (müssen 1:1 zu MatchplayProgressStack passen)
+// ================================
+const MAIN_ROUND_COLORS = [
+  "#ef4444",
+  "#f97316",
+  "#eab308",
+  "#22c55e",
+  "#3b82f6",
+  "#a855f7",
+  "#64748b",
+  "#06b6d4",
+  "#14b8a6",
+  "#db2777",
+];
+
+function nCk(n: number, k: number): number {
+  // Kombinatorik: "n über k"
+  n = Math.max(0, Math.floor(Number(n) || 0));
+  k = Math.max(0, Math.floor(Number(k) || 0));
+  if (k < 0 || k > n) return 0;
+  k = Math.min(k, n - k);
+  let res = 1;
+  for (let i = 1; i <= k; i++) {
+    res = (res * (n - k + i)) / i;
+  }
+  // sollte bei unseren Größen ganzzahlig sein
+  return Math.round(res);
+}
+
+function calcRoundsPerCycle(tournament: any, playersCount: number | null | undefined): number | null {
+  const n =
+    Number(playersCount ?? 0) ||
+    Number(tournament?.playersCount ?? 0) ||
+    Number(tournament?.players_count ?? 0) ||
+    (Array.isArray(tournament?.players) ? tournament.players.length : 0);
+
+  const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
+  const matchesPerRound = Math.max(1, Math.floor(n / matchSize));
+
+  // ✅ 1vs1: klassische Pairings (jeder gegen jeden)
+  if (matchSize === 2) {
+    const pairingsPerMatch = 1; // (2 * 1) / 2
+    const pairingsPerRound = matchesPerRound * pairingsPerMatch;
+    const totalPairings = (n * (n - 1)) / 2;
+
+    if (!Number.isFinite(pairingsPerRound) || pairingsPerRound <= 0) return null;
+    if (!Number.isFinite(totalPairings) || totalPairings <= 0) return null;
+
+    return Math.max(1, Math.ceil(totalPairings / pairingsPerRound));
+  }
+
+  // ✅ 3er/4er/...: Hauptrunde = ALLE k-Kombinationen genau einmal
+  // totalCombos = C(n, matchSize)
+  // combosPerRound = matchesPerRound (jedes Match ist genau eine k-Kombi)
+  const totalCombos = nCk(n, matchSize);
+  const combosPerRound = matchesPerRound;
+
+  if (!Number.isFinite(totalCombos) || totalCombos <= 0) return null;
+  if (!Number.isFinite(combosPerRound) || combosPerRound <= 0) return null;
+
+  return Math.max(1, Math.ceil(totalCombos / combosPerRound));
+}
 
 type Tournament = {
   id: string;
@@ -75,6 +141,7 @@ type Location = { id: string; name: string };
 
 type PlayerVisual = {
   name: string;
+  profile_id?: string | null;
   color?: string | null;
   icon?: string | null;
   avatarUrl?: string | null;
@@ -153,7 +220,7 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
     <div className="flex items-center gap-2 min-w-0">
       <div
       // Runden Icons
-        className="flex h-9 w-9 flex items-center justify-center rounded-full text-xs font-bold"
+        className="flex h-7 w-7 flex items-center justify-center rounded-full text-xs font-bold"
         style={bgStyle}
       >
         {emoji ? (
@@ -217,6 +284,18 @@ function SortablePlayerRow({
 }
 
 
+function formatLabel(fmt?: string | null) {
+  const v = (fmt ?? "").trim();
+  if (!v) return "—";
+  const map: Record<string, string> = {
+    matchplay: "Matchplay",
+    dyp_round_robin: "DYP Round Robin",
+    dyp: "DYP",
+    round_robin: "Round Robin",
+    group_matchplay: "Group Matchplay",
+  };
+  return map[v] ?? v.replaceAll("_", " ");
+}
 
 
 function Avatar({ url, name }: { url: string | null; name: string }) {
@@ -635,7 +714,7 @@ function MachinesList({
   return (
     <div
       key={m.id}
-      className="flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3"
+      className="flex items-center justify-between gap-3 rounded-xl border bg-white px-2 py-1"
     >
       {/* LINKER TEIL: Icon + Name + Nutzung */}
       <div className="flex items-center gap-3">
@@ -3614,7 +3693,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
     });
     const j = await res.json();
     setRows(j.stats ?? []);
-  }
+}
 
   useEffect(() => {
     load();
@@ -3898,7 +3977,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
               </div>
             )}
           </div>
-        </CardBody>
+      </CardBody>
       </Card>
     </div>
   );
@@ -3991,6 +4070,584 @@ function MiniLeaderboard({ code }: { code: string }) {
   );
 }
 
+function CurrentRoundSticky({
+  code,
+  tournament,
+  rounds,
+  matches,
+  matchPlayers,
+  playersById,
+  machinesInfoById,
+}: {
+  code: string;
+  tournament: any;
+  rounds: any[];
+  matches: Match[];
+  matchPlayers: MP[];
+  playersById: Record<string, PlayerVisual>;
+  machinesInfoById: Record<string, { name: string; emoji?: string | null }>;
+}) {
+  const [tWinrateByPlayerId, setTWinrateByPlayerId] = useState<Record<string, number | null>>({});
+  const [mWinrateByKey, setMWinrateByKey] = useState<Record<string, { winrate: number | null; matchesPlayed: number }>>({});
+  const [loading, setLoading] = useState(false);
+  const mwrHasLoadedOnce = useRef(false);
+
+  const locationId = tournament?.location_id ? String(tournament.location_id) : "";
+
+  const currentRound = useMemo(() => {
+    const rs = Array.isArray(rounds) ? rounds.slice() : [];
+    if (rs.length === 0) return null;
+    const open = rs
+      .filter((r: any) => String(r?.status ?? "").toLowerCase() === "open")
+      .sort((a: any, b: any) => {
+        const at = typeof a?.created_at === "string" ? Date.parse(a.created_at) : 0;
+        const bt = typeof b?.created_at === "string" ? Date.parse(b.created_at) : 0;
+        return bt - at;
+      })[0];
+    if (open) return open;
+    // fallback: höchste round number
+    rs.sort((a: any, b: any) => (Number(a?.number ?? 0) - Number(b?.number ?? 0)));
+    return rs[rs.length - 1] ?? null;
+  }, [rounds]);
+
+  const currentMatches = useMemo(() => {
+    const rid = currentRound?.id ? String(currentRound.id) : "";
+    if (!rid) return [] as Match[];
+    return (matches ?? [])
+      .filter((m: any) => String(m?.round_id ?? "") === rid)
+      .slice()
+      .sort((a: any, b: any) => {
+        const at = typeof a?.created_at === "string" ? Date.parse(a.created_at) : 0;
+        const bt = typeof b?.created_at === "string" ? Date.parse(b.created_at) : 0;
+        return at - bt;
+      });
+  }, [matches, currentRound]);
+
+
+  // =========================================================
+  // Daten laden NUR wenn es wirklich nötig ist (kein Polling):
+  // - einmal, wenn eine neue Runde/Matches generiert wurden
+  // - einmal, wenn ein Match geschlossen wurde (Status ändert sich)
+  // - wenn Maschine / Spieler / Startposition geändert wurden
+  // + optional per "Neu laden" Button
+  // =========================================================
+
+  const signature = useMemo(() => {
+    const rid = currentRound?.id ? String(currentRound.id) : "";
+    const matchSig = (currentMatches ?? [])
+      .map((m: any) => `${String(m?.id ?? "")}:${String(m?.machine_id ?? "")}:${String(m?.status ?? "")}`)
+      .sort()
+      .join("|");
+
+    const matchIds = new Set((currentMatches ?? []).map((m: any) => String(m?.id ?? "")));
+    const mpSig = (matchPlayers ?? [])
+      .filter((mp: any) => matchIds.has(String(mp?.match_id ?? "")))
+      .map((mp: any) => `${String(mp?.match_id ?? "")}:${String(mp?.player_id ?? "")}:${String(mp?.start_position ?? "")}`)
+      .sort()
+      .join("|");
+
+    return `${rid}__${matchSig}__${mpSig}`;
+  }, [currentRound, currentMatches, matchPlayers]);
+
+  const lastSignatureRef = useRef<string>("");
+
+  const reload = useCallback(
+    async (showSpinner: boolean) => {
+      if (!code) {
+        setTWinrateByPlayerId({});
+        setMWinrateByKey({});
+        return;
+      }
+
+      // Spinner nur beim ersten Laden oder bei manuellem Reload zeigen
+      if (showSpinner || !mwrHasLoadedOnce.current) setLoading(true);
+
+      try {
+        // 1) Turnier-Winrate aus /api/stats (für die Anzeige im Block)
+        try {
+          const res = await fetch(`/api/stats?_ts=${Date.now()}`, {
+            method: "POST",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            body: JSON.stringify({ code, _ts: Date.now() }),
+          });
+          const j = await res.json().catch(() => ({}));
+          const rows = Array.isArray(j?.stats) ? j.stats : [];
+          const map: Record<string, number | null> = {};
+          for (const r of rows) {
+            const pid = r?.id ? String(r.id) : "";
+            if (!pid) continue;
+            map[pid] = typeof r?.winrate === "number" ? r.winrate : null;
+          }
+          setTWinrateByPlayerId(map);
+        } catch {
+          setTWinrateByPlayerId({});
+        }
+
+        // 2) M-Winrate (profile_id + machineName + location_id) wie in Spieler-Statistik
+        if (!locationId || currentMatches.length === 0) {
+          setMWinrateByKey({});
+          return;
+        }
+
+        const machineNames = Array.from(
+          new Set(
+            (currentMatches ?? [])
+              .map((m: any) => {
+                const mid = String(m?.machine_id ?? "");
+                const name = machinesInfoById?.[mid]?.name;
+                return name ? String(name) : "";
+              })
+              .filter(Boolean)
+          )
+        );
+
+        const matchIds = new Set((currentMatches ?? []).map((m: any) => String(m?.id ?? "")));
+        const mpInRound = (matchPlayers ?? []).filter((mp: any) => matchIds.has(String(mp?.match_id ?? "")));
+
+        const profileIds = Array.from(
+          new Set(
+            mpInRound
+              .map((mp: any) => {
+                const pid = String(mp?.player_id ?? "");
+                const pl = playersById?.[pid];
+                return pl?.profile_id ? String(pl.profile_id) : "";
+              })
+              .filter(Boolean)
+          )
+        );
+
+        if (machineNames.length === 0 || profileIds.length === 0) {
+          setMWinrateByKey({});
+          return;
+        }
+
+        try {
+          const res = await fetch(`/api/winrates/machine-location?_ts=${Date.now()}`, {
+            method: "POST",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            body: JSON.stringify({ locationId, profileIds, machineNames, _ts: Date.now() }),
+          });
+          const j = await res.json().catch(() => ({}));
+          const rows = Array.isArray(j?.rows) ? j.rows : [];
+
+          const map: Record<string, { winrate: number | null; matchesPlayed: number }> = {};
+          for (const r of rows) {
+            const p = r?.profileId ? String(r.profileId) : "";
+            const m = r?.machineName ? String(r.machineName) : "";
+            if (!p || !m) continue;
+            const key = `${p}__${m}__${locationId}`;
+            map[key] = {
+              winrate: typeof r?.winrate === "number" ? r.winrate : null,
+              matchesPlayed: Number(r?.matchesPlayed ?? 0) || 0,
+            };
+          }
+          setMWinrateByKey(map);
+        } catch {
+          setMWinrateByKey({});
+        }
+      } finally {
+        setLoading(false);
+        mwrHasLoadedOnce.current = true;
+      }
+    },
+    [code, locationId, currentMatches, matchPlayers, playersById, machinesInfoById]
+  );
+
+  // Automatisch neu laden, wenn sich die "Signatur" ändert (Runde/Matches/Spieler/Startpos/Maschine/Status)
+  useEffect(() => {
+    if (!currentRound || currentMatches.length === 0) return;
+    if (!signature) return;
+
+    if (lastSignatureRef.current !== signature) {
+      lastSignatureRef.current = signature;
+      // kein nerviges "lädt…" bei Auto-Reload
+      reload(false);
+    }
+  }, [signature, currentRound, currentMatches, reload]);
+
+
+  if (!currentRound || currentMatches.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="text-sm font-semibold">Aktuelle Runde</div>
+        </CardHeader>
+        <CardBody>
+          <div className="text-sm text-neutral-500">Keine aktive Runde.</div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="mt-2">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Winrate<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
+          <div className="flex items-center gap-2">
+            {loading ? <span className="text-xs text-neutral-500">lädt…</span> : null}
+            <button
+              type="button"
+              onClick={() => reload(true)}
+              className="text-xs px-2 py-1 rounded-md border border-neutral-200 hover:bg-neutral-50"
+            >
+              Laden
+            </button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardBody>
+        <div className="space-y-2">
+          {currentMatches.map((m: any, idx: number) => {
+            const machineName = machinesInfoById?.[String(m.machine_id)]?.name ?? "Maschine";
+            const matchMps = (matchPlayers ?? [])
+              .filter((mp: any) => String(mp.match_id) === String(m.id))
+              .slice()
+              .sort((a: any, b: any) => (Number(a?.start_position ?? 999) - Number(b?.start_position ?? 999)));
+
+            // Match-Status für Mini-Badge
+            const statusRaw = String((m as any)?.status ?? "").toLowerCase();
+            const isFinished = statusRaw === "finished";
+            const statusLabel = isFinished ? "Finished" : "Aktiv";
+            const statusCls = isFinished
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-blue-200 bg-blue-50 text-blue-700";
+
+            // Pro Match: Max-Werte bestimmen (für grüne Hervorhebung)
+            const computed = matchMps.map((mp: any) => {
+              const pid = String(mp.player_id ?? "");
+              const p = playersById?.[pid];
+              const profileId = p?.profile_id ? String(p.profile_id) : "";
+              const key = profileId && machineName ? `${profileId}__${String(machineName)}__${locationId}` : "";
+
+              const tWr = tWinrateByPlayerId[pid];
+              const mWrObj = key ? mWinrateByKey[key] : null;
+              const mWr = mWrObj?.winrate ?? null;
+              const mCnt = mWrObj?.matchesPlayed ?? 0;
+
+              const pos = (mp as any)?.position ?? null;
+              return { pid, p, tWr, mWr, mCnt, pos, team: (mp as any)?.team ?? null };
+            });
+
+            const maxT = computed.reduce<number | null>((acc, x) => {
+              if (typeof x.tWr !== "number") return acc;
+              if (acc == null) return x.tWr;
+              return Math.max(acc, x.tWr);
+            }, null);
+
+            const maxM = computed.reduce<number | null>((acc, x) => {
+              if (typeof x.mWr !== "number") return acc;
+              if (acc == null) return x.mWr;
+              return Math.max(acc, x.mWr);
+            }, null);
+
+            // Gewinner:
+// - normal (Matchplay): position === 1
+// - DYP Round Robin (Teams): ALLE Spieler des Sieger-Teams (Team mit position === 1)
+            const winnerPids = (() => {
+              const set = new Set<string>();
+              if (!isFinished) return set;
+
+              const hasTeams = computed.some((x) => x.team != null);
+              if (!hasTeams) {
+                const p = computed.find((x) => Number(x.pos) === 1)?.pid ?? null;
+                if (p) set.add(String(p));
+                return set;
+              }
+
+              // Team-Position = beste (kleinste) Position der Team-Mitglieder
+              const teamBestPos = new Map<number, number>();
+              for (const x of computed) {
+                const t = x.team;
+                const p = Number(x.pos);
+                if (t == null || !Number.isFinite(p)) continue;
+                const prev = teamBestPos.get(Number(t));
+                if (prev == null || p < prev) teamBestPos.set(Number(t), p);
+              }
+
+              const winningTeams = new Set<number>(
+                Array.from(teamBestPos.entries())
+                  .filter(([, pos]) => pos === 1)
+                  .map(([team]) => team)
+              );
+
+              for (const x of computed) {
+                if (x.team != null && winningTeams.has(Number(x.team))) {
+                  set.add(String(x.pid));
+                }
+              }
+              return set;
+            })();
+
+            return (
+              <div key={String(m.id)} className="rounded-xl bg-white">
+                <div className="flex items-center justify-between gap-2 text-xs font-semibold text-neutral-800">
+                  <div className="min-w-0">
+                    Spiel {idx + 1}:{" "}
+                    <span className="text-[11px]">{machineName}</span>
+                  </div>
+
+                  <span
+                    className={
+                      "shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold " +
+                      statusCls
+                    }
+                    title={`Match-Status: ${statusRaw || "—"}`}
+                  >
+                    {statusLabel}
+                  </span>
+                </div>
+
+                <div className="mt-2">
+                  {computed.map((row: any) => {
+                    const name = row?.p?.name ?? "—";
+
+                    const nameCls =
+                      winnerPids.size > 0 && winnerPids.has(String(row.pid))
+                        ? "truncate text-[12px] font-semibold text-amber-600"
+                        : "truncate text-[12px]";
+
+                    const tCls =
+                      typeof row.tWr === "number" && maxT != null && row.tWr === maxT
+                        ? "tabular-nums text-[12px] text-emerald-600 font-semibold"
+                        : "tabular-nums text-[12px] text-neutral-700";
+
+                    const mCls =
+                      typeof row.mWr === "number" && maxM != null && row.mWr === maxM
+                        ? "tabular-nums text-[12px] text-emerald-600 font-semibold"
+                        : "tabular-nums text-[12px] text-neutral-700";
+
+                    return (
+                      <div key={row.pid} className="grid grid-cols-[1fr_auto_auto] gap-2 text-sm items-center">
+                        <div className={nameCls}>{name}</div>
+
+                        <div className={tCls}>
+                          {typeof row.tWr === "number" ? `${row.tWr}%` : "—"}
+                        </div>
+
+                        <div className={mCls}>
+                          {typeof row.mWr === "number" ? `${row.mWr}%` : "—"}
+                          {row.mCnt > 0 ? (
+                            <span className="text-[10px] text-neutral-400"> ({row.mCnt})</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2 text-[10px] text-neutral-400">
+                  <div />
+                  <div className="text-right">Winrate</div>
+                  <div className="text-right">M-Winrate</div>
+                </div>
+              </div>
+            );
+          })}        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function MatchplayProgressStack({
+  tournament,
+  rounds,
+  playersCount,
+  players,
+  matches,
+  matchPlayers,
+  playersById,
+  compact,
+}: {
+  tournament: any;
+  rounds: any[];
+  playersCount: number | null | undefined;
+  players?: any[];
+  matches?: Match[];
+  matchPlayers?: MP[];
+  playersById?: Record<string, PlayerVisual>;
+  compact?: boolean;
+}) {
+  const formatRaw = String(tournament?.format ?? "").toLowerCase();
+  const isSupported =
+    formatRaw === "matchplay" ||
+    formatRaw === "dyp_round_robin" ||
+    formatRaw === "dyp round robin" ||
+    formatRaw === "round_robin" ||
+    formatRaw === "round robin";
+
+  if (!isSupported) return null;
+
+  const n =
+    Number(playersCount ?? 0) ||
+    Number(tournament?.playersCount ?? 0) ||
+    Number(tournament?.players_count ?? 0) ||
+    (Array.isArray(tournament?.players) ? tournament.players.length : 0);
+
+  const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
+
+// ✅ Hauptrunde-Länge (Runden pro Hauptrunde) – 1:1 dieselbe Logik wie bei den farbigen Punkten links:
+// - match_size === 2: klassische Pairings (jeder gegen jeden)
+// - match_size >= 3: alle k-Kombinationen genau einmal (C(n,k))
+  const roundsPerCycle = calcRoundsPerCycle(tournament, n);
+  if (!roundsPerCycle) return null;
+const roundsSorted = (rounds ?? [])
+    .filter((r) => typeof r?.number === "number" && (r.number as number) > 0)
+    .sort((a, b) => (a.number as number) - (b.number as number));
+
+  if (roundsSorted.length === 0) return null;
+
+  const maxRoundNumber = roundsSorted[roundsSorted.length - 1].number as number;
+  const cyclesCount = Math.max(1, Math.ceil(maxRoundNumber / roundsPerCycle));
+
+  const COLORS = [
+    "#ef4444",
+    "#f97316",
+    "#eab308",
+    "#22c55e",
+    "#3b82f6",
+    "#a855f7",
+    "#64748b",
+    "#06b6d4",
+    "#14b8a6",
+    "#db2777",
+  ];
+
+  const bars = Array.from({ length: cyclesCount }).map((_, i) => {
+    const startNo = i * roundsPerCycle + 1;
+    const endNo = (i + 1) * roundsPerCycle;
+    const finished = roundsSorted.filter((r) => {
+      const no = r.number as number;
+      return no >= startNo && no <= endNo && String(r.status ?? "").toLowerCase() === "finished";
+    }).length;
+
+    // auch anzeigen wenn es schon Runden in diesem Block gibt (fertig oder nicht)
+    const hasAny = roundsSorted.some((r) => {
+      const no = r.number as number;
+      return no >= startNo && no <= endNo;
+    });
+
+    return hasAny
+      ? {
+          label: `Hauptrunde ${i + 1}`,
+          done: finished,
+          total: roundsPerCycle,
+          pct: Math.round((finished / roundsPerCycle) * 100),
+          color: COLORS[i % COLORS.length],
+        }
+      : null;
+  }).filter(Boolean) as Array<{ label: string; done: number; total: number; pct: number; color: string }>;
+
+  if (bars.length === 0) return null;
+
+  // ✅ Aussetzer (Bye) in der AKTUELLEN Runde anzeigen (nur bei ungerader Teilnehmerzahl)
+  const activePlayers = (players ?? []).filter((p: any) => p?.active !== false);
+  const activeIds = activePlayers.map((p: any) => String(p.id)).filter(Boolean);
+  const hasBye = activeIds.length > 0 && activeIds.length % 2 === 1;
+
+  let byeName: string | null = null;
+  let byeRoundLabel: string | null = null;
+
+  // ✅ Aktuelle Runde (Scope-safe): open-Runde bevorzugen, sonst letzte vorhandene Runde
+  const currentRound = (Array.isArray(rounds) && rounds.length > 0)
+    ? ((rounds as any[]).find((r: any) => r?.status === "open") ??
+       (rounds as any[])
+         .slice()
+         .sort((a: any, b: any) => (a?.number ?? 0) - (b?.number ?? 0))
+         .at(-1))
+    : null;
+
+  if (hasBye && Array.isArray(rounds) && rounds.length > 0 && Array.isArray(matches) && Array.isArray(matchPlayers)) {
+
+    const roundId = currentRound?.id ?? null;
+    const roundNo = currentRound?.number ?? null;
+
+    byeRoundLabel = roundNo != null ? `Runde ${roundNo}` : "Aktuelle Runde";
+
+    if (roundId) {
+      const matchIds = new Set(
+        (matches ?? [])
+          .filter((m: any) => String(m.round_id) === String(roundId))
+          .map((m: any) => String(m.id))
+      );
+
+      const usedIds = new Set(
+        (matchPlayers ?? [])
+          .filter((mp: any) => matchIds.has(String(mp.match_id)))
+          .map((mp: any) => String(mp.player_id))
+          .filter(Boolean)
+      );
+
+      const byeIds = activeIds.filter((pid) => !usedIds.has(String(pid)));
+
+      const nameFor = (pid: string) =>
+        (playersById && playersById[String(pid)]?.name) ||
+        activePlayers.find((p: any) => String(p.id) === String(pid))?.name ||
+        pid;
+
+      if (byeIds.length === 1) {
+        byeName = nameFor(byeIds[0]);
+      } else if (byeIds.length > 1) {
+        byeName = byeIds.map(nameFor).join(", ");
+      } else {
+        // Wenn wir es nicht sauber ableiten können, lieber "—" anzeigen.
+        byeName = null;
+      }
+    }
+  }
+
+
+  return (
+    <>
+      <div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
+      <div className={`${compact ? "text-[14px] font-semibold pb-2 border-b border-gray-200" : "text-[13px]"} text-neutral-900`}>
+        Fortschritt Hauptrunden{" "}
+        <div className="h-px bg-white" />
+        <span className="text-[11px] font-normal">{n} Spieler</span> •{" "}
+        <span className="text-[11px] font-normal">{matchSize} pro Match</span> •{" "}
+        <span className="text-[11px] font-normal">{roundsPerCycle} Runden pro Hauptrunde</span>
+      </div>
+
+      
+<div className={`mt-2 ${compact ? "space-y-1.5" : "space-y-2"}`}>
+        {bars.map((b, idx) => {
+          const frac = b.total > 0 ? b.done / b.total : 0;
+          return (
+            <div key={idx}>
+              <div className={`flex items-center justify-between ${compact ? "text-[12px]" : "text-[13px]"} text-neutral-700`}>
+                <div className="font-medium">{b.label}</div>
+                <div className="tabular-nums">{b.done}/{b.total} • {b.pct}%</div>
+              </div>
+              <div className={`mt-1 ${compact ? "h-1.5" : "h-2"} w-full rounded-full bg-neutral-100 overflow-hidden`}>
+                <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, frac * 100))}%`, backgroundColor: b.color }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+
+      {/* Info-Block unter Fortschritt Hauptrunden */}
+      {playersCount && playersCount % 2 === 1 && (
+        <div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
+          <div className="text-gray-900 text-[14px] font-semibold pb-2 border-b border-gray-200">Aussetzer<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
+          <div className="mt-1 text-sm text-gray-800">
+            <span className="text-[13px] text-gray-900">{(byeName && String(byeName).toLowerCase() !== "ghost") ? byeName : "Ghost"}</span>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+
+
+
+
+
+
 function RoundMatchesCard({
   code,
   rounds,
@@ -4000,6 +4657,8 @@ function RoundMatchesCard({
   playersById,
   onSaved,
   locked,
+  tournament,
+  playersCount,
 }: {
   code: string;
   rounds: any[];
@@ -4009,9 +4668,16 @@ function RoundMatchesCard({
   playersById: Record<string, PlayerVisual>;
   onSaved: () => void;
   locked: boolean;
+  tournament?: any;
+  playersCount?: number | null;
 }) {
   const [openRoundId, setOpenRoundId] = useState<string | null>(null);
   const lastRoundCountRef = useRef<number>(0);
+
+  const roundsPerCycle = useMemo(() => calcRoundsPerCycle(tournament, playersCount), [
+    tournament,
+    playersCount,
+  ]);
 
   const machineUsageCounts = useMemo(() => {
   const map: Record<string, number> = {};
@@ -4704,15 +5370,25 @@ return (
                   className="w-full grid grid-cols-12 gap-2 px-4 py-3 items-center text-left hover:bg-neutral-50"
                   onClick={() => setOpenRoundId(isOpen ? null : r.id)}
                 >
-                  <div className="col-span-1 font-semibold tabular-nums">
+                  <div className="col-span-1 font-semibold text-sm  tabular-nums">
                     #{r.number}
                   </div>
-                  <div className="col-span-3">{r.format}</div>
+                  <div className="col-span-3 flex items-center gap-2">{(() => {
+                      const rn = Number(r?.number ?? r?.round_no ?? 0);
+                      const per = roundsPerCycle ?? null;
+                      if (!per || !Number.isFinite(rn) || rn <= 0) return null;
+                      const idx = Math.floor((rn - 1) / per);
+                      const c = MAIN_ROUND_COLORS[idx % MAIN_ROUND_COLORS.length];
+                      return (
+                        <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c }} />
+                      );
+                    })()}
+                    <span className="text-xs text-gray-400">{formatLabel(r.format)}</span></div>
                   <div className="col-span-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={
-                          "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs sm:text-xs font-semibold ring-1 ring-inset " +
+                          "inline-flex items-center gap-2 rounded-full px-2 py-1 text-[10px] sm:text-[11px] font-semibold ring-1 ring-inset " +
                           (r.status === "finished"
                             ? "bg-green-50 text-green-700 ring-green-200"
                             : r.status === "open"
@@ -4743,7 +5419,7 @@ return (
                           : r.status ?? "—"}
                       </span>
 
-                      <span className="text-xs text-neutral-500">
+                      <span className="text-[11px] text-neutral-500">
                         Elo:{" "}
                         {r.elo_enabled ? (
                           <span className="text-emerald-600 font-semibold">
@@ -4755,10 +5431,10 @@ return (
                       </span>
                     </div>
                   </div>
-                  <div className="col-span-4 text-center text-xs sm:text-sm text-neutral-700 truncate">
+                  <div className="col-span-4 text-center text-xs sm:text-xs text-neutral-700 truncate">
                     {winnersText}
                   </div>
-                  <div className="col-span-2 text-right tabular-nums text-xs sm:text-sm">
+                  <div className="col-span-2 text-right tabular-nums text-xs sm:text-xs">
                     {ms.length}
                   </div>
                 </button>
@@ -4780,8 +5456,29 @@ return (
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {ms.map((m) => {
+                        {ms.map((m, mi) => {
                           const mps = (mpByMatch[m.id] ?? []).slice();
+
+                          // Anzeige-Nummer für die rechte Seite:
+                          // - Falls Best-of/Serie gespielt wird, nutzen wir m.game_number (1..n innerhalb einer Serie)
+                          // - Sonst ist es einfach die laufende Nummer innerhalb der Runde (1..)
+                          const bestOf = Number(
+                            (tournament?.best_of ??
+                              tournament?.bestOf ??
+                              tournament?.bestof ??
+                              tournament?.bestOfGames ??
+                              m.best_of ??
+                              1)
+                          );
+                          const gnRaw = (m as any)?.game_number;
+                          const gameNo =
+                            typeof gnRaw === "number"
+                              ? gnRaw
+                              : typeof gnRaw === "string" && gnRaw.trim() !== ""
+                                ? Number(gnRaw)
+                                : null;
+                          const displayNo = bestOf > 1 && gameNo ? gameNo : mi + 1;
+
 
                           mps.sort((a, b) => {
                             const sa = (a.start_position ?? 999) as number;
@@ -4794,10 +5491,9 @@ return (
 
                           // DYP: wir erkennen DYP-Matches über das Turnierformat (nicht über ein lokales 'joined')
                           const isDypMatch =
-                          mps.length === 4 &&
-                          mps.some((x) => (x as any).team != null);
-
-                          const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
+                          ((typeof data === "undefined" ? undefined : data?.tournament?.format) === "dyp_round_robin" && mps.length === 4) ||
+                          (mps.length === 4 && mps.some((x) => (x as any).team != null));
+const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
 
                           // WICHTIG: hier merken, ob schon Ergebnisse gesetzt sind
                           {/*const hasResults = mps.some((mp) => mp.position != null);*/}
@@ -4860,7 +5556,8 @@ return (
                                     {/* Maschinen-Dropdown */}
                                     <Select
                                       value={m.machine_id ?? ""}
-                                      className="min-w-[230px] max-w-[260px] text-sm"
+                                      className="rounded-lg px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
+                                      
                                       disabled={
                                         locked || hasResults || savingMachine[m.id]
                                       }
@@ -4898,10 +5595,10 @@ return (
                                     "speichere…"
                                   ) : m.machine_id ? (
                                     <>
-                                      {machineUsageCounts[m.machine_id] ?? 0} x im Turnier verwendet
+                                      <span className="font-semibold text-[11px]  text-blue-500">{machineUsageCounts[m.machine_id] ?? 0} x</span> im Turnier verwendet
                                     </>
                                   ) : (
-                                    <>0 x im Turnier verwendet</>
+                                    <><span className="font-semibold text-[11px] text-blue-500">0 x</span> im Turnier verwendet</>
                                   )}
 
 
@@ -4914,7 +5611,7 @@ return (
                                   </div>
 
                                   {/* Hinweistext unter dem Dropdown */}
-                                  <div className="text-xs font-normal text-neutral-500">
+                                  <div className="text-[11px] font-normal text-neutral-500">
                                     {locked
                                       ? "Turnier ist beendet – Maschine kann nicht mehr geändert werden."
                                       : hasResults
@@ -4923,8 +5620,8 @@ return (
                                   </div>
 
 
-                                  <div className="text-xs font-normal text-neutral-500">
-                                    Diese Paarung wurde schon {playedCount}× im Turnier gespielt.
+                                  <div className="text-[11px] font-normal text-neutral-500">
+                                    Diese Spieler sind schon zum <span className="font-semibold text-blue-500">{playedCount + 1} × </span>im Turnier aufeinandergetroffen.
                                   </div>
 
 
@@ -4932,9 +5629,9 @@ return (
 
                                 {/* Rechte Seite: Match-ID / Speichern-Status */}
                                 <div className="text-xs text-neutral-500 whitespace-nowrap">
-                                   {m.game_number ? (
+                                   {displayNo ? (
                                       <span className="font-semibold text-neutral-500 whitespace-nowrap">
-                                        Spiel {m.game_number} {/*   •  */}
+                                        Spiel {displayNo}
                                       </span>
                                     ) : null}
                                     <div className="text-xs text-neutral-500 whitespace-nowrap">
@@ -5133,8 +5830,8 @@ return (
 
     // DYP: In der Match-Ansicht zeigen wir Teams (2 Zeilen) – dafür macht Drag&Drop der Startreihenfolge keinen Sinn.
     const isDypMatch =
-      mps.length === 4 &&
-      mps.some((x) => (x as any).team != null);
+      ((typeof data === "undefined" ? undefined : data?.tournament?.format) === "dyp_round_robin" && mps.length === 4) ||
+      (mps.length === 4 && mps.some((x) => (x as any).team != null));
 
     const dndDisabled = locked || hasResults || isDypMatch; // ✅ nur solange keine Ergebnisse gesetzt sind
 
@@ -5223,24 +5920,24 @@ return (
               <div
                 key={nr}
                 className={
-                  "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-4 sm:py-3 " +
+                  "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-2 py-1 sm:px-3 sm:py-2 " +
                   (isWinner ? "bg-amber-200 border-amber-300" : "bg-white")
                 }
               >
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 text-xs">
                     <PlayerPill player={playersById[team[0]?.player_id] ?? { name: "?" }} />
                     <Pill>/</Pill>
                     <PlayerPill player={playersById[team[1]?.player_id] ?? { name: "?" }} />
                   </div>
-                  {pos ? <Pill>#{pos}</Pill> : <Pill>—</Pill>}
-                  {isWinner ? <Pill>🏆 Sieger</Pill> : null}
+                  {pos ? <Pill><span className="text-[10px]">#{pos}</span></Pill> : <Pill>—</Pill>}
+                  {isWinner ? <Pill><span className="text-[10px]">🏆 Sieger</span></Pill> : null}
                 </div>
 
                 <div className="w-44 flex flex-col gap-1">
                   <Select
                     value={pos}
-                    className="rounded-lg px-3 py-2 text-sm sm:px-4 sm:py-3 sm:text-base"
+                    className="rounded-lg px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
                     disabled={locked}
                     onChange={(e) => setTeamResult(nr, e.target.value)}
                   >
@@ -5353,7 +6050,7 @@ return (
                     <div className="w-44 flex flex-col gap-1">
                       <Select
                         value={pos ?? ""}
-                        className="rounded-lg px-3 py-2 text-sm sm:px-4 sm:py-3 sm:text-base"
+                        className="rounded-lg px-3 py-2 text-xs sm:px-3 sm:py-2 sm:text-sm"
                         disabled={locked}
                         onChange={async (e) => {
                           if (locked) return;
@@ -5662,6 +6359,8 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   const [msg, setMsg] = useState<string | null>(null);
   const [joined, setJoined] = useState<Tournament | null>(null);
 
+  // ✅ Alias: einige ältere UI-Teile referenzieren "data" (Turnier-Objekt).
+  const data = joined as any;
   const [archive, setArchive] = useState<Tournament[]>([]);
 
   const hasOpenTournaments = useMemo(
@@ -6769,6 +7468,9 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   // locked = entweder Turnier beendet ODER Zuschauer
   const locked = isFinished || isViewer;
 
+  // ✅ DYP Round Robin: Startreihenfolge soll immer zufällig sein (UI sperren)
+  const isDypRR = data?.tournament?.format === "dyp_round_robin";
+
   // ✅ "Letzte Runde (schlechtester zuerst)" ist nur sinnvoll,
   // wenn die neue Runde genau 1 Match erzeugt.
   const activePlayersCount = (data?.players ?? []).filter((p: any) => p?.active !== false).length;
@@ -6785,6 +7487,12 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
       setStartOrderMode("random");
     }
   }, [startOrderMode, canUseLastRoundOrder]);
+
+  useEffect(() => {
+  if (isDypRR && startOrderMode !== "random") {
+    setStartOrderMode("random");
+  }
+  }, [isDypRR, startOrderMode]);
 
 
 
@@ -7079,8 +7787,8 @@ async function tick() {
   // sofort laden
   tick();
 
-  // alle 8 Sekunden für Besucher & Admin
-  const t = window.setInterval(tick, 8000);
+  // alle 16 Sekunden für Besucher & Admin
+  const t = window.setInterval(tick, 16000);
 
   return () => {
     cancelled = true;
@@ -7765,6 +8473,7 @@ const machinesInfoById = useMemo(
             p.id,
             {
               name: p.name,
+              profile_id: p.profile_id ?? null,
               color: p.color ?? prof?.color ?? null,
               icon: p.icon ?? prof?.icon ?? null,
               avatarUrl: p.avatar_url ?? prof?.avatar_url ?? null,
@@ -7783,10 +8492,12 @@ const machinesInfoById = useMemo(
   const tournamentName = tournament?.name ?? name;
 
   const formatLabel =
-    data?.tournament?.format === "swiss"
+    (typeof data === "undefined" ? undefined : data?.tournament?.format) === "swiss"
       ? "Swiss"
-      : data?.tournament?.format === "round_robin"
+      : (typeof data === "undefined" ? undefined : data?.tournament?.format) === "round_robin"
       ? "Round Robin"
+      : (typeof data === "undefined" ? undefined : data?.tournament?.format) === "dyp_round_robin"
+      ? "DYP Round Robin"
       : "Matchplay";
 
   const gamesPlayed = (finalState?.players ?? []).reduce(
@@ -8354,12 +9065,13 @@ const machinesInfoById = useMemo(
 
     {/* 🔹 LINKER BLOCK — Dropdown + Erklärung */}
     <div className="space-y-3">
-      <Select
-        className="w-full"
-        value={startOrderMode}
-        onChange={(e) => setStartOrderMode(e.target.value as any)}
-        disabled={busy || locked}
-      >
+        <Select
+          className="w-full"
+          value={startOrderMode}
+          onChange={(e) => setStartOrderMode(e.target.value as any)}
+          disabled={busy || locked || isDypRR}
+          title={isDypRR ? "Bei DYP Round Robin ist die Startreihenfolge immer zufällig." : undefined}
+        >
         <option value="random">Zufällig</option>
         <option value="standings_asc">
           Schlechtester zuerst (nach aktueller Wertung)
@@ -8368,6 +9080,12 @@ const machinesInfoById = useMemo(
           Schlechtester zuerst (nach letzter Runde)
         </option>
       </Select>
+
+      {isDypRR && (
+        <p className="text-sm text-neutral-500 leading-snug">
+          Bei <b>DYP Round Robin</b> ist die Startreihenfolge immer <b>zufällig</b>.
+        </p>
+      )}
 
       <p className="text-sm text-neutral-500 leading-snug">
         Diese Einstellung beeinflusst nur die Reihenfolge{" "}
@@ -8475,6 +9193,8 @@ const machinesInfoById = useMemo(
       playersById={playersById}
       onSaved={reloadAll}
       locked={locked}
+      tournament={(data as any)?.tournament}
+      playersCount={(data as any)?.players?.length ?? null}
     />
   </div>
 
@@ -8483,6 +9203,25 @@ const machinesInfoById = useMemo(
 <div className="rounded-2xl border bg-white p-3 h-full flex flex-col">
   <div className="sticky top-4">
     <MiniLeaderboard code={code} />
+    <MatchplayProgressStack
+      tournament={(data as any)?.tournament}
+      rounds={rounds}
+      playersCount={(data as any)?.players?.length ?? null}
+      players={(data as any)?.players ?? []}
+      matches={matches}
+      matchPlayers={matchPlayers}
+      playersById={playersById}
+      compact
+    />
+    <CurrentRoundSticky
+      code={code}
+      tournament={(data as any)?.tournament}
+      rounds={rounds}
+      matches={matches}
+      matchPlayers={matchPlayers}
+      playersById={playersById}
+      machinesInfoById={machinesInfoById}
+    />
   </div>
 </div>
   </div>

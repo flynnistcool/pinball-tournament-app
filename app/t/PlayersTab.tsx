@@ -25,7 +25,20 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/ui";
 import { EloSparkline } from "@/components/charts";
 import { joinTournamentByCode } from "@/lib/joinTournament";
+import {Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
+const ACTION_COLORS = [
+  "#ef4444",
+  "#f97316",
+  "#eab308",
+  "#22c55e",
+  "#3b82f6",
+  "#a855f7",
+  "#64748b",
+];
 
+
+
+const PIE_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#3b82f6", "#a855f7", "#64748b"];
 
 import { useRouter } from "next/navigation";
 
@@ -211,6 +224,102 @@ function SectionTitle({
         {subtitle ? (
           <div className="text-xs text-neutral-500">{subtitle}</div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mini-Kuchendiagramm für Drain-Zonen
+// Nutzung: <DrainPieChart rows={[{label:"Mitte", value: 7}, ...]} height={220} />
+type DrainPieRow = { label: string; value: number };
+
+function DrainPieChart({
+  rows,
+  height = 200,
+}: {
+  rows: DrainPieRow[];
+  height?: number;
+}) {
+  const data = (rows || []).filter((r) => (r?.value ?? 0) > 0);
+  const total = data.reduce((acc, r) => acc + (r.value ?? 0), 0);
+  if (!data.length || total <= 0) return null;
+
+  // feste, gut unterscheidbare Farben (keine Abhängigkeit vom Theme)
+    return (
+    <div className="w-full" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Tooltip
+            formatter={(value: any, _name: any, props: any) => {
+              const v = Number(value ?? 0);
+              const pct = total ? Math.round((v / total) * 100) : 0;
+              return [`${v}x • ${pct}%`, props?.payload?.label ?? ""];
+            }}
+          />
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="label"
+            cx="50%"
+            cy="50%"
+            outerRadius="80%"
+            innerRadius="45%"
+            paddingAngle={2}
+            isAnimationActive={false}
+          >
+            {data.map((_, idx) => (
+              <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+
+type BarRow = { label: string; value: number; pct?: number };
+
+function SaveBarChart({
+  rows,
+  height = 220,
+}: {
+  rows: BarRow[];
+  height?: number;
+}) {
+  if (!rows || rows.length === 0) return null;
+
+  const max = Math.max(...rows.map((r) => r.value || 0), 1);
+
+  return (
+    <div className="rounded-md border bg-white p-2">
+      <div style={{ width: "100%", height }}>
+        <ResponsiveContainer>
+          <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis type="number" domain={[0, max]} hide />
+            <YAxis
+              type="category"
+              dataKey="label"
+              width={140}
+              tick={{ fontSize: 11, fill: "#374151" }}
+            />
+            <Tooltip
+              formatter={(value: any, name: any, props: any) => {
+                const v = Number(value || 0);
+                const p = props?.payload?.pct;
+                return [p != null ? `${v}x • ${p}%` : `${v}x`, ""];
+              }}
+              labelFormatter={(label: any) => String(label)}
+            />
+            <Bar dataKey="value" radius={[6, 6, 6, 6]}>
+              {rows.map((_, idx) => (
+                <Cell key={`bar-${idx}`} fill={ACTION_COLORS[idx % ACTION_COLORS.length]} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -2852,9 +2961,24 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                         <div className="rounded-xl border bg-white p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <div className="font-semibold text-neutral-900">Single Play Training</div>
-                              <div className="text-xs text-neutral-600">
-                                Run starten, dann nach jeder Kugel sofort eintragen. Am Ende Gesamt-Score speichern.
+                              <div className="font-semibold text-neutral-900">
+<div className="mb-3">
+  {/* Titelzeile */}
+  <div className="flex items-center gap-2 mb-1">
+    <span className="text-lg">🎯</span>
+    <h2 className="text-lg font-semibold text-neutral-900">
+      Single Play Training
+    </h2>
+  </div>
+
+  {/* Untertitel */}
+  <p className="text-xs text-neutral-500 leading-snug">
+    Run starten, dann nach jeder Kugel sofort eintragen. Am Ende Gesamt-Score speichern.
+  </p>
+</div>
+
+
+
                               </div>
                             </div>
                             <div className="text-[11px] text-neutral-500">pro Spieler-Profil</div>
@@ -3268,117 +3392,141 @@ const saveOptions = saveOptionGroups.flatMap((g) => g.options);
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="block text-xs font-medium text-neutral-600 mb-1">Wo ist die Kugel raus?</label>
-              <Select
-                value={draft.drain_zone}
-                onChange={(e) =>
-                  setSpBallDraft((prev) => ({
-                    ...prev,
-                    [p.id]: { ...draft, drain_zone: e.target.value },
-                  }))
-                }
-              >
-                <option value="">Bitte wählen</option>
-                {drainOptions.map((o) => (
-                  <option key={o.v} value={o.v}>{o.l}</option>
-                ))}
-              </Select>
-            </div>
+{/* Drain + Rettung als zusammengehörige Gruppen */}
+<div className="grid gap-3 sm:grid-cols-2">
+  {/* Drain */}
+  <div className="rounded-xl border bg-white p-3 space-y-3">
+    <div className="text-[14px] font-semibold text-neutral-700 pb-2 border-b border-gray-200">🕳️ Drain</div>
 
-            <div>
-              <label className="block text-xs font-medium text-neutral-600 mb-1">Was getan um zu retten?</label>
-              <Select
-                value={draft.save_action}
-                onChange={(e) =>
-                  setSpBallDraft((prev) => ({
-                    ...prev,
-                    [p.id]: { ...draft, save_action: e.target.value },
-                  }))
-                }
-              >
-                <option value="">Bitte wählen</option>
-                {saveOptionGroups.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.options.map((o) => (
-                      <option key={o.v} value={o.v}>
-                        {o.l}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </Select>
-            </div>
-          </div>
+    <div>
+      <label className="block text-xs font-medium text-neutral-600 mb-1">
+        Wo ist die Kugel raus?
+      </label>
+      <Select
+        value={draft.drain_zone}
+        className="text-xs sm:text-xs"
+        onChange={(e) =>
+          setSpBallDraft((prev) => ({
+            ...prev,
+            [p.id]: { ...draft, drain_zone: e.target.value },
+          }))
+        }
+      >
+        <option value="">Bitte wählen</option>
+        {drainOptions.map((o) => (
+          <option key={o.v} value={o.v}>
+            {o.l}
+          </option>
+        ))}
+      </Select>
+    </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="block text-xs font-medium text-neutral-600 mb-1">Drain Detail (optional)</label>
-              <Input
-                placeholder="z.B. horizontal tick tack zwischen slings…"
-                value={draft.drain_detail}
-                onChange={(e) =>
-                  setSpBallDraft((prev) => ({
-                    ...prev,
-                    [p.id]: { ...draft, drain_detail: e.target.value },
-                  }))
-                }
-              />
+    <div>
+      <label className="block text-xs font-medium text-neutral-600 mb-1">
+        Drain Detail (optional)
+      </label>
+      <Input
+        placeholder="z.B. horizontal tick tack zwischen slings…"
+        className="text-xs sm:text-xs"
+        value={draft.drain_detail}
+        onChange={(e) =>
+          setSpBallDraft((prev) => ({
+            ...prev,
+            [p.id]: { ...draft, drain_detail: e.target.value },
+          }))
+        }
+      />
 
-              {(spDetailSuggestions[p.id]?.drain ?? []).length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(spDetailSuggestions[p.id]?.drain ?? []).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      className="rounded-full border bg-rose-50 border-rose-200 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-100"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        appendToDraft(p.id, "drain_detail", t);
-                      }}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+      {(spDetailSuggestions[p.id]?.drain ?? []).length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {(spDetailSuggestions[p.id]?.drain ?? []).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="rounded-full border bg-rose-50 border-rose-200 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-100"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                appendToDraft(p.id, "drain_detail", t);
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  </div>
 
-            <div>
-              <label className="block text-xs font-medium text-neutral-600 mb-1">Save Detail (optional)</label>
-              <Input
-                placeholder="z.B. nudge spät / zu stark / nicht gecheckt…"
-                value={draft.save_action_detail}
-                onChange={(e) =>
-                  setSpBallDraft((prev) => ({
-                    ...prev,
-                    [p.id]: { ...draft, save_action_detail: e.target.value },
-                  }))
-                }
-              />
+  {/* Rettung */}
+  <div className="rounded-xl border bg-white p-3 space-y-3">
+    <div className="text-[14px] font-semibold text-neutral-700 pb-2 border-b border-gray-200">🛟 Rettung</div>
 
-              {(spDetailSuggestions[p.id]?.save ?? []).length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(spDetailSuggestions[p.id]?.save ?? []).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      className="rounded-full border bg-blue-50 border-blue-200 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-100"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        appendToDraft(p.id, "save_action_detail", t);
-                      }}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
+    <div>
+      <label className="block text-xs font-medium text-neutral-600 mb-1">
+        Was getan um zu retten?
+      </label>
+      <Select
+        value={draft.save_action}
+        className="text-xs sm:text-xs"
+        onChange={(e) =>
+          setSpBallDraft((prev) => ({
+            ...prev,
+            [p.id]: { ...draft, save_action: e.target.value },
+          }))
+        }
+      >
+        <option value="">Bitte wählen</option>
+        {saveOptionGroups.map((group) => (
+          <optgroup key={group.label} label={group.label}>
+            {group.options.map((o) => (
+              <option key={o.v} value={o.v}>
+                {o.l}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </Select>
+    </div>
+
+    <div>
+      <label className="block text-xs font-medium text-neutral-600 mb-1">
+        Save Detail (optional)
+      </label>
+      <Input
+        placeholder="z.B. nudge spät / zu stark / nicht gecheckt…"
+        className="text-xs sm:text-xs"
+        value={draft.save_action_detail}
+        onChange={(e) =>
+          setSpBallDraft((prev) => ({
+            ...prev,
+            [p.id]: { ...draft, save_action_detail: e.target.value },
+          }))
+        }
+      />
+
+      {(spDetailSuggestions[p.id]?.save ?? []).length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {(spDetailSuggestions[p.id]?.save ?? []).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="rounded-full border bg-blue-50 border-blue-200 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-100"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                appendToDraft(p.id, "save_action_detail", t);
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  </div>
+</div>
+
 
           <div className="flex items-center justify-end">
             {ballAlreadySaved ? (
@@ -3427,7 +3575,7 @@ const saveOptions = saveOptionGroups.flatMap((g) => g.options);
 
     <textarea
       rows={3}
-      className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900"
+      className="w-full rounded-md border border-neutral-300 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-neutral-900"
       placeholder="z.B. Setup, besondere Ereignisse, Probleme, Lernpunkte …"
       value={spRunDetailDraft[p.id] ?? ""}
       onChange={(e) =>
@@ -3946,6 +4094,11 @@ for (const ev of zoneEvents) {
             .sort((a, b) => b.count - a.count);
 
 
+
+            const pieRows = zones.map((z) => ({
+              label: drainLabel[z.zone] ?? z.zone,
+              value: z.count,
+            }));
           // Initial load trigger (when machine filter changes)
           // -> IMPORTANT: do this in a useEffect normally, but we can also call in onChange handler.
           // We do it properly below with an effect in section 4.
@@ -3980,9 +4133,10 @@ for (const ev of zoneEvents) {
                 <div className="space-y-2">
                   {/* Zonen Tabelle */}
                   <div className="text-[12px] font-semibold text-neutral-700">Wo ist die Kugel raus?</div>
+                  <DrainPieChart rows={pieRows} height={220} colors={PIE_COLORS} />
 
                   <div className="space-y-1">
-                    {zones.map((r) => {
+                    {zones.map((r, i) => {
                       const pct = total ? Math.round((r.count / total) * 100) : 0;
                       const isOpen = openZone === r.zone;
 
@@ -4002,7 +4156,7 @@ for (const ev of zoneEvents) {
                           >
                             <div className="min-w-0">
                               <div className="font-semibold text-[12px] text-neutral-800">
-                                {drainLabel[r.zone] ?? r.zone}
+                                <span className="inline-block h-2.5 w-2.5 rounded-full mr-2 align-middle" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />{drainLabel[r.zone] ?? r.zone}
                               </div>
                               <div className="text-[11px] text-neutral-500">{r.count}x • {pct}%</div>
                             </div>
@@ -4118,7 +4272,7 @@ for (const ev of zoneEvents) {
         <div className="text-[11px] text-neutral-500">Keine Daten im Filter.</div>
       ) : (
         <div className="space-y-2">
-          {saveRows.map((s) => {
+          {saveRows.map((s, idx) => {
             const badgeMap = saveDetailsByAction.get(s.action);
             const badges = badgeMap
               ? Array.from(badgeMap.entries())
@@ -4152,7 +4306,19 @@ for (const ev of zoneEvents) {
                 })()}
               >
                 <div className="flex items-center justify-between text-[12px] text-neutral-700">
-                  <div className="font-medium">{humanizeSaveAction(s.action)}</div>
+                  
+<div className="flex items-center gap-2 font-medium">
+  
+{idx < (rows?.length ?? 7) ? (
+  <span
+    className="inline-block h-3 w-3 rounded-full"
+    style={{ backgroundColor: ACTION_COLORS[idx % ACTION_COLORS.length] }}
+  />
+) : null}
+
+  <span>{humanizeSaveAction(s.action)}</span>
+</div>
+
                   <div className="tabular-nums font-semibold">{s.count}x • {s.pct}%</div>
                 </div>
 
@@ -4461,8 +4627,21 @@ for (const ev of zoneEvents) {
               ) : saveActions.length === 0 ? (
                 <div className="text-[12px] text-neutral-500">Keine Ball-Events im aktuellen Filter.</div>
               ) : (
-                <div className="space-y-2">
-                  {saveActions.map((row) => {
+                <div className="space-y-3">
+                  {/* Überblick: Häufigste Rettungsversuche (Top 7) */}
+                  <SaveBarChart
+                    rows={saveActions
+                      .slice(0, 7)
+                      .map((r) => ({
+                        label: safeText(saveLabel[r.action] ?? r.action),
+                        value: r.count,
+                        pct: totalSave ? Math.round((r.count / totalSave) * 100) : 0,
+                      }))}
+                    height={220}
+                  />
+
+                  <div className="space-y-2">
+                    {saveActions.map((row, idx) => {
                     const isOpen = openAction === row.action;
 
                     const pct = totalSave ? Math.round((row.count / totalSave) * 100) : 0;
@@ -4559,9 +4738,10 @@ for (const ev of zoneEvents) {
                           }}
                         >
                           <div className="min-w-0">
-                            <div className="font-semibold text-[12px] text-neutral-800">
-                              {safeText(saveLabel[row.action] ?? row.action)}
-                            </div>
+                            <div className="flex items-center gap-2 font-semibold text-[12px] text-neutral-800">
+  <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: ACTION_COLORS[idx % ACTION_COLORS.length] }} />
+  <span>{safeText(saveLabel[row.action] ?? row.action)}</span>
+</div>
                             <div className="text-[11px] text-neutral-500">{row.count}x • {pct}%</div>
                           </div>
                           <div className="text-[12px] text-neutral-500">{isOpen ? "▲" : "▼"}</div>
@@ -4811,6 +4991,7 @@ return (
                       </div>
                     );
                   })}
+                </div>
                 </div>
               )}
             </div>

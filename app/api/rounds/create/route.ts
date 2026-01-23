@@ -121,10 +121,57 @@ function buildPairCountsFromHistory(mpByMatch: Record<string, { player_id: strin
   return pairCounts;
 }
 
+// Wie oft hat ein Spieler in der Vergangenheit "ausgesetzt" (Bye)?
+// Wir leiten das aus bestehenden Runden ab:
+// - pro Round zählen wir nur dann einen Bye, wenn GENAU 1 aktiver Spieler in dieser Runde in keinem Match war.
+//   (bei 5 Spielern in 1vs1: 2 Matches -> 4 Spieler spielen -> 1 Bye)
+function buildByeCountsFromHistory(opts: {
+  rounds: { id: string }[];
+  matches: { id: string; round_id: string }[];
+  matchPlayers: { match_id: string; player_id: string }[];
+  activePlayerIds: string[];
+}): Map<string, number> {
+  const byeCounts = new Map<string, number>();
+  for (const pid of opts.activePlayerIds) byeCounts.set(pid, 0);
+
+  const matchIdToRoundId = new Map<string, string>();
+  for (const m of opts.matches ?? []) {
+    if (m?.id && m?.round_id) matchIdToRoundId.set(m.id, m.round_id);
+  }
+
+  const playedByRound = new Map<string, Set<string>>();
+  for (const r of opts.rounds ?? []) {
+    playedByRound.set(r.id, new Set());
+  }
+
+  for (const mp of opts.matchPlayers ?? []) {
+    const rid = matchIdToRoundId.get(mp.match_id);
+    if (!rid) continue;
+    if (!playedByRound.has(rid)) playedByRound.set(rid, new Set());
+    playedByRound.get(rid)!.add(mp.player_id);
+  }
+
+  const activeSet = new Set(opts.activePlayerIds);
+  for (const [rid, played] of playedByRound.entries()) {
+    // nur Spieler berücksichtigen, die aktuell aktiv sind (minimiert Nebenwirkungen bei später aktiv/inaktiv)
+    const missing: string[] = [];
+    for (const pid of activeSet) {
+      if (!played.has(pid)) missing.push(pid);
+    }
+    if (missing.length === 1) {
+      const pid = missing[0];
+      byeCounts.set(pid, (byeCounts.get(pid) ?? 0) + 1);
+    }
+  }
+
+  return byeCounts;
+}
+
 function makeMatchplayGroupsAvoidingRepeats(
   players: PlayerRow[],
   groupSize: 2 | 3 | 4,
-  pairCounts: Map<string, number>
+  pairCounts: Map<string, number>,
+  byeCounts?: Map<string, number>
 ): { groups: PlayerRow[][]; lone?: PlayerRow } {
   const ps = players.slice();
 
@@ -181,10 +228,15 @@ function makeMatchplayGroupsAvoidingRepeats(
 
     const candidatesForBye = idsAll.length % 2 === 1 ? idsAll : [null];
 
+    // Bye-Fairness: wenn möglich nicht denselben Spieler mehrfach aussetzen lassen.
+    // Wir berücksichtigen das als Zusatzkosten (starker Malus pro bisherigem Bye).
+    const byePenaltyWeight = 1000;
+
     for (const byeId of candidatesForBye as any[]) {
       const ids = byeId ? idsAll.filter((x) => x !== byeId) : idsAll.slice();
       const res = bestMatchingForIds(ids);
-      const totalCost = res.cost;
+      const byePenalty = byeId ? (byeCounts?.get(String(byeId)) ?? 0) * byePenaltyWeight : 0;
+      const totalCost = res.cost + byePenalty;
       if (
         !bestOverall ||
         totalCost < bestOverall.cost ||
@@ -192,10 +244,9 @@ function makeMatchplayGroupsAvoidingRepeats(
       ) {
         bestOverall = { pairs: res.pairs, cost: totalCost, lone: byeId ?? undefined };
       }
-      if (bestOverall && bestOverall.cost === 0 && (idsAll.length % 2 === 0 || byeId)) {
-        // Für den Bye-Fall gibt es nicht zwingend "0" als bestes. Trotzdem reicht hier ein sehr früher Abbruch.
-        break;
-      }
+
+      // Kein Early-Break hier: bei ungerader Spielerzahl müssen wir ALLE Bye-Kandidaten prüfen,
+      // sonst kann derselbe Spieler immer wieder "gewinnen" (stabile Reihenfolge / Zufall) und mehrfach aussetzen.
     }
 
     const groups: PlayerRow[][] = (bestOverall?.pairs ?? []).map(([a, b]) => [byId.get(a)!, byId.get(b)!]);
@@ -290,6 +341,22 @@ export async function POST(req: Request) {
 
   const useElo = Boolean(body.useElo);
 
+  // ✅✅✅ NEU: optionales Format-Override (nur wenn du es mitsendest)
+  // unterstützt body.format oder body.forceFormat
+  const requestedFormatRaw = String(body.format ?? body.forceFormat ?? "").trim();
+  const requestedFormat:
+    | "matchplay"
+    | "swiss"
+    | "round_robin"
+    | "dyp_round_robin"
+    | null =
+    requestedFormatRaw === "matchplay" ||
+    requestedFormatRaw === "swiss" ||
+    requestedFormatRaw === "round_robin" ||
+    requestedFormatRaw === "dyp_round_robin"
+      ? (requestedFormatRaw as any)
+      : null;
+
   const sb = supabaseAdmin();
 
   // Turnier laden
@@ -313,10 +380,14 @@ export async function POST(req: Request) {
     );
   }
 
-  const format: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" =
+  const tournamentFormat: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" =
     t.format === "swiss" || t.format === "round_robin" || t.format === "dyp_round_robin"
       ? (t.format as any)
       : "matchplay";
+
+  // ✅✅✅ NEU: effective format (Override > DB)
+  const format: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" =
+    requestedFormat ?? tournamentFormat;
 
   const groupSize =
     format === "dyp_round_robin"
@@ -428,8 +499,6 @@ export async function POST(req: Request) {
       } else if (size === 3) {
         pts = pos === 1 ? 3 : pos === 2 ? 1 : 0;
       } else {
-        // 4er-Match: normalerweise 4/2/1/0 (FFA). Für DYP (2vs2) wollen wir aber Win/Loss: 3/0.
-        // Heuristik: Wenn in einem 4er-Match nur Positionen 1/2 vorkommen (keine 3/4), behandeln wir es als Team-Match.
         const only12 = mps.every(
           (x) => x.position == null || x.position === 1 || x.position === 2
         );
@@ -452,16 +521,23 @@ export async function POST(req: Request) {
   const standingByPlayerId = new Map<string, Standing>();
   for (const st of standings) standingByPlayerId.set(st.player_id, st);
 
-  // Wie oft haben Spieler schon gegeneinander (oder im selben Match) gespielt?
-  // Für 1vs1 ist das exakt "A vs B". Für 3/4er Matchplay zählt es als "zusammen gespielt".
   const pairCounts = buildPairCountsFromHistory(mpByMatch);
+
+  // Bye-Historie (nur relevant bei ungerader Spielerzahl / 1vs1 Matchplay)
+  // Minimal-invasiv: wir nutzen diese Counts nur als Zusatzkosten bei der Bye-Auswahl,
+  // damit nicht derselbe Spieler mehrfach in derselben "jeder-gegen-jeden"-Phase aussetzen muss.
+  const byeCounts = buildByeCountsFromHistory({
+    rounds: (rounds ?? []) as any[],
+    matches: (matches ?? []) as any[],
+    matchPlayers: (matchPlayers ?? []) as any[],
+    activePlayerIds: (players as any[]).map((p) => p.id),
+  });
 
   const warnings: string[] = [];
 
   // Gruppen bilden
   type PlannedGroup = {
     group: PlayerRow[];
-    // optional: DYP teams (1|2) pro Spieler
     teamByPlayerId?: Record<string, 1 | 2>;
   };
   let plannedGroups: PlannedGroup[] = [];
@@ -469,13 +545,10 @@ export async function POST(req: Request) {
   const byId = new Map((players as PlayerRow[]).map((p) => [p.id, p] as const));
 
   if (format === "dyp_round_robin") {
-    // DYP Round Robin: 2vs2 (4 Spieler pro Match), Teams rotieren.
     const idsAll = (players as PlayerRow[]).map((p) => p.id);
 
-    // 1) Bye (genau 1 Spieler setzt aus, wenn ungerade)
     let idsForPairing = idsAll.slice();
     if (idsAll.length % 2 === 1) {
-      // Fairness-Heuristik: Spieler mit den wenigsten gespielten Matches bekommt Bye.
       const scored = idsAll
         .map((id) => ({
           id,
@@ -492,14 +565,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2) Historie: Partner- und Matchup-Wiederholungen zählen
     const { partnerCounts, matchupCounts } = buildDypCountsFromHistory(mpByMatch);
 
-    // 3) Teams bauen: Spieler so paaren, dass Partner-Wiederholungen minimal sind
     const teamPairs = bestMatchingForIds(idsForPairing, (a, b) => partnerCounts.get(pairKey(a, b)) ?? 0);
     const teams = teamPairs.pairs.map(([a, b]) => ({ id: teamKey(a, b), a, b }));
 
-    // 4) Teams gegeneinander paaren: Matchup-Wiederholungen minimal halten
     const teamById = new Map(teams.map((t) => [t.id, t] as const));
     const matchPairs = bestMatchingForIds(
       teams.map((t) => t.id),
@@ -529,7 +599,6 @@ export async function POST(req: Request) {
       })
       .filter(Boolean) as PlannedGroup[];
   } else {
-    // ✅ bestehende Formate wie bisher
     let groups: PlayerRow[][] = [];
 
     if (format === "swiss") {
@@ -555,7 +624,13 @@ export async function POST(req: Request) {
         warnings.push(`Ein Spieler ohne Gruppe: ${lone.name ?? "?"} (setzt diese Runde aus)`);
       }
     } else if (format === "matchplay") {
-      const res = makeMatchplayGroupsAvoidingRepeats(players as PlayerRow[], groupSize, pairCounts);
+      // Nur bei 1vs1 ist die Bye-Fairness relevant.
+      const res = makeMatchplayGroupsAvoidingRepeats(
+        players as PlayerRow[],
+        groupSize,
+        pairCounts,
+        groupSize === 2 ? byeCounts : undefined
+      );
       groups = res.groups;
       if (res.lone) warnings.push(`Ein Spieler ohne Gruppe: ${res.lone.name ?? "?"} (setzt diese Runde aus)`);
     } else {
@@ -576,24 +651,18 @@ export async function POST(req: Request) {
     );
   }
 
-  // --- Startreihenfolge "nach letzter Runde" ist nur sinnvoll, wenn
-  // (a) diese Runde genau 1 Match erzeugt UND
-  // (b) die letzte Runde ebenfalls genau 1 Match hatte.
   const singleMatchThisRound = plannedGroups.length === 1;
   let effectiveStartOrderMode: StartOrderMode = startOrderMode;
 
-  // Map: player_id -> position in letzter Runde (1=best, höher=schlechter)
   const lastRoundPosByPlayerId = new Map<string, number | null>();
 
   if (startOrderMode === "last_round_asc") {
-    // letzte Runde bestimmen
     const lastRound = (rounds ?? []).reduce(
       (best: any | null, r: any) => (!best || (r.number ?? 0) > (best.number ?? 0) ? r : best),
       null
     );
     const lastRoundId = lastRound?.id as string | undefined;
 
-    // Wie viele Matches hatte die letzte Runde?
     const lastRoundMatchIds = lastRoundId
       ? (matches ?? []).filter((m: any) => m.round_id === lastRoundId).map((m: any) => m.id)
       : [];
@@ -606,7 +675,6 @@ export async function POST(req: Request) {
         "Start-Reihenfolge 'Schlechtester zuerst (nach letzter Runde)' ist nur möglich, wenn pro Runde genau ein Match existiert. Es wird zufällig sortiert."
       );
     } else {
-      // Positionen aus der letzten Runde einsammeln
       const lastMatchId = lastRoundMatchIds[0];
       for (const mp of matchPlayers ?? []) {
         if (mp.match_id !== lastMatchId) continue;
@@ -615,7 +683,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // Maschinen-Historie pro Spieler laden
   const { data: hist } = await sb
     .from("match_players")
     .select("player_id, matches(machine_id)")
@@ -639,7 +706,6 @@ export async function POST(req: Request) {
 
   const usedMachinesInRound = new Set<string>();
 
-  // Neue Runde anlegen (mit elo_enabled)
   const { data: newRound, error: roundErr } = await sb
     .from("rounds")
     .insert({
@@ -661,7 +727,6 @@ export async function POST(req: Request) {
 
   const roundId = newRound.id as string;
 
-  // 🔎 Bereits existierende Startwerte für das Turnier laden
   const { data: trExisting, error: trErr } = await sb
     .from("tournament_ratings")
     .select("profile_id")
@@ -678,7 +743,6 @@ export async function POST(req: Request) {
     (trExisting ?? []).map((r: any) => r.profile_id)
   );
 
-  // Für jede Gruppe: Match + Match-Players anlegen
   for (const planned of plannedGroups) {
     const group = planned.group;
     const teamByPlayerId = planned.teamByPlayerId;
@@ -688,7 +752,6 @@ export async function POST(req: Request) {
       .map((p: any) => p.profile_id)
       .filter(Boolean);
 
-    // Maschine wählen
     const machine = pickMachine(
       machines,
       usedByPlayer,
@@ -705,14 +768,12 @@ export async function POST(req: Request) {
 
     usedMachinesInRound.add(machine.id);
 
-    // Historie updaten für diese Runde
     for (const pid of playerIds) {
       if (!usedByPlayer[pid]) usedByPlayer[pid] = {};
       usedByPlayer[pid][machine.id] =
         (usedByPlayer[pid][machine.id] ?? 0) + 1;
     }
 
-    // Match anlegen
     const { data: match, error: matchErr } = await sb
       .from("matches")
       .insert({
@@ -735,7 +796,6 @@ export async function POST(req: Request) {
 
     const matchId = match.id as string;
 
-    // Startreihenfolge
     let playersInThisMatch = group.slice();
 
     if (effectiveStartOrderMode === "standings_asc") {
@@ -746,17 +806,14 @@ export async function POST(req: Request) {
         return String(b.name ?? "").localeCompare(String(a.name ?? ""));
       });
     } else if (effectiveStartOrderMode === "last_round_asc") {
-      // Nur sinnvoll bei genau 1 Match pro Runde (siehe Checks oben).
       playersInThisMatch.sort((a: any, b: any) => {
         const pa = lastRoundPosByPlayerId.get(a.id) ?? null;
         const pb = lastRoundPosByPlayerId.get(b.id) ?? null;
 
-        // Spieler ohne Position (z.B. kein Ergebnis) ans Ende
         if (pa == null && pb == null) return a.name.localeCompare(b.name);
         if (pa == null) return 1;
         if (pb == null) return -1;
 
-        // schlechter (höhere Zahl) zuerst
         if (pa !== pb) return pb - pa;
         return a.name.localeCompare(b.name);
       });
@@ -764,16 +821,27 @@ export async function POST(req: Request) {
       playersInThisMatch = shuffle(playersInThisMatch);
     }
 
+    const isDypMatch = format === "dyp_round_robin" && group.length === 4;
+
+    const effectiveTeamByPlayerId: Record<string, 1 | 2> | undefined = isDypMatch
+      ? ((teamByPlayerId && Object.keys(teamByPlayerId).length > 0
+          ? (teamByPlayerId as any)
+          : ({
+              [group[0]?.id]: 1,
+              [group[1]?.id]: 1,
+              [group[2]?.id]: 2,
+              [group[3]?.id]: 2,
+            } as any)) as any)
+      : undefined;
+
     const mpsToInsert = playersInThisMatch.map((p: any, idx: number) => ({
       match_id: matchId,
       player_id: p.id,
       position: null,
       start_position: idx + 1,
-      // 👇 DYP: Teamzuordnung in match_players speichern
-      team: teamByPlayerId ? (teamByPlayerId[p.id] ?? null) : null,
+      team: effectiveTeamByPlayerId ? (effectiveTeamByPlayerId[p.id] ?? null) : null,
     }));
 
-    // ⭐ Startwerte nur für Profile eintragen, die noch keinen Eintrag haben
     const newProfileIds = playerProfileIds.filter(
       (pid: string) => !existingTrProfiles.has(pid)
     );
@@ -812,7 +880,6 @@ export async function POST(req: Request) {
     }
   }
 
-  // current_round aktualisieren
   await sb
     .from("tournaments")
     .update({ current_round: nextRoundNumber })
@@ -823,6 +890,11 @@ export async function POST(req: Request) {
     warnings,
     round_number: nextRoundNumber,
     startOrderMode,
-    effectiveStartOrderMode, // ✅ NEU (Debug)
+    effectiveStartOrderMode,
+    // ✅✅✅ NEU: Debug, damit wir sofort sehen, ob DYP wirklich aktiv war
+    tournament_format: tournamentFormat,
+    requested_format: requestedFormat,
+    effective_format: format,
   });
 }
+

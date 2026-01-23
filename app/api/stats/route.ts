@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const sb = supabaseAdmin();
   const { data: t } = await sb
     .from("tournaments")
-    .select("id")
+    .select("id, format, match_size")
     .eq("code", code)
     .single();
   if (!t)
@@ -46,6 +46,7 @@ const [
   { data: mpsRaw },
   { data: ratingRows },
   { data: trRows }, // ✅ NEU: tournament_results rows
+  { data: rounds }, // ✅ NEU: rounds für Progress-Bars
 ] = await Promise.all([
       sb
         .from("players")
@@ -76,6 +77,10 @@ const [
         sb.from("tournament_results")
           .select("player_id, tournament_points")
           .eq("tournament_id", t.id),
+sb
+  .from("rounds")
+  .select("id, number, status, format")
+  .eq("tournament_id", t.id),
     ]);
 
 
@@ -275,5 +280,10 @@ const rows = (players ?? []).map((p: any) => {
       b.points - a.points || b.wins - a.wins || a.name.localeCompare(b.name)
   );
 
-  return NextResponse.json({ stats: rows });
+  return NextResponse.json({
+    stats: rows,
+    tournament: { id: t.id, format: (t as any).format ?? null, match_size: (t as any).match_size ?? null },
+    playersCount: (players ?? []).length,
+    rounds: (rounds ?? []),
+  });
 }

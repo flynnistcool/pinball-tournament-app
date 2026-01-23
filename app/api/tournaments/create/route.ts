@@ -9,15 +9,20 @@ export async function POST(req: Request) {
 
   const rawFormat = String(body.format ?? "matchplay");
   const format =
-    rawFormat === "swiss" || rawFormat === "round_robin" ? rawFormat : "matchplay";
+    rawFormat === "swiss" || rawFormat === "round_robin" || rawFormat === "dyp_round_robin"
+      ? rawFormat
+      : "matchplay";
 
   const categoryValue = body.category != null ? String(body.category).trim() : "";
   const category = categoryValue.length > 0 ? categoryValue : null;
 
   const matchSizeRaw = Number(body.matchSize ?? body.match_size ?? 4);
-  const match_size: 2 | 3 | 4 = ([2, 3, 4] as const).includes(matchSizeRaw as any)
+  let match_size: 2 | 3 | 4 = ([2, 3, 4] as const).includes(matchSizeRaw as any)
     ? (matchSizeRaw as 2 | 3 | 4)
     : 4;
+
+  // DYP 2v2: 4 Spieler pro Match (2 Teams à 2 Spieler)
+  if (format === "dyp_round_robin") match_size = 4;
 
   const templateTournamentId = body.templateTournamentId ? String(body.templateTournamentId) : null;
   const locationId = body.locationId ? String(body.locationId) : null;
