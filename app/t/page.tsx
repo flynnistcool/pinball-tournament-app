@@ -814,8 +814,8 @@ function MatchPlacementLeaderboard() {
   const [sortKey, setSortKey] = useState<SortKey>("matches");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   */}
-  const [sortKey, setSortKey] = useState<SortKey>("avgPosition");
-  const [sortDir, setSortDir] = useState<SortDir>("asc"); // kleiner Ø-Platz = besser
+  const [sortKey, setSortKey] = useState<SortKey>("winrate");
+  const [sortDir, setSortDir] = useState<SortDir>("dsc"); // kleiner Ø-Platz = besser
 
   // 👇 welcher Spieler ist aufgeklappt?
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
