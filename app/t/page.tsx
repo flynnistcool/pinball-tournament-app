@@ -6259,6 +6259,41 @@ export default function AdminHome() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
 
+
+  const [showBottomBar, setShowBottomBar] = useState(true);
+
+useEffect(() => {
+  let raf = 0;
+
+  function onScroll() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const scrollY = window.scrollY || 0;
+      const vh = window.innerHeight || 0;
+      const docH = document.documentElement.scrollHeight || 0;
+
+      // minimal gescrollt -> zeigen
+      if (scrollY > 8) {
+        setShowBottomBar(true);
+        return;
+      }
+
+      // nahe Seitenende -> ausblenden
+      const nearBottom = scrollY + vh >= docH - 8;
+      setShowBottomBar(!nearBottom);
+    });
+  }
+
+  onScroll();
+  window.addEventListener("scroll", onScroll, { passive: true });
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("scroll", onScroll);
+  };
+}, []);
+
+
+
 useEffect(() => {
   async function loadRole() {
     try {
@@ -6414,6 +6449,7 @@ async function loadArchive() {
     setArchive([]);
   }
 }
+
 
 
 
@@ -7162,6 +7198,50 @@ function RefreshBadge({
 
 
 function Dashboard({ code, name, isAdmin }: { code: string; name: string; isAdmin: boolean }) {
+  // Bottom menu: hidden when idle, shows on scroll, hides again after a short pause.
+  const [showBottomBar, setShowBottomBar] = useState(false);
+  const bottomBarHideTimerRef = useRef<any>(null);
+
+
+useEffect(() => {
+  // Hidden when idle, shown on interaction (scroll / touch / mouse move),
+  // then hides again after a short pause.
+  function revealTemporarily() {
+    setShowBottomBar(true);
+    if (bottomBarHideTimerRef.current) clearTimeout(bottomBarHideTimerRef.current);
+    bottomBarHideTimerRef.current = setTimeout(() => {
+      setShowBottomBar(false);
+    }, 1400);
+  }
+
+  // Start hidden (page is "standing")
+  setShowBottomBar(false);
+
+  const opts: AddEventListenerOptions = { passive: true };
+
+  window.addEventListener("scroll", revealTemporarily, opts);
+  window.addEventListener("wheel", revealTemporarily, opts);
+  window.addEventListener("touchstart", revealTemporarily, opts);
+  window.addEventListener("touchmove", revealTemporarily, opts);
+  window.addEventListener("mousemove", revealTemporarily, opts);
+  window.addEventListener("pointermove", revealTemporarily, opts);
+
+  // keyboard navigation should also reveal it
+  window.addEventListener("keydown", revealTemporarily);
+
+  return () => {
+    window.removeEventListener("scroll", revealTemporarily);
+    window.removeEventListener("wheel", revealTemporarily);
+    window.removeEventListener("touchstart", revealTemporarily);
+    window.removeEventListener("touchmove", revealTemporarily);
+    window.removeEventListener("mousemove", revealTemporarily);
+    window.removeEventListener("pointermove", revealTemporarily);
+    window.removeEventListener("keydown", revealTemporarily);
+
+    if (bottomBarHideTimerRef.current) clearTimeout(bottomBarHideTimerRef.current);
+  };
+}, []);
+
   const [data, setData] = useState<any>(null);
   const rounds = data?.rounds ?? [];
 
@@ -9584,12 +9664,15 @@ const machinesInfoById = useMemo(
   </CardBody>
 </Card>
 
-</div>
-
-
-
-
-      <div className="sticky bottom-0 left-0 right-0 bg-[rgb(250,250,250)] p-3 sm:p-4 flex gap-2 z-20 text-xs sm:text-sm">
+<div
+  className={`fixed bottom-0 left-1/2 -translate-x-1/2 z-50
+    w-full max-w-[990px]
+    transition-transform duration-200
+    ${showBottomBar ? "translate-y-0" : "translate-y-full"}
+  `}
+>
+  <div className="px-3 sm:px-4">
+    <div className="bg-[rgb(250,250,250)] p-3 sm:p-4 flex gap-2 rounded-t-2xl shadow-[0_-6px_20px_rgba(0,0,0,0.12)]">
 
         <Button
           disabled={
@@ -9671,7 +9754,10 @@ const machinesInfoById = useMemo(
   >
     🔥 Highscores
   </Button>
-      </div>
     </div>
+  </div>
+</div>
+</div>
+</div>
   );
 }
