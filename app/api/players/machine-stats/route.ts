@@ -9,6 +9,7 @@ type Row = {
   position: number | null;
   matches: {
     id: string;
+    created_at?: string | null;
     machine_id: string | null;
     machines: {
       id: string;
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
         position,
         matches!inner(
           id,
+          created_at,
           machine_id,
           machines(
             id,
@@ -95,69 +97,113 @@ export async function POST(req: Request) {
     const rows = (data ?? []) as Row[];
 
 
-// Aggregation pro (locationName + machineName)
-const map: Record<
-  string,
-  {
-    locationName: string | null;
-    machineName: string | null;
-    matchesPlayed: number;
-    wins: number;
-    posSum: number;
-    posCount: number;
-  }
-> = {};
+    // Aggregation pro (LocationNameNormalized + MachineNameNormalized)
+    // Warum so?
+    // - Vor der Sparkline hattest du "Maschine + Location" praktisch über die NAMEN aggregiert.
+    // - In deiner DB können (oder konnten) mehrere location_id die gleiche location.name haben.
+    //   Wenn wir über location_id gruppieren, sieht man dann "doppelte" Einträge.
+    // - Darum: wir machen es wie vorher – aber robust (trim + whitespace + lowercase).
+    const norm = (s: any) => String(s ?? "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
 
-for (const r of rows) {
-  const match = r.matches;
-  const machineName = match?.machines?.name ?? null;
+    const map: Record<
+      string,
+      {
+        locationId: string | null;
+        locationName: string | null;
+        machineId: string | null;
+        machineName: string;
+        matchesPlayed: number;
+        wins: number;
+        posSum: number;
+        posCount: number;
+        // Sparkline: cumulative Winrate (0–1) pro Match in Zeit-Reihenfolge
+        timeline: { t: number; win: number }[];
+      }
+    > = {};
 
-  // Location (wenn vorhanden)
-  const locationName =
-    match?.rounds?.tournaments?.locations?.name ??
-    match?.rounds?.tournaments?.locations?.name ??
-    null;
+    for (const r of rows) {
+      const match = r.matches;
+      const machineNameRaw = match?.machines?.name ?? "";
+      const machineName = String(machineNameRaw ?? "").trim();
+      if (!machineName) continue;
 
-  // Wenn keine Maschinenbezeichnung vorhanden ist, skip
-  if (!machineName) continue;
+      const locationId = match?.rounds?.tournaments?.location_id ?? null;
+      const locationNameRaw = match?.rounds?.tournaments?.locations?.name ?? "Unbekannt";
+      const locationName = String(locationNameRaw ?? "").trim() || "Unbekannt";
 
-  // Key: Location + MachineName (damit gleiche Namen zusammengefasst werden)
-  const key = `${locationName ?? "Unbekannt"}__${machineName}`;
+      const key = `${norm(locationName)}__${norm(machineName)}`;
 
-  if (!map[key]) {
-    map[key] = {
-      locationName: locationName ?? null,
-      machineName,
-      matchesPlayed: 0,
-      wins: 0,
-      posSum: 0,
-      posCount: 0,
-    };
-  }
+      if (!map[key]) {
+        map[key] = {
+          locationId,
+          locationName,
+          // machineId ist hier NICHT die Gruppierung (kann wechseln). Wir geben den zuletzt gesehenen mit.
+          machineId: match?.machines?.id ?? match?.machine_id ?? null,
+          machineName,
+          matchesPlayed: 0,
+          wins: 0,
+          posSum: 0,
+          posCount: 0,
+          timeline: [],
+        };
+      } else {
+        // falls wir später einen besseren Namen/LocationName sehen
+        if (!map[key].locationName && locationName) map[key].locationName = locationName;
+        // keep a representative machineId
+        if (!map[key].machineId && (match?.machines?.id || match?.machine_id)) {
+          map[key].machineId = match?.machines?.id ?? match?.machine_id ?? null;
+        }
+      }
 
-  map[key].matchesPlayed += 1;
+      map[key].matchesPlayed += 1;
 
-  const pos = typeof r.position === "number" ? r.position : null;
-  if (pos != null) {
-    map[key].posSum += pos;
-    map[key].posCount += 1;
-    if (pos === 1) map[key].wins += 1;
-  }
-}
+      const pos = typeof r.position === "number" ? r.position : null;
+      if (pos != null) {
+        map[key].posSum += pos;
+        map[key].posCount += 1;
+        if (pos === 1) map[key].wins += 1;
+      }
 
-const machines = Object.values(map)
-  .map((x) => ({
-    locationId: null,
-    locationName: x.locationName,
-    machineId: null,
-    machineName: x.machineName,
-    matchesPlayed: x.matchesPlayed,
-    wins: x.wins,
-    // ✅ UI erwartet 0–1
-    winRate: x.matchesPlayed > 0 ? x.wins / x.matchesPlayed : null,
-    avgPosition: x.posCount > 0 ? x.posSum / x.posCount : null,
-  }))
-  .sort((a, b) => (b.matchesPlayed ?? 0) - (a.matchesPlayed ?? 0));
+      // Sparkline-Punkt: pro gespieltem Match (wenn position vorhanden)
+      if (pos != null) {
+        const t = match?.created_at ? new Date(match.created_at as any).getTime() : 0;
+        map[key].timeline.push({ t, win: pos === 1 ? 1 : 0 });
+      }
+    }
+
+    const machines = Object.values(map)
+      .map((x) => {
+        // timeline sortieren
+        const tl = (x.timeline ?? []).slice().sort((a, b) => (a.t || 0) - (b.t || 0));
+        let w = 0;
+        let n = 0;
+        const winRateSeries: number[] = [];
+        for (const p of tl) {
+          n += 1;
+          w += p.win ? 1 : 0;
+          winRateSeries.push(n > 0 ? w / n : 0);
+        }
+        // auf max 30 Punkte begrenzen (UI)
+        const series = winRateSeries.length > 30 ? winRateSeries.slice(-30) : winRateSeries;
+
+        return {
+          locationId: x.locationId,
+          locationName: x.locationName,
+          machineId: x.machineId,
+          machineName: x.machineName,
+          matchesPlayed: x.matchesPlayed,
+          wins: x.wins,
+          // ✅ UI erwartet 0–1
+          winRate: x.matchesPlayed > 0 ? x.wins / x.matchesPlayed : null,
+          avgPosition: x.posCount > 0 ? x.posSum / x.posCount : null,
+          // 🆕 Sparkline
+          winRateSeries: series,
+        };
+      })
+      .sort((a, b) => (b.matchesPlayed ?? 0) - (a.matchesPlayed ?? 0));
 
 
     return new NextResponse(JSON.stringify({ machines }), {

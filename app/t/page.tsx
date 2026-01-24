@@ -696,6 +696,13 @@ function MachinesList({
   const active = (machines ?? []).filter((m) => m.active);
   const inactive = (machines ?? []).filter((m) => !m.active);
 
+
+  // ✅ max Nutzung für Balken-Skalierung (mind. 1, damit wir nicht durch 0 teilen)
+  const maxUsedCount = Math.max(
+    1,
+    ...((machines ?? []).map((m) => usageCounts?.[String(m.id)] ?? 0))
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -709,7 +716,8 @@ function MachinesList({
       <CardBody>
         <div className="space-y-2">
 {(machines ?? []).map((m) => {
-  const count = usageCounts[m.id] ?? 0;
+  const count = usageCounts?.[String(m.id)] ?? 0;
+  const pct = Math.round((count / maxUsedCount) * 100);
 
   return (
     <div
@@ -720,14 +728,23 @@ function MachinesList({
       <div className="flex items-center gap-3">
         <MachineIcon name={m.name} emoji={m.icon_emoji} />
 
-        <div className="flex flex-col">
-          <div className="text-base font-medium">{m.name}</div>
-          {count > 0 && (
-            <div className="text-xs text-neutral-500">
+        <div className="flex flex-col min-w-0">
+          <div className="text-base font-medium truncate">{m.name}</div>
+          <div className="mt-1 flex items-center gap-2">
+            <div className="text-xs text-neutral-500 whitespace-nowrap">
               {count}× im Turnier verwendet
             </div>
-          )}
+          </div>
         </div>
+
+                    {/* Usage-Bar */}
+            <div className="h-2 w-40 rounded-full bg-neutral-100 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-neutral-400/70"
+                style={{ width: `${pct}%` }}
+                aria-label={`${count}× verwendet`}
+              />
+            </div>
       </div>
 
       {/* RECHTS: dein bestehender aktiv/inaktiv-Button bleibt unverändert */}
@@ -3810,16 +3827,20 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                     )}
 
                     {/* Spieler + Elo-Infos */}
-                    <div className="col-span-7 sm:col-span-5 flex items-center justify-between gap-2 sm:gap-4 min-w-0">
+                    <div className="col-span-7 sm:col-span-5 flex items-center justify-between gap-2 sm:gap-4min-w-0">
                       <div className="min-w-0">
+                        <span className="mt-6">
                         <PlayerPill
+                        
                           player={{
                             name: r.name,
                             color: r.color ?? null,
                             icon: r.icon ?? null,
                             avatarUrl: r.avatarUrl ?? null,
                           }}
+                          
                         />
+                        </span>
                       </div>
 
                       {/* Elo/TP rechts: auf Mobile ausblenden */}
@@ -3828,8 +3849,8 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                           {/* LEFT: ELO BLOCK */}
                           <div className="rounded-xl">
                             <div className="flex items-center justify-between">
-                              <span className="ml-2 inline-flex font-semibold items-center rounded-full bg-neutral-100 px-3 py-1 text-xs">
-                                <span className="text-[14px] mr-2 text-neutral-700">
+                              <span className="ml-2 inline-flex font-semibold items-center rounded-full bg-neutral-100 px-3 py-1 text-[12px]">
+                                <span className="text-[12px] mr-2 text-neutral-700">
                                   Elo{" "}
                                 </span>{" "}
                                 {r.eloEnd != null ? Math.round(r.eloEnd) : "—"}
@@ -3837,7 +3858,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                             </div>
 
                             {/* detail row */}
-                            <div className="mt-0.5 text-[12px] tabular-nums text-neutral-600">
+                            <div className="mt-0.5 text-[11px] tabular-nums text-neutral-600">
                               {r.eloStart != null && r.eloEnd != null ? (
                                 <>
                                   {Math.round(r.eloStart)}{" "}
@@ -3850,8 +3871,8 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                                     const sign = delta > 0 ? "+" : "";
                                     const cls =
                                       delta > 0
-                                        ? "ml-2 font-semibold text-[13px] text-emerald-600"
-                                        : "ml-2 font-semibold text-[13px] text-red-600";
+                                        ? "ml-2 font-semibold text-[12px] text-emerald-600"
+                                        : "ml-2 font-semibold text-[12px] text-red-600";
                                     return (
                                       <span className={cls}>
                                         ({sign}
@@ -3868,7 +3889,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
 
                           {/* RIGHT: TP BLOCK */}
                           {Number(r.tournamentPoints ?? 0) > 0 && (
-                            <div className="ml-2 inline-flex font-semibold items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm">
+                            <div className="ml-2 mt-2 inline-flex font-semibold items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-sm">
                               <div className="justify-between">
                                 <span className="text-[11px] font-semibold text-amber-800">
                                   Turnierwertung
@@ -4688,6 +4709,22 @@ function RoundMatchesCard({
   return map;
 }, [matches]);
 
+  // ================================
+  // Winrate / M-Winrate (für Anzeige direkt im Match links)
+  // ================================
+  const [tWinrateByPlayerId, setTWinrateByPlayerId] = useState<Record<string, number | null>>({});
+  const [mWinrateByKey, setMWinrateByKey] = useState<Record<string, { winrate: number | null; matchesPlayed: number }>>({});
+  const [winrateLoading, setWinrateLoading] = useState(false);
+  const mwrHasLoadedOnceLeft = useRef(false);
+
+  const locationId = tournament?.location_id ? String(tournament.location_id) : "";
+
+  function fmtPct(v: number | null | undefined) {
+    if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+    return `${v.toFixed(1)}%`;
+  }
+
+
 
   // Transition-basiert (Variante A):
 // Nur dann automatisch einklappen, wenn wir *live* sehen,
@@ -5056,6 +5093,160 @@ async function autoAssignPositionsByExplicitScores(
     return out;
   }, [matchPlayers]);
 
+  const openMatches = useMemo(() => {
+    const rid = openRoundId ? String(openRoundId) : "";
+    if (!rid) return [] as Match[];
+    return matchesByRound?.[rid] ?? [];
+  }, [openRoundId, matchesByRound]);
+
+  const winrateSignature = useMemo(() => {
+    const rid = openRoundId ? String(openRoundId) : "";
+    if (!rid) return "";
+
+    const matchSig = (openMatches ?? [])
+      .map((m: any) => `${String(m?.id ?? "")}:${String(m?.machine_id ?? "")}:${String(m?.status ?? "")}`)
+      .sort()
+      .join("|");
+
+    const matchIds = new Set((openMatches ?? []).map((m: any) => String(m?.id ?? "")));
+    const mpSig = (matchPlayers ?? [])
+      .filter((mp: any) => matchIds.has(String(mp?.match_id ?? "")))
+      .map((mp: any) => `${String(mp?.match_id ?? "")}:${String(mp?.player_id ?? "")}:${String(mp?.start_position ?? "")}`)
+      .sort()
+      .join("|");
+
+    return `${rid}__${matchSig}__${mpSig}`;
+  }, [openRoundId, openMatches, matchPlayers]);
+
+  const reloadWinratesLeft = useCallback(
+    async (showSpinner: boolean) => {
+      if (!code) {
+        setTWinrateByPlayerId({});
+        setMWinrateByKey({});
+        return;
+      }
+
+      // Spinner nur beim ersten Laden oder bei manuellem Reload zeigen
+      if (showSpinner || !mwrHasLoadedOnceLeft.current) setWinrateLoading(true);
+
+      try {
+        // 1) Turnier-Winrate aus /api/stats
+        try {
+          const res = await fetch(`/api/stats?_ts=${Date.now()}`, {
+            method: "POST",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            body: JSON.stringify({ code, _ts: Date.now() }),
+          });
+          const j = await res.json().catch(() => ({}));
+          const rows = Array.isArray(j?.stats) ? j.stats : [];
+// ⚠️ WICHTIG:
+// /api/stats liefert die "live" Turnier-Winrate pro *player_id*.
+// Für die Anzeige im Match (links) greifen wir aber über playersById[player_id].profile_id zu.
+// Deshalb bauen wir hier eine Map: profileId -> winrate.
+const map: Record<string, number | null> = {};
+
+for (const r of rows) {
+  // player_id kann in der API mal als "id" oder "player_id" kommen
+  const playerId = r?.player_id ? String(r.player_id) : (r?.id ? String(r.id) : "");
+  if (!playerId) continue;
+
+  const profileId =
+    playersById?.[playerId]?.profile_id ? String(playersById[playerId].profile_id) :
+    (r?.profileId ? String(r.profileId) : (r?.profile_id ? String(r.profile_id) : ""));
+
+  if (!profileId) continue;
+
+  map[profileId] = typeof r?.winrate === "number" ? r.winrate : null;
+}
+
+setTWinrateByPlayerId(map);
+
+        } catch {
+          setTWinrateByPlayerId({});
+        }
+
+        // 2) M-Winrate (profile_id + machineName + location_id)
+        if (!locationId || (openMatches ?? []).length === 0) {
+          setMWinrateByKey({});
+          return;
+        }
+
+        const machineNames = Array.from(
+          new Set(
+            (openMatches ?? [])
+              .map((m: any) => {
+                const mid = String(m?.machine_id ?? "");
+                const name = machinesInfoById?.[mid]?.name;
+                return name ? String(name) : "";
+              })
+              .filter(Boolean)
+          )
+        );
+
+        const matchIds = new Set((openMatches ?? []).map((m: any) => String(m?.id ?? "")));
+        const mpInRound = (matchPlayers ?? []).filter((mp: any) => matchIds.has(String(mp?.match_id ?? "")));
+
+        const profileIds = Array.from(
+          new Set(
+            mpInRound
+              .map((mp: any) => {
+                const pid = String(mp?.player_id ?? "");
+                const pl = playersById?.[pid];
+                return pl?.profile_id ? String(pl.profile_id) : "";
+              })
+              .filter(Boolean)
+          )
+        );
+
+        if (machineNames.length === 0 || profileIds.length === 0) {
+          setMWinrateByKey({});
+          return;
+        }
+
+        try {
+          const res = await fetch(`/api/winrates/machine-location?_ts=${Date.now()}`, {
+            method: "POST",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            body: JSON.stringify({ locationId, profileIds, machineNames, _ts: Date.now() }),
+          });
+          const j = await res.json().catch(() => ({}));
+          const rows = Array.isArray(j?.rows) ? j.rows : [];
+
+          const map: Record<string, { winrate: number | null; matchesPlayed: number }> = {};
+          for (const r of rows) {
+            const p = r?.profileId ? String(r.profileId) : "";
+            const mn = r?.machineName ? String(r.machineName) : "";
+            if (!p || !mn) continue;
+            const key = `${p}__${mn}__${locationId}`;
+            map[key] = {
+              winrate: typeof r?.winrate === "number" ? r.winrate : null,
+              matchesPlayed: typeof r?.matchesPlayed === "number" ? r.matchesPlayed : Number(r?.matches_played ?? 0) || 0,
+            };
+          }
+          setMWinrateByKey(map);
+          mwrHasLoadedOnceLeft.current = true;
+        } catch {
+          setMWinrateByKey({});
+        }
+      } finally {
+        setWinrateLoading(false);
+      }
+    },
+    [code, locationId, openMatches, matchPlayers, playersById, machinesInfoById]
+  );
+
+  const lastWinrateSigRef = useRef<string>("");
+  useEffect(() => {
+    // nur reloaden wenn sich wirklich etwas geändert hat (Runde / Matchstatus / Maschine / Spieler)
+    if (!winrateSignature) return;
+    if (lastWinrateSigRef.current === winrateSignature) return;
+    lastWinrateSigRef.current = winrateSignature;
+    reloadWinratesLeft(false);
+  }, [winrateSignature, reloadWinratesLeft]);
+
+
 
     // ✅ Wie oft wurde diese Spieler-Kombination schon gespielt (egal ob 1v1 / 3er / 4er …)?
     // Wir zählen nur Matches, die bereits ein Ergebnis haben.
@@ -5323,7 +5514,7 @@ return (
     <CardHeader>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-semibold">Runden & Matches</div>
-        <div className="text-sm text-neutral-500">
+        <div className="text-[12px] text-neutral-500">
           Zum Öffnen auf eine Runde klicken
           {locked ? " • Turnier beendet (read-only)" : ""}
         </div>
@@ -5335,28 +5526,45 @@ return (
           <div className="col-span-1">#</div>
           <div className="col-span-3">Format</div>
           <div className="col-span-2">Status</div>
-          <div className="col-span-4 text-center">Sieger</div>
+          <div className="col-span-4 text-center">Sieger (Maschine)</div>
           <div className="col-span-2 text-right">Spiele</div>
         </div>
 
         {rounds
+
+
+
+
+
           .slice()
           .sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0))
           .map((r: any) => {
             const ms = matchesByRound[r.id] ?? [];
             const isOpen = openRoundId === r.id;
 
-            const winnerNames = Array.from(
-            new Set(
-              ms.flatMap((m: any) =>
-                (mpByMatch[m.id] ?? [])
-                  .filter((p: any) => p.position === 1)
-                  .map((p: any) => playersById[p.player_id]?.name ?? "—")
-              )
-            )
-          ).filter((n) => n && n !== "—");
+// ✅ Sieger-Text pro Match inkl. Maschine (genau wie im aufgeklappten Match)
+const winnersText = (() => {
+  // nur bei finished anzeigen (sonst verwirrt’s)
+  if (r.status !== "finished") return "—";
+  if (!ms.length) return "—";
 
-          const winnersText = winnerNames.length ? winnerNames.join(", ") : "—";
+  return ms
+    .map((m: any) => {
+      const machineName =
+        machinesInfoById?.[String(m.machine_id)]?.name ?? "Maschine";
+
+      // alle Erstplatzierten (bei Team/DYP können das mehrere sein)
+      const winners = (mpByMatch[m.id] ?? [])
+        .filter((p: any) => p.position === 1)
+        .map((p: any) => playersById[p.player_id]?.name ?? "—")
+        .filter((n: any) => n && n !== "—");
+
+      const winnerLabel = winners.length ? winners.join(" + ") : "—";
+      return `${winnerLabel} (${machineName})`;
+    })
+    .join(" • ");
+})();
+
 
 
             return (
@@ -5556,7 +5764,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                     {/* Maschinen-Dropdown */}
                                     <Select
                                       value={m.machine_id ?? ""}
-                                      className="rounded-lg px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
+                                      className="rounded-lg h-8 max-h-8 w--[130px] max-w-[130px]  px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
                                       
                                       disabled={
                                         locked || hasResults || savingMachine[m.id]
@@ -5590,17 +5798,20 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
 
 
 
-                                <div className="text-xs text-neutral-500 whitespace-nowrap">
+                                <div className="font-semibold text-[11px] text-neutral-500 whitespace-nowrap">
                                   {savingMachine[m.id] ? (
                                     "speichere…"
                                   ) : m.machine_id ? (
                                     <>
-                                      <span className="font-semibold text-[11px]  text-blue-500">{machineUsageCounts[m.machine_id] ?? 0} x</span> im Turnier verwendet
+                                      Flipper: <span className="font-semibold text-[11px]  text-blue-500">{machineUsageCounts[m.machine_id] ?? 0} x</span> im Turnier
                                     </>
                                   ) : (
-                                    <><span className="font-semibold text-[11px] text-blue-500">0 x</span> im Turnier verwendet</>
+                                    <>Flipper: <span className="font-semibold text-[11px] text-blue-500">0 x</span> im Turnier verwendet</>
+                                    
                                   )}
-
+                                  <div className="font-semibold text-[11px] text-neutral-500">
+                                    Paarung: <span className="font-semibold text-blue-500">{playedCount + 1} × </span>im Turnier
+                                  </div>
 
                                   
                                 </div>
@@ -5620,9 +5831,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                   </div>
 
 
-                                  <div className="text-[11px] font-normal text-neutral-500">
-                                    Diese Spieler sind schon zum <span className="font-semibold text-blue-500">{playedCount + 1} × </span>im Turnier aufeinandergetroffen.
-                                  </div>
+
 
 
                                 </div>
@@ -5630,9 +5839,23 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                 {/* Rechte Seite: Match-ID / Speichern-Status */}
                                 <div className="text-xs text-neutral-500 whitespace-nowrap">
                                    {displayNo ? (
-                                      <span className="font-semibold text-neutral-500 whitespace-nowrap">
-                                        Spiel {displayNo}
-                                      </span>
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="font-semibold text-neutral-500 whitespace-nowrap">
+                                          Spiel {displayNo}
+                                        </span>
+
+                                        {/* OCR Button (öffnet weiterhin das Panel unten) */}
+                                        <label
+                                          htmlFor={`ocr-${m.id}`}
+                                          className={[
+                                            "inline-flex items-center justify-center rounded-xl px-2 py-1 text-xs font-semibold",
+                                            "border bg-black text-white cursor-pointer select-none",
+                                            (locked || ocrByMatch[m.id]?.busy) ? "opacity-50 pointer-events-none" : "",
+                                          ].join(" ")}
+                                        >
+                                          📷 OCR
+                                        </label>
+                                      </div>
                                     ) : null}
                                     <div className="text-xs text-neutral-500 whitespace-nowrap">
                                    {m.game_number ? (
@@ -5678,19 +5901,8 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                                 }}
                                               />
 
-                                              {/* Sichtbarer Button: klickt eigentlich den Input an */}
-                                              <label
-                                                htmlFor={`ocr-${m.id}`}
-                                                className={[
-                                                  "inline-flex items-center justify-center rounded-xl px-2 py-1 text-xs font-semibold",
-                                                  "border bg-black text-white cursor-pointer select-none",
-                                                  (locked || ocrByMatch[m.id]?.busy) ? "opacity-50 pointer-events-none" : "",
-                                                ].join(" ")}
-                                              >
-                                                📷 OCR
-                                              </label>
-
-                                              {/* Optional: kleiner Status rechts daneben */}
+                                              
+{/* Optional: kleiner Status rechts daneben */}
                                               {ocrByMatch[m.id]?.busy ? (
                                                 <span className="text-xs text-neutral-500">OCR läuft…</span>
                                               ) : null}
@@ -5925,7 +6137,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                 }
               >
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-2 text-[10px]">
                     <PlayerPill player={playersById[team[0]?.player_id] ?? { name: "?" }} />
                     <Pill>/</Pill>
                     <PlayerPill player={playersById[team[1]?.player_id] ?? { name: "?" }} />
@@ -6028,29 +6240,134 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                 >
                   <div
                     className={
-                      "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-4 sm:py-3 " +
+                      "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-3 sm:py-2 " +
                       (isWinner ? "bg-amber-200 border-amber-300" : "bg-white")
                     }
                   >
-                    <div className="flex items-center gap-2">
-                      <PlayerPill
-                        player={
-                          playersById[mp.player_id] ?? {
-                            name: "Unbekannt",
-                          }
-                        }
-                      />
-                      {pos ? <Pill>#{pos}</Pill> : <Pill>—</Pill>}
-                      {isWinner ? <Pill>🏆 Sieger</Pill> : null}
-                      {isSaving ? (
-                        <span className="text-xs text-neutral-500">speichere…</span>
-                      ) : null}
-                    </div>
+                    
+<div className="flex flex-col min-w-0">
+  <div className="flex flex-col gap-0.5">
+  <div className="flex items-center gap-2 text-[14px]">
+    <PlayerPill
+      player={
+        playersById[mp.player_id] ?? {
+          name: "Unbekannt",
+        }
+      }
+    />
+    {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
+    {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
+    {isSaving ? (
+      <span className="text-xs text-neutral-500">speichere…</span>
+    ) : null}
+  </div>
 
-                    <div className="w-44 flex flex-col gap-1">
+	  {/* Winrate direkt im Match (links) */}
+	  <div className="pl-9 flex items-center gap-3 text-[11px] tabular-nums">
+	    {(() => {
+	      const pid = mp?.player_id ? String(mp.player_id) : "";
+	      const profileId =
+	        pid && playersById?.[pid]?.profile_id ? String(playersById[pid].profile_id) : "";
+
+	      const t = profileId ? (tWinrateByPlayerId?.[profileId] ?? null) : null;
+
+	      const machineName =
+	        machinesInfoById?.[String(m?.machine_id ?? "")]?.name
+	          ? String(machinesInfoById[String(m.machine_id)].name)
+	          : "";
+
+	      const key = profileId && machineName && locationId ? `${profileId}__${machineName}__${locationId}` : "";
+	      const mwr = key ? (mWinrateByKey?.[key] ?? null) : null;
+	      const mpCount = typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0;
+
+	      // ✅ Vergleich innerhalb DESSELBEN Matches: höchste Werte grün markieren (wie rechts)
+	      const getProfileId = (playerIdRaw: any) => {
+	        const p = playerIdRaw ? String(playerIdRaw) : "";
+	        return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
+	      };
+	
+	      const tVals: number[] = [];
+	      const mVals: number[] = [];
+	
+	      for (const other of mps ?? []) {
+	        const otherProfileId = getProfileId(other?.player_id);
+	        if (!otherProfileId) continue;
+	
+	        const ot = tWinrateByPlayerId?.[otherProfileId];
+	        if (typeof ot === "number" && Number.isFinite(ot)) tVals.push(ot);
+	
+	        if (machineName && locationId) {
+	          const oKey = `${otherProfileId}__${machineName}__${locationId}`;
+	          const omwr = mWinrateByKey?.[oKey];
+	          const ov = omwr?.winrate;
+	          if (typeof ov === "number" && Number.isFinite(ov)) mVals.push(ov);
+	        }
+	      }
+
+	      const maxT = tVals.length > 0 ? Math.max(...tVals) : null;
+	      const maxM = mVals.length > 0 ? Math.max(...mVals) : null;
+
+	      	      // Runde-Status ist in diesem Block nicht zuverlässig vorhanden.
+// Wir nehmen hier den Match-Status (wie rechts im Winrate-Kasten): Aktiv = nicht finished.
+const matchStatusRaw = String((m as any)?.status ?? "").toLowerCase();
+const isRoundActive = matchStatusRaw !== "finished";
+
+	      const tIsTop = typeof t === "number" && Number.isFinite(t) && typeof maxT === "number" && t === maxT;
+	      const mIsTop =
+	        typeof mwr?.winrate === "number" &&
+	        Number.isFinite(mwr.winrate) &&
+	        typeof maxM === "number" &&
+	        mwr.winrate === maxM;
+
+	      // ✅ Nur in aktiver Runde grün highlighten. Wenn finished: alles neutral.
+	      const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
+	      const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
+
+	      // ⭐ Favorit: nur in aktiver Runde.
+	      // Favorit ist der Spieler, der mehr "grüne Werte" hat (Winrate + M-Winrate). Bei Gleichstand: kein Icon.
+	      let isFavorite = false;
+	      if (isRoundActive) {
+	        const greenCountByProfile: Record<string, number> = {};
+	        for (const other of mps ?? []) {
+	          const otherProfileId = getProfileId(other?.player_id);
+	          if (!otherProfileId) continue;
+	          const ot = tWinrateByPlayerId?.[otherProfileId];
+	          const om = machineName && locationId ? mWinrateByKey?.[`${otherProfileId}__${machineName}__${locationId}`]?.winrate : null;
+	          const otIsTop = typeof ot === "number" && Number.isFinite(ot) && typeof maxT === "number" && ot === maxT;
+	          const omIsTop = typeof om === "number" && Number.isFinite(om) && typeof maxM === "number" && om === maxM;
+	          greenCountByProfile[otherProfileId] = (otIsTop ? 1 : 0) + (omIsTop ? 1 : 0);
+	        }
+	        const counts = Object.values(greenCountByProfile);
+	        const maxCount = counts.length ? Math.max(...counts) : 0;
+	        const winners = counts.filter((c) => c === maxCount).length;
+	        const myCount = profileId ? (greenCountByProfile[profileId] ?? 0) : 0;
+	        isFavorite = maxCount > 0 && winners === 1 && myCount === maxCount;
+	      }
+
+return (
+	        <>
+	          <span className="text-neutral-500">
+	            Turnier-Winrate <span className={tCls}>{fmtPct(t)}</span>
+	          </span>
+	          <span className="text-neutral-500">
+	            Flipper-Winrate <span className={mCls}>{fmtPct(mwr?.winrate)}</span>
+	            {mpCount > 0 ? ` (${mpCount})` : ""}
+	          </span>
+	          {isRoundActive && isFavorite ? (
+	            <span className="text-yellow-500 text-sm" title="Favorit">★</span>
+	          ) : null}
+	          {winrateLoading ? <span className="text-neutral-400">lädt…</span> : null}
+	        </>
+	      );
+	    })()}
+	  </div>
+</div>
+</div>
+
+                    <div className="flex flex-col gap-1">
                       <Select
                         value={pos ?? ""}
-                        className="rounded-lg px-3 py-2 text-xs sm:px-3 sm:py-2 sm:text-sm"
+                        className="rounded-lg h-8 max-h-8 w--[160px] max-w-[160px]  px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
                         disabled={locked}
                         onChange={async (e) => {
                           if (locked) return;
@@ -6150,7 +6467,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                           }
                           inputMode="numeric"
                           placeholder="0"
-                          className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
+                          className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 w--[115px] max-w-[115px]  text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
                           disabled={locked}
                           onChange={(e) => {
                             const raw = e.target.value;
@@ -9482,7 +9799,7 @@ const machinesInfoById = useMemo(
     <CardHeader>
       <div ref={tournamentPointsRef} />
       <div className="flex items-center justify-between gap-2">
-        <div className="font-semibold">🏆 Turnierpunkte ({tournament?.category ?? "—"})</div>
+        <div className="font-semibold">🏆 Turnierpunkte <span className="text-sm  font-snormal">({tournament?.category ?? "—"})</span></div>
         {/*<RefreshBadge refreshing={catRefreshing} lastUpdatedAt={lastCatUpdatedAt} />*/}
       </div>
     </CardHeader>

@@ -134,6 +134,8 @@ type MachineStat = {
   wins: number;
   winRate: number | null;
   avgPosition: number | null;
+  // 🆕 Sparkline: cumulative Winrate (0–1) über die Zeit (Maschine+Location)
+  winRateSeries?: number[];
 };
 
 type PlayerMachineBest = {
@@ -4309,12 +4311,13 @@ for (const ev of zoneEvents) {
                   
 <div className="flex items-center gap-2 font-medium">
   
-{idx < (rows?.length ?? 7) ? (
+{idx < 7 && (
+  
   <span
     className="inline-block h-3 w-3 rounded-full"
     style={{ backgroundColor: ACTION_COLORS[idx % ACTION_COLORS.length] }}
   />
-) : null}
+)}
 
   <span>{humanizeSaveAction(s.action)}</span>
 </div>
@@ -4738,8 +4741,13 @@ for (const ev of zoneEvents) {
                           }}
                         >
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2 font-semibold text-[12px] text-neutral-800">
-  <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: ACTION_COLORS[idx % ACTION_COLORS.length] }} />
+<div className="flex items-center gap-2 font-semibold text-[12px] text-neutral-800">
+  {idx < 7 && (
+    <span
+      className="inline-block h-3 w-3 rounded-full"
+      style={{ backgroundColor: ACTION_COLORS[idx] }}
+    />
+  )}
   <span>{safeText(saveLabel[row.action] ?? row.action)}</span>
 </div>
                             <div className="text-[11px] text-neutral-500">{row.count}x • {pct}%</div>
@@ -5404,6 +5412,46 @@ return (
                                                 "Unbekannte Location"}
                                             </div>
                                           </div>
+
+                                          {/* 🆕 Sparkline: Winrate-Verlauf (Maschine+Location) */}
+                                          {Array.isArray((m as any).winRateSeries) &&
+                                          ((m as any).winRateSeries?.length ?? 0) > 1 ? (
+                                            <div className="mx-2 hidden sm:block">
+                                              <svg
+                                                width="120"
+                                                height="22"
+                                                viewBox="0 0 90 22"
+                                                className="overflow-visible"
+                                              >
+                                                {(() => {
+                                                  const vals = ((m as any).winRateSeries as number[])
+                                                    .map((v) => (typeof v === "number" ? v : 0))
+                                                    .slice(-30);
+                                                  const n = vals.length;
+                                                  const clamp = (x: number) =>
+                                                    Math.max(0, Math.min(1, x));
+                                                  const pts = vals.map((v, i) => {
+                                                    const x = n <= 1 ? 0 : (i / (n - 1)) * 118; // 140 - 2
+                                                    const y = 20 - clamp(v) * 20;
+                                                    return `${x.toFixed(2)},${y.toFixed(2)}`;
+                                                  });
+                                                  const d = pts.join(" ");
+                                                  return (
+                                                    <>
+                                                      <polyline
+                                                        points={d}
+                                                        fill="none"
+                                                        stroke="currentColor"
+                                                        strokeWidth="2"
+                                                        className="text-neutral-400"
+                                                      />
+                                                    </>
+                                                  );
+                                                })()}
+                                              </svg>
+                                            </div>
+                                          ) : null}
+
                                           <div className="text-right text-[13px]">
                                             <div className="tabular-nums">
                                               {m.matchesPlayed} Matches
