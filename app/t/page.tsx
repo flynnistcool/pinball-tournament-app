@@ -5764,7 +5764,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                     {/* Maschinen-Dropdown */}
                                     <Select
                                       value={m.machine_id ?? ""}
-                                      className="rounded-lg h-8 max-h-8 w--[130px] max-w-[130px]  px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
+                                      className="rounded-lg h-02 max-h-10 w--[130px] max-w-[130px]  px-3 py-2 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8 "
                                       
                                       disabled={
                                         locked || hasResults || savingMachine[m.id]
@@ -6367,7 +6367,7 @@ return (
                     <div className="flex flex-col gap-1">
                       <Select
                         value={pos ?? ""}
-                        className="rounded-lg h-8 max-h-8 w--[160px] max-w-[160px]  px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
+                        className="rounded-lg h-10 max-h-10 w--[160px] max-w-[160px]  px-1 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8"
                         disabled={locked}
                         onChange={async (e) => {
                           if (locked) return;

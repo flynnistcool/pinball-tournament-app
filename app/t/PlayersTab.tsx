@@ -5258,7 +5258,7 @@ return (
                               {/* Top-3 Übersicht */}
                               <div className="grid gap-3 sm:grid-cols-2">
                                 {/* Meist gespielt */}
-                                <div>
+                                <div className="min-w-0">
                                   <div className="text-[13px] font-semibold text-neutral-600 mb-1">
                                     Meist gespielt (Top 3)
                                   </div>
@@ -5278,34 +5278,24 @@ return (
                                                 .replace(".", ",")
                                             : null;
                                         return (
-                                          <li
-                                            key={`top-matches-${m.locationId ?? m.locationName}-${m.machineId ?? m.machineName}`}
-                                            className="flex justify-between gap-2"
-                                          >
-                                            <span className="truncate">
-                                              <span className="font-medium">
-                                                {m.machineName ?? "Maschine"}
-                                              </span>
-                                              {m.locationName && (
-                                                <span className="text-neutral-500">
-                                                  {" "}
-                                                  ({m.locationName})
-                                                </span>
-                                              )}
-                                            </span>
-                                            <span className="text-right text-[13px] tabular-nums">
-                                              {m.matchesPlayed} Matches
-                                              {winRatePercent != null && (
-                                                <>
-                                                  {" "}
-                                                  ·{" "}
-                                                  <span>
-                                                    {winRatePercent}%
-                                                  </span>
-                                                </>
-                                              )}
-                                            </span>
-                                          </li>
+<li className="flex items-center gap-2 w-full min-w-0">
+  <div className="min-w-0 flex-1 basis-0 truncate">
+    <span className="truncate font-medium">{m.machineName ?? "Maschine"}</span>
+    {m.locationName && (
+      <span className="truncate  text-neutral-500"> ({m.locationName})</span>
+    )}
+  </div>
+
+  <span className="shrink-0 whitespace-nowrap text-right text-[13px] tabular-nums">
+    {m.matchesPlayed} Matches
+    {winRatePercent != null && (
+      <>
+        {" "}· <span>{winRatePercent}%</span>
+      </>
+    )}
+  </span>
+</li>
+
                                         );
                                       })}
                                     </ul>
@@ -5313,7 +5303,7 @@ return (
                                 </div>
 
                                 {/* Beste Ø-Platzierung */}
-                                <div>
+                                <div className="min-w-0">
                                   <div className="text-[13px] font-semibold text-neutral-600 mb-1">
                                     Beste Ø-Platzierung (Top 3)
                                   </div>
@@ -5341,33 +5331,27 @@ return (
                                         return (
                                           <li
                                             key={`top-avg-${m.locationId ?? m.locationName}-${m.machineId ?? m.machineName}`}
-                                            className="flex justify-between gap-2"
+                                            className="flex items-center gap-2 min-w-0"
                                           >
-                                            <span className="truncate">
-                                              <span className="font-medium">
-                                                {m.machineName ?? "Maschine"}
-                                              </span>
-                                              {m.locationName && (
-                                                <span className="text-neutral-500">
-                                                  {" "}
-                                                  ({m.locationName})
-                                                </span>
-                                              )}
-                                            </span>
-                                            <span className="text-right text-[13px]">
+                                            <div className="min-w-0 w-0 flex-1">
+                                              <div className="truncate">
+                                                <span className="font-medium">{m.machineName ?? "Maschine"}</span>
+                                                {m.locationName && (
+                                                  <span className="text-neutral-500"> ({m.locationName})</span>
+                                                )}
+                                              </div>
+                                            </div>
+
+                                            <span className="shrink-0 whitespace-nowrap text-right text-[13px]">
                                               {avgPos != null && (
-                                                <span className="tabular-nums font-semibold">
-                                                  Ø {avgPos}
-                                                </span>
+                                                <span className="tabular-nums font-semibold">Ø {avgPos}</span>
                                               )}
                                               {winRatePercent != null && (
-                                                <span className="tabular-nums text-neutral-600">
-                                                  {" "}
-                                                  · {winRatePercent}%
-                                                </span>
+                                                <span className="tabular-nums text-neutral-600"> · {winRatePercent}%</span>
                                               )}
                                             </span>
                                           </li>
+
                                         );
                                       })}
                                     </ul>
@@ -5799,12 +5783,17 @@ return (
           </div>
         ) : (
           <div className="max-h-48 overflow-y-auto pr-1">
-            <table className="w-full text-[13px]">
+            <table className="w-full text-[13px] table-fixed">
+              <colgroup>
+                <col className="min-w-[75px]" />
+                <col className="w-[82px] sm:w-[120px]" />
+                <col className="w-[62px] sm:w-[110px]" />
+              </colgroup>
               <thead className="text-left text-neutral-500">
                 <tr>
-                  <th className="py-1 font-medium">Maschine</th>
-                  <th className="py-1 text-right font-medium">Bestscore</th>
-                  <th className="py-1 text-right"></th>
+                  <th className="py-1 font-medium w-auto">Maschine</th>
+                  <th className="py-1 text-right font-medium w-[110px] whitespace-nowrap">Bestscore</th>
+                  <th className="py-1 text-right w-[110px]"></th>
                 </tr>
               </thead>
               <tbody>
@@ -5813,13 +5802,13 @@ return (
                     key={`${r.machineId}__${r.locationId ?? "null"}`}
                     className="border-t border-neutral-200/60"
                   >
-                    <td className="py-1.5 pr-2">
+                    <td className="py-1.5 pr-2 min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <MachineBadge
                           name={r.machineName}
                           emoji={r.machineIconEmoji ?? null}
                         />
-                        <div className="min-w-0">
+                        <div className="min-w-6 w-0 flex-1">
                           <div className="font-semibold text-neutral-900 truncate">
                             {r.machineName}
                           </div>
@@ -5843,9 +5832,17 @@ return (
                           }
                           title="Platzierung global innerhalb dieser Location"
                         >
-                          {r.globalRank === 1
-                            ? "Highscore #1"
-                            : `Rang #${r.globalRank}`}
+{r.globalRank === 1 ? (
+  <>
+    <span className="sm:hidden">High #1</span>
+    <span className="hidden sm:inline">Highscore #1</span>
+  </>
+) : (
+  <>
+    <span className="sm:hidden"># {r.globalRank}</span>
+    <span className="hidden sm:inline">{`Rang #${r.globalRank}`}</span>
+  </>
+)}
                         </span>
                       ) : r.isGlobalHighscore ? (
                         <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-[2px] text-[11px] font-semibold text-amber-900">
