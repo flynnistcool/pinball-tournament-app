@@ -3751,6 +3751,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
             <div className="font-semibold">
               Leaderboard – {tournamentName || "Turnier"}
             </div>
+            {/*
             <div className="flex gap-2">
               <a
                 className="hidden sm:inline-flex items-center justify-center rounded-xl px-4 py-3 text-base font-medium bg-neutral-100 hover:bg-neutral-200"
@@ -3773,6 +3774,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                 Drucken/PDF
               </button>
             </div>
+            */}
           </div>
         </CardHeader>
 
@@ -3786,7 +3788,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
             </div>
 
             {/* Kopfzeile – Desktop */}
-            <div className="hidden sm:grid grid-cols-12 gap-4 border-b bg-neutral-50 px-2 py-3 text-ms text-neutral-600">
+            <div className="hidden sm:grid grid-cols-12 gap-4 border-b bg-neutral-50 px-2 py-3 text-xs text-neutral-600">
               <div className="col-span-1 text-center">Platz</div>
               <div className="col-span-5">Spieler</div>
               <div className="col-span-2 text-right">Punkte</div>
@@ -4111,6 +4113,9 @@ function CurrentRoundSticky({
   const [tWinrateByPlayerId, setTWinrateByPlayerId] = useState<Record<string, number | null>>({});
   const [mWinrateByKey, setMWinrateByKey] = useState<Record<string, { winrate: number | null; matchesPlayed: number }>>({});
   const [loading, setLoading] = useState(false);
+
+  // ✅ Nur dieser rechte Winrate-Block ist einklappbar
+  const [winrateOpen, setWinrateOpen] = useState(true);
   const mwrHasLoadedOnce = useRef(false);
 
   const locationId = tournament?.location_id ? String(tournament.location_id) : "";
@@ -4304,23 +4309,34 @@ function CurrentRoundSticky({
 
   return (
     <Card className="mt-2">
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold">Winrate<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
-          <div className="flex items-center gap-2">
-            {loading ? <span className="text-xs text-neutral-500">lädt…</span> : null}
-            <button
-              type="button"
-              onClick={() => reload(true)}
-              className="text-xs px-2 py-1 rounded-md border border-neutral-200 hover:bg-neutral-50"
-            >
-              Laden
-            </button>
-          </div>
-        </div>
-      </CardHeader>
-      <CardBody>
-        <div className="space-y-2">
+     
+<div className="p-5 cursor-pointer select-none">
+  <button
+    type="button"
+    onClick={() => setWinrateOpen((v) => !v)}
+    className="w-full text-[14px] font-semibold pb-2 border-b border-gray-200"
+  >
+    <span className="flex items-center justify-between w-full">
+      <span className="text-sm font-semibold">
+        Winrate{" "}
+        <span className="text-gray-500 text-[12px]">
+          #{currentRound?.number ?? currentRound?.round_no ?? "—"}
+        </span>
+        <span className="text-xs mx-1 text-neutral-400">
+          {winrateOpen ? "  ▾" : "  ▸"}
+        </span>
+      </span>
+
+
+    </span>
+  </button>
+</div>
+     
+      {winrateOpen && (
+
+        
+        <div className="space-y-2 pb-5 px-5 ">
+
           {currentMatches.map((m: any, idx: number) => {
             const machineName = machinesInfoById?.[String(m.machine_id)]?.name ?? "Maschine";
             const matchMps = (matchPlayers ?? [])
@@ -4467,10 +4483,12 @@ function CurrentRoundSticky({
               </div>
             );
           })}        </div>
-      </CardBody>
+      
+        )}
     </Card>
   );
 }
+
 
 function MatchplayProgressStack({
   tournament,
@@ -4494,6 +4512,7 @@ function MatchplayProgressStack({
   const formatRaw = String(tournament?.format ?? "").toLowerCase();
   const isSupported =
     formatRaw === "matchplay" ||
+  formatRaw === "swiss" ||
     formatRaw === "dyp_round_robin" ||
     formatRaw === "dyp round robin" ||
     formatRaw === "round_robin" ||
@@ -4501,11 +4520,71 @@ function MatchplayProgressStack({
 
   if (!isSupported) return null;
 
+  const [openProgress, setOpenProgress] = useState(true);
+  const [pairingsOpen, setPairingsOpen] = useState(true);
+
   const n =
     Number(playersCount ?? 0) ||
     Number(tournament?.playersCount ?? 0) ||
     Number(tournament?.players_count ?? 0) ||
     (Array.isArray(tournament?.players) ? tournament.players.length : 0);
+
+  // ================================
+  // Paarungen im gesamten Turnier (für Sidebar)
+  // - zählt identische Spieler-Gruppen über alle Matches
+  // - 1vs1: A vs B, sonst: A / B / C
+  // - Ghost wird ignoriert
+  // ================================
+  const mpByMatchAll = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const mp of matchPlayers ?? []) {
+      const mid = String(mp?.match_id ?? "");
+      if (!mid) continue;
+      const arr = map.get(mid) ?? [];
+      arr.push(mp);
+      map.set(mid, arr);
+    }
+    return map;
+  }, [matchPlayers]);
+
+  const matchGroupCountsAll = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const mm of matches ?? []) {
+      const mid = String((mm as any)?.id ?? "");
+      if (!mid) continue;
+
+      const mps = mpByMatchAll.get(mid) ?? [];
+      const idsRaw = (mps ?? []).map((x: any) => String(x?.player_id ?? "")).filter(Boolean);
+
+      // nur "echte" Paarungen zählen (mind. 2 Spieler)
+      if (idsRaw.length < 2) continue;
+
+      // Ghost rausfiltern (falls vorhanden)
+      const ids = idsRaw.filter((pid) => {
+        const nm = playersById?.[pid]?.name ?? "";
+        return String(nm).toLowerCase() !== "ghost";
+      });
+      if (ids.length < 2) continue;
+
+      const key = ids.slice().sort().join("::");
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [matches, mpByMatchAll, playersById]);
+
+  const pairingRowsAll = useMemo(() => {
+    const rows: { key: string; label: string; count: number }[] = [];
+    for (const [key, count] of matchGroupCountsAll.entries()) {
+      const ids = key.split("::").filter(Boolean);
+      const names = ids.map((pid) => playersById?.[pid]?.name ?? "—").filter(Boolean);
+      const sep = ids.length === 2 ? " vs " : " / ";
+      rows.push({ key, label: names.join(sep), count });
+    }
+    // häufigste oben
+    rows.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    return rows;
+  }, [matchGroupCountsAll, playersById]);
+
 
   const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
 
@@ -4513,15 +4592,27 @@ function MatchplayProgressStack({
 // - match_size === 2: klassische Pairings (jeder gegen jeden)
 // - match_size >= 3: alle k-Kombinationen genau einmal (C(n,k))
   const roundsPerCycle = calcRoundsPerCycle(tournament, n);
-  if (!roundsPerCycle) return null;
-const roundsSorted = (rounds ?? [])
-    .filter((r) => typeof r?.number === "number" && (r.number as number) > 0)
-    .sort((a, b) => (a.number as number) - (b.number as number));
+  // ⚠️ Bei Swiss kann n/playersCount kurz 0 sein (z.B. Daten noch nicht da). Dann wäre roundsPerCycle null.
+  // Für den "Aussetzer"-Block wollen wir aber trotzdem rendern.
+  const canShowMainRoundProgress = !!roundsPerCycle;
+  const getRoundNo = (r: any) => {
+    const v = r?.number ?? r?.round_no ?? r?.roundNumber ?? r?.round;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
 
-  if (roundsSorted.length === 0) return null;
+  const roundsSorted = (rounds ?? [])
+    .map((r: any) => ({ ...r, __rn: getRoundNo(r) }))
+    .filter((r: any) => typeof r.__rn === "number" && r.__rn > 0)
+    .sort((a: any, b: any) => (a.__rn as number) - (b.__rn as number));
 
-  const maxRoundNumber = roundsSorted[roundsSorted.length - 1].number as number;
-  const cyclesCount = Math.max(1, Math.ceil(maxRoundNumber / roundsPerCycle));
+  const maxRoundNumber = roundsSorted.length
+    ? (roundsSorted[roundsSorted.length - 1].__rn as number)
+    : 0;
+  const cyclesCount = Math.max(
+    1,
+    Math.ceil(maxRoundNumber / Math.max(1, Number(roundsPerCycle || 1)))
+  );
 
   const COLORS = [
     "#ef4444",
@@ -4561,7 +4652,7 @@ const roundsSorted = (rounds ?? [])
       : null;
   }).filter(Boolean) as Array<{ label: string; done: number; total: number; pct: number; color: string }>;
 
-  if (bars.length === 0) return null;
+  const hasBars = bars.length > 0;
 
   // ✅ Aussetzer (Bye) in der AKTUELLEN Runde anzeigen (nur bei ungerader Teilnehmerzahl)
   const activePlayers = (players ?? []).filter((p: any) => p?.active !== false);
@@ -4623,16 +4714,33 @@ const roundsSorted = (rounds ?? [])
   return (
     <>
       <div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
-      <div className={`${compact ? "text-[14px] font-semibold pb-2 border-b border-gray-200" : "text-[13px]"} text-neutral-900`}>
-        Fortschritt Hauptrunden{" "}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpenProgress((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpenProgress((v) => !v);
+          }
+        }}
+        className={`${compact ? "text-[14px] font-semibold pb-2 border-b border-gray-200" : "text-[13px]"} text-neutral-900 cursor-pointer select-none flex items-start justify-between gap-2`}
+      >
+        <div>
+        <span className="flex items-center gap-2">
+          <span>Fortschritt Runden</span>
+          <span className="text-neutral-400 text-xs mt-0.5">{openProgress ? "▾" : "▸"}</span>
+        </span>
         <div className="h-px bg-white" />
         <span className="text-[11px] font-normal">{n} Spieler</span> •{" "}
         <span className="text-[11px] font-normal">{matchSize} pro Match</span> •{" "}
         <span className="text-[11px] font-normal">{roundsPerCycle} Runden pro Hauptrunde</span>
       </div>
+       
+      </div>
 
-      
-<div className={`mt-2 ${compact ? "space-y-1.5" : "space-y-2"}`}>
+      {openProgress && (
+        <div className={`mt-2 ${compact ? "space-y-1.5" : "space-y-2"}`}>
         {bars.map((b, idx) => {
           const frac = b.total > 0 ? b.done / b.total : 0;
           return (
@@ -4648,10 +4756,11 @@ const roundsSorted = (rounds ?? [])
           );
         })}
       </div>
+      )}
     </div>
 
       {/* Info-Block unter Fortschritt Hauptrunden */}
-      {playersCount && playersCount % 2 === 1 && (
+      {hasBye && (
         <div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
           <div className="text-gray-900 text-[14px] font-semibold pb-2 border-b border-gray-200">Aussetzer<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
           <div className="mt-1 text-sm text-gray-800">
@@ -4659,6 +4768,43 @@ const roundsSorted = (rounds ?? [])
           </div>
         </div>
       )}
+
+{/* Paarungen (gesamt im Turnier) */}
+<div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
+  <div
+    role="button"
+    tabIndex={0}
+    onClick={() => setPairingsOpen((v) => !v)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setPairingsOpen((v) => !v);
+      }
+    }}
+    className="text-gray-900 text-[14px] font-semibold pb-2 border-b border-gray-200 flex items-center justify-between gap-2 cursor-pointer select-none"
+  >
+    <span className="flex items-center gap-2">
+      <span>Paarungen</span>
+      <span className="text-neutral-400 text-xs">{pairingsOpen ? "▾" : "▸"}</span>
+    </span>
+    <span className="text-[12px] font-normal text-gray-500">{pairingRowsAll?.length ?? 0}</span>
+  </div>
+
+  {pairingsOpen && ((pairingRowsAll?.length ?? 0) === 0 ? (
+    <div className="mt-2 text-sm text-gray-600">Noch keine Paarungen.</div>
+  ) : (
+    <div className="mt-2 max-h-[260px] overflow-auto pr-1">
+      <div className="flex flex-col gap-2">
+        {(pairingRowsAll ?? []).map((row) => (
+          <div key={row.key} className="flex items-center justify-between gap-3">
+            <div className="min-w-0 truncate text-[11px] text-gray-800">{row.label}</div>
+            <div className="shrink-0 text-[11px] font-semibold text-gray-700">{row.count}×</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  ))}
+</div>
     </>
   );
 }

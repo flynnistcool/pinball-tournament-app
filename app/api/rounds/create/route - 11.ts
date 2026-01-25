@@ -606,59 +606,22 @@ export async function POST(req: Request) {
       if ((rounds ?? []).length === 0) {
         orderedPlayersForGrouping = shuffle(players as PlayerRow[]);
       } else {
-        orderedPlayersForGrouping = (players as PlayerRow[])
-          .slice()
-          .sort((a, b) => {
-            const sa = standingByPlayerId.get(a.id)?.points ?? 0;
-            const sb = standingByPlayerId.get(b.id)?.points ?? 0;
-            if (sa !== sb) return sb - sa; // höherer Score zuerst
-            return Math.random() < 0.5 ? -1 : 1;
-          });
-      }
-
-      // ✅ Swiss-Bye fair rotieren:
-      // Ziel: Bevor jemand ein 2. Bye bekommt, sollen alle einmal dran gewesen sein.
-      // Wir wählen daher aus den "unteren" Kandidaten den Spieler mit den wenigsten bisherigen Byes.
-      // Bei Gleichstand: weniger Punkte bevorzugen (typisches Swiss), danach Zufall.
-      const pool = orderedPlayersForGrouping.slice();
-
-      const needsBye = groupSize > 0 && pool.length % groupSize === 1;
-      if (needsBye) {
-        // Kandidaten aus dem unteren Bereich (damit Top-Spieler nicht unnötig Byes bekommen)
-        const takeN = Math.min(pool.length, Math.max(groupSize + 1, 6));
-        const candidates = pool.slice(-takeN);
-
-        candidates.sort((a, b) => {
-          const ba = byeCounts?.get(a.id) ?? 0;
-          const bb = byeCounts?.get(b.id) ?? 0;
-          if (ba !== bb) return ba - bb; // weniger Byes zuerst (Rotation)
+        orderedPlayersForGrouping = (players as PlayerRow[]).slice().sort((a, b) => {
           const sa = standingByPlayerId.get(a.id)?.points ?? 0;
           const sb = standingByPlayerId.get(b.id)?.points ?? 0;
-          if (sa !== sb) return sa - sb; // weniger Punkte zuerst
+          if (sa !== sb) return sb - sa;
           return Math.random() < 0.5 ? -1 : 1;
         });
-
-        const byePlayer = candidates[0];
-        if (byePlayer?.id) {
-          const idx = pool.findIndex((p) => p.id === byePlayer.id);
-          if (idx >= 0) pool.splice(idx, 1);
-          warnings.push(
-            `Ein Spieler ohne Gruppe: ${byePlayer.name ?? "?"} (setzt diese Runde aus)`
-          );
-        }
       }
 
+      const pool = orderedPlayersForGrouping.slice();
       while (pool.length >= groupSize) groups.push(pool.splice(0, groupSize));
 
-      // Restgruppe (2..groupSize-1) darf noch ein Match bekommen
       if (pool.length >= 2) {
         groups.push(pool.splice(0));
       } else if (pool.length === 1) {
-        // Sollte durch needsBye oben eigentlich nicht mehr passieren – aber als Fallback:
         const lone = pool[0];
-        warnings.push(
-          `Ein Spieler ohne Gruppe: ${lone.name ?? "?"} (setzt diese Runde aus)`
-        );
+        warnings.push(`Ein Spieler ohne Gruppe: ${lone.name ?? "?"} (setzt diese Runde aus)`);
       }
     } else if (format === "matchplay") {
       // Nur bei 1vs1 ist die Bye-Fairness relevant.
