@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function randPick<T>(xs: T[]): T {
+  return xs[Math.floor(Math.random() * xs.length)];
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
 
@@ -29,7 +36,7 @@ export async function POST(req: Request) {
   // Turnier anhand Code holen
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id")
+    .select("id, format")
     .eq("code", code)
     .single();
 
@@ -38,10 +45,12 @@ export async function POST(req: Request) {
   // Match muss zu diesem Turnier gehören (via rounds)
   const { data: m, error: mErr } = await sb
     .from("matches")
-    .select("id, round_id, rounds!inner(tournament_id)")
+    .select("id, round_id, rounds!inner(tournament_id, id, number, format, elo_enabled)")
     .eq("id", matchId)
     .eq("rounds.tournament_id", t.id)
     .single();
+
+    const currentUseElo = Boolean((m as any)?.rounds?.elo_enabled);
 
   if (mErr || !m) {
     return NextResponse.json(
@@ -53,13 +62,302 @@ export async function POST(req: Request) {
   // Update match_players
   const { data: updated, error: uErr } = await sb
     .from("match_players")
-    .update({ score })
+    .update({ score, score_submitted: true })
     .eq("match_id", matchId)
     .eq("player_id", playerId)
     .select("match_id, player_id, score")
     .single();
 
-  if (uErr) return NextResponse.json({ error: uErr.message ?? "Update fehlgeschlagen" }, { status: 500 });
+  if (uErr)
+    return NextResponse.json(
+      { error: uErr.message ?? "Update fehlgeschlagen" },
+      { status: 500 }
+    );
 
-  return NextResponse.json({ ok: true, row: updated });
+  // ------------------------------------------------------------
+  // ✅ Elimination: nach jedem Score kaskadieren
+  // - Positions automatisch aus Scores setzen, sobald Match komplett ist
+  // - Letzten der Runde als eliminated_round markieren
+  // - nächste Runde(n) "provisional" anlegen und mit "safe" Spielern füllen
+  // ------------------------------------------------------------
+  const tournamentFormat = String((t as any)?.format ?? "").toLowerCase();
+  const roundNumber = Number((m as any)?.rounds?.number ?? 0) || 0;
+  const roundFormat = String((m as any)?.rounds?.format ?? "").toLowerCase();
+  const isElimination = tournamentFormat === "elimination" || roundFormat === "elimination";
+
+  if (isElimination) {
+    // Erwartete Spieleranzahl pro Runde im Elimination-Modus
+    // Wichtig: eine Runde darf nur schließen, wenn alle erwarteten Spieler *im Match* vorhanden sind
+    // UND alle davon ihren Score wirklich eingetragen haben (score_submitted=true).
+    //
+    // Wir leiten die Start-Spielerzahl robust aus Runde 1 (erste Elimination-Runde) ab,
+    // damit "provisional" Runden (noch nicht voll) niemals fälschlich schließen.
+    let startRoundNumber = 1;
+    let startTotal = 0;
+
+    // 0) Start-Elimination-Runde bestimmen (kann später als Turnier-Runde 1 sein)
+    //    und daraus die Start-Spielerzahl ableiten (DISTINCT player_id über alle Matches dieser Runde).
+    const { data: roundsAll } = await sb
+      .from("rounds")
+      .select("id, number, format")
+      .eq("tournament_id", (t as any).id)
+      .order("number", { ascending: true });
+
+    const roundsArr = (roundsAll ?? []) as any[];
+
+    const elimStart =
+      roundsArr.find((r) => String(r.format ?? "").toLowerCase() === "elimination") ??
+      roundsArr[0];
+
+    if (elimStart?.id) {
+      startRoundNumber = Number((elimStart as any).number ?? 1) || 1;
+
+      const { data: startMatchIds } = await sb
+        .from("matches")
+        .select("id")
+        .eq("round_id", (elimStart as any).id);
+
+      const ids = (startMatchIds ?? []).map((x: any) => x.id);
+
+      if (ids.length > 0) {
+        const { data: startMps } = await sb
+          .from("match_players")
+          .select("player_id")
+          .in("match_id", ids);
+
+        startTotal = new Set((startMps ?? []).map((x: any) => String(x.player_id))).size;
+      }
+    }
+
+    // Fallback: falls oben nichts liefert (z.B. sehr frühes Stadium)
+    if (!startTotal || startTotal < 2) {
+      const { count: totalPlayers, error: totalErr } = await sb
+        .from("players")
+        .select("id", { count: "exact", head: true })
+        .eq("tournament_id", (t as any).id);
+
+      if (!totalErr && typeof totalPlayers === "number") startTotal = totalPlayers;
+      if (!startTotal || startTotal < 2) startTotal = 2;
+      // wenn wir über players zählen, ist startRoundNumber typischerweise 1
+      // (wenn Elimination erst später startet, wird es dennoch durch elimStart oben korrekt gesetzt)
+    }
+
+    // Erwartete Spieler dieser Runde / nächste Runde
+    const expectedThisRound = Math.max(2, startTotal - (roundNumber - startRoundNumber));
+    const expectedNextRound = Math.max(0, expectedThisRound - 1);
+
+    // 1) Alle Match-Players dieses Matches laden (Scores + ggf. Position)
+    const { data: allMps, error: mpLoadErr } = await sb
+      .from("match_players")
+      .select("player_id, score, position, score_submitted")
+      .eq("match_id", matchId);
+
+    if (!mpLoadErr && allMps && allMps.length) {
+      const mps = (allMps as any[]).map((x) => ({
+        player_id: String(x.player_id),
+        score: x.score == null ? null : Number(x.score),
+        position: x.position == null ? null : Number(x.position),
+        score_submitted: Boolean((x as any).score_submitted),
+      }));
+
+      const scored = mps.filter((x) => x.score_submitted && x.score != null && Number.isFinite(x.score));
+
+      // 2) SAFE-Spieler (ohne Gleichstand):
+      //    sobald es mindestens einen kleineren finalen Score gibt.
+      let safePlayerIds: string[] = [];
+      if (scored.length >= 2) {
+        const minScore = Math.min(...scored.map((x) => x.score as number));
+        safePlayerIds = scored
+          .filter((x) => (x.score as number) > minScore)
+          .map((x) => x.player_id);
+      }
+
+      // 3) Runde komplett?
+      const isComplete =
+        mps.length === expectedThisRound &&
+        mps.every((x) => x.score_submitted && x.score != null && Number.isFinite(x.score));
+
+
+// 3a) Wenn komplett: Positionen final setzen (Elimination: nur 1/2)
+if (isComplete) {
+  // Letzter = niedrigster Score
+  const minScore = Math.min(...mps.map((x) => x.score as number));
+  const losers = mps.filter((x) => (x.score as number) === minScore);
+
+  // Safety: falls doch mal ein Tie um den letzten entsteht, NICHT automatisch setzen
+  if (losers.length !== 1) {
+    // Optional: Match nicht "complete" setzen, damit klar ist: muss manuell geklärt werden
+    // await sb.from("matches").update({ status: "open" }).eq("id", matchId);
+    return NextResponse.json(
+      { ok: false, error: "Cannot auto-assign elimination positions: tie for last place." },
+      { status: 409, headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  const loserId = losers[0].player_id;
+
+  // Positionen: alle anderen = 1, loser = 2
+  for (const p of mps) {
+    const pos = p.player_id === loserId ? 2 : 1;
+    await sb
+      .from("match_players")
+      .update({ position: pos })
+      .eq("match_id", matchId)
+      .eq("player_id", p.player_id);
+  }
+
+  // Match als complete markieren (best effort)
+  await sb.from("matches").update({ status: "complete" }).eq("id", matchId);
+
+  // Letzter ist raus für nächste Runde
+  await sb
+    .from("players")
+    .update({ eliminated_round: roundNumber })
+    .eq("id", loserId)
+    .eq("tournament_id", (t as any).id);
+}
+
+
+      // 4) Nächste Runde vorbereiten (provisional)
+      // Nur wenn nach dieser Runde noch >= 2 Spieler übrig sein können
+      if (roundNumber >= 1 && expectedNextRound >= 2 && safePlayerIds.length >= 1) {
+        const nextRoundNumber = roundNumber + 1;
+
+        // Runde holen oder anlegen
+        const { data: existingRound } = await sb
+          .from("rounds")
+          .select("id")
+          .eq("tournament_id", (t as any).id)
+          .eq("number", nextRoundNumber)
+          .single();
+
+        let nextRoundId = (existingRound as any)?.id as string | undefined;
+
+
+        if (!nextRoundId) {
+          const { data: createdRound, error: crErr } = await sb
+            .from("rounds")
+            .insert({
+              tournament_id: (t as any).id,
+              format: "elimination",
+              number: nextRoundNumber,
+              status: "open",
+              elo_enabled: currentUseElo,
+            })
+            .select("id")
+            .single();
+          if (!crErr) nextRoundId = (createdRound as any)?.id;
+        }
+
+        if (nextRoundId) {
+          // Match holen oder anlegen (genau 1 Match pro Runde)
+          const { data: existingMatch } = await sb
+            .from("matches")
+            .select("id")
+            .eq("round_id", nextRoundId)
+            .order("created_at", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+          let nextMatchId = (existingMatch as any)?.id as string | undefined;
+
+          if (!nextMatchId) {
+            // Maschine wählen: "am wenigsten genutzt" im Turnier (best effort)
+            const { data: machinesRaw } = await sb
+              .from("machines")
+              .select("id, active")
+              .eq("tournament_id", (t as any).id);
+            const machines = (machinesRaw ?? []).filter((x: any) => x.active);
+
+            let machineId: string | null = machines.length ? String(randPick(machines).id) : null;
+            if (machines.length) {
+              const { data: used } = await sb
+                .from("matches")
+                .select("machine_id")
+                .in(
+                  "round_id",
+                  (await sb
+                    .from("rounds")
+                    .select("id")
+                    .eq("tournament_id", (t as any).id)).data?.map((r: any) => r.id) ?? []
+                );
+              const counts = new Map<string, number>();
+              for (const mm of used ?? []) {
+                const mid = mm.machine_id;
+                if (!mid) continue;
+                counts.set(mid, (counts.get(mid) ?? 0) + 1);
+              }
+              let bestCount = Number.POSITIVE_INFINITY;
+              let best: string[] = [];
+              for (const mrow of machines) {
+                const mid = String(mrow.id);
+                const c = counts.get(mid) ?? 0;
+                if (c < bestCount) {
+                  bestCount = c;
+                  best = [mid];
+                } else if (c === bestCount) {
+                  best.push(mid);
+                }
+              }
+              machineId = best.length ? randPick(best) : machineId;
+            }
+
+            const { data: createdMatch, error: cmErr } = await sb
+              .from("matches")
+              .insert({
+                round_id: nextRoundId,
+                machine_id: machineId,
+                status: "open",
+                game_number: 1,
+              })
+              .select("id")
+              .single();
+            if (!cmErr) nextMatchId = (createdMatch as any)?.id;
+          }
+
+          if (nextMatchId) {
+            // Bereits vorhandene Spieler in der nächsten Runde
+            const { data: existingNextMps } = await sb
+              .from("match_players")
+              .select("player_id")
+              .eq("match_id", nextMatchId);
+            const existingSet = new Set((existingNextMps ?? []).map((x: any) => String(x.player_id)));
+
+            // Wenn aktuelle Runde komplett ist, kennen wir alle Qualifier (alle außer Letzter)
+            let want: string[] = safePlayerIds;
+            if (isComplete) {
+              const loserId = [...mps].sort((a, b) => (a.score as number) - (b.score as number))[0]?.player_id;
+              want = mps
+                .map((x) => x.player_id)
+                .filter((id) => id && id !== loserId);
+            }
+
+            const toInsert = want
+              .filter((pid) => !existingSet.has(pid))
+              .map((pid) => ({
+                match_id: nextMatchId,
+                player_id: pid,
+                position: null,
+                start_position: null,
+                team: null,
+                score: null,
+                score_submitted: false,
+              }));
+
+            if (toInsert.length) {
+              await sb.from("match_players").insert(toInsert);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return new NextResponse(JSON.stringify({ ok: true, row: updated }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
 }

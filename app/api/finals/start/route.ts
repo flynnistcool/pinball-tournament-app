@@ -59,6 +59,22 @@ export async function POST(req: Request) {
     }))
     .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
 
+  // Competition-Ranking (1,1,1,4 ...) basierend auf Turnierpunkten.
+  // Dadurch bekommen Spieler mit gleichem Turnierstand dieselben Startpunkte.
+  const competitionRankByPlayerId: Record<string, number> = {};
+  let currentRank = 1;
+  let prevPoints: number | null = null;
+  for (let i = 0; i < standings.length; i++) {
+    const p = standings[i];
+    const pts = Number(p.points ?? 0);
+    if (prevPoints !== null && pts < prevPoints) {
+      // Bei weniger Punkten: Rank springt auf die echte Position (Competition Ranking)
+      currentRank = i + 1;
+    }
+    competitionRankByPlayerId[p.id] = currentRank;
+    prevPoints = pts;
+  }
+
   if (standings.length < 2) {
     return NextResponse.json(
       { error: "Zu wenige aktive Spieler für ein Super-Finale" },
@@ -102,7 +118,8 @@ export async function POST(req: Request) {
 
   // Finalspieler anlegen
   const finalPlayers = finalists.map((row, index) => {
-    const seed = index + 1;
+    // Seed + Startpunkte nach Competition-Ranking (bei Tie gleiche Seed/Startpunkte)
+    const seed = competitionRankByPlayerId[row.id] ?? index + 1;
     const startPoints = getStartPointsForSeed(seed);
     return {
       final_id: final.id,

@@ -38,7 +38,7 @@ function tournamentPointsForRank(finalRank: number | null, nPlayers: number): nu
 // 👉 NEU: Bonus für Super-Final-Sieger
 function superFinalBonusPoints(nFinalPlayers: number): number {
   if (nFinalPlayers <= 0) return 0;
-  return Math.ceil(nFinalPlayers / 2); // z.B. 3→2, 4→2, 5→3
+  return 2;
 }
 
 export async function POST(req: Request) {
@@ -282,20 +282,61 @@ export async function POST(req: Request) {
 
   // 👉 Anzahl Spieler im Turnier (für Punkteformel)
   const nPlayersTournament = (players ?? []).length;
-  // 👉 Anzahl Finalspieler (für Bonus, falls es ein Super-Finale gibt)
+
+  // final_rank + tournament_points setzen (Competition Ranking + tie-aware Punkte)
+// Regeln:
+// - Gleichstand = gleiche `points` (keine Auflösung über wins/name)
+// - final_rank folgt Competition Ranking: 1,1,1,4 ...
+// - tournament_points: Durchschnitt der Punkte der belegten Plätze
+{
+  // 1) final_rank setzen (Competition Ranking, nur nach points)
+  let lastPts: number | null = null;
+  let lastRank = 0;
+
+  for (let i = 0; i < resultRows.length; i++) {
+    const r = resultRows[i];
+    const pts = Number(r.points ?? 0);
+
+    const rank = lastPts !== null && pts === lastPts ? lastRank : i + 1;
+    r.final_rank = rank;
+
+    lastPts = pts;
+    lastRank = rank;
+  }
+
+  // 2) tournament_points setzen (tie-aware)
   const nFinalPlayers = Object.keys(superFinalRankByPlayer).length;
   const bonusForWinner = superFinalBonusPoints(nFinalPlayers);
 
-  // final_rank + tournament_points setzen
-  resultRows.forEach((r, idx) => {
-    r.final_rank = idx + 1;
+  let i = 0;
+  while (i < resultRows.length) {
+    const start = i;
+    const pts = Number(resultRows[i].points ?? 0);
+    const rankStart = resultRows[i].final_rank || (i + 1);
 
-    const base = tournamentPointsForRank(r.final_rank, nPlayersTournament);
-    const sfRank = r.super_final_rank ?? null;
-    const bonus = sfRank === 1 ? bonusForWinner : 0;
+    // Tie-Gruppe: gleiche points
+    while (i < resultRows.length && Number(resultRows[i].points ?? 0) === pts) i++;
+    const end = i; // exklusiv
+    const groupSize = end - start;
 
-    r.tournament_points = base + bonus;
-  });
+    // belegte Plätze: rankStart .. rankStart + groupSize - 1
+    const rankEnd = rankStart + groupSize - 1;
+
+    let sum = 0;
+    for (let place = rankStart; place <= rankEnd; place++) {
+      sum += tournamentPointsForRank(place, nPlayersTournament);
+    }
+    const baseAvg = groupSize > 0 ? sum / groupSize : 0;
+
+    for (let j = start; j < end; j++) {
+      const r = resultRows[j];
+      const sfRank = r.super_final_rank ?? null;
+      const bonus = sfRank === 1 ? bonusForWinner : 0;
+      r.tournament_points = baseAvg + bonus;
+    }
+  }
+}
+
 
   // 6) In tournament_results speichern (Upsert nach tournament_id + player_id)
   if (resultRows.length > 0) {

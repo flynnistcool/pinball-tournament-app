@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 
+// ✅ no-store (verhindert Next/Vercel Caching)
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status, headers: NO_STORE_HEADERS });
+}
+
 type EloState = {
   rating: number;
   matches_played: number;
@@ -25,7 +34,7 @@ export async function POST(req: Request) {
 
   const code = String(body.code ?? "").trim().toUpperCase();
   if (!code) {
-    return NextResponse.json({ error: "Code fehlt" }, { status: 400 });
+    return json({ error: "Code fehlt" }, 400);
   }
 
   const sb = supabaseAdmin();
@@ -33,16 +42,13 @@ export async function POST(req: Request) {
   // 1) Turnier laden
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, code")
+    .select("id, code, format")
     .eq("code", code)
     .single();
 
-  if (tErr || !t) {
-    return NextResponse.json(
-      { error: "Turnier nicht gefunden" },
-      { status: 404 }
-    );
-  }
+  if (tErr || !t) return json({ error: "Turnier nicht gefunden" }, 404);
+
+  const tournamentFormat = String((t as any)?.format ?? "").toLowerCase();
 
   // 2) Startwerte aus tournament_ratings laden
   const { data: trRows, error: trErr } = await sb
@@ -51,19 +57,16 @@ export async function POST(req: Request) {
     .eq("tournament_id", t.id);
 
   if (trErr) {
-    return NextResponse.json(
-      { error: trErr.message ?? "Fehler beim Laden der Startwerte" },
-      { status: 500 }
-    );
+    return json({ error: trErr.message ?? "Fehler beim Laden der Startwerte" }, 500);
   }
 
   if (!trRows || trRows.length === 0) {
-    return NextResponse.json(
+    return json(
       {
         error:
           "Keine Elo-Startwerte gefunden (tournament_ratings ist leer für dieses Turnier)",
       },
-      { status: 400 }
+      400
     );
   }
 
@@ -81,17 +84,14 @@ export async function POST(req: Request) {
   // 3) Runden laden, die Elo beeinflussen sollen
   const { data: rounds, error: rErr } = await sb
     .from("rounds")
-    .select("id, number")
+    .select("id, number, format")
     .eq("tournament_id", t.id)
     .eq("elo_enabled", true)
     .eq("status", "finished")
     .order("number", { ascending: true });
 
   if (rErr) {
-    return NextResponse.json(
-      { error: rErr.message ?? "Fehler beim Laden der Runden" },
-      { status: 500 }
-    );
+    return json({ error: rErr.message ?? "Fehler beim Laden der Runden" }, 500);
   }
 
   const roundIds = (rounds ?? []).map((r: any) => r.id);
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
         .eq("id", row.profile_id);
     }
 
-    return NextResponse.json({
+    return json({
       ok: true,
       message:
         "Keine fertigen Elo-Runden – Profile wurden auf Startwerte zurückgesetzt.",
@@ -124,10 +124,7 @@ export async function POST(req: Request) {
     .in("round_id", roundIds);
 
   if (mErr) {
-    return NextResponse.json(
-      { error: mErr.message ?? "Fehler beim Laden der Matches" },
-      { status: 500 }
-    );
+    return json({ error: mErr.message ?? "Fehler beim Laden der Matches" }, 500);
   }
 
   const matchIds = (matches ?? []).map((m: any) => m.id);
@@ -138,10 +135,7 @@ export async function POST(req: Request) {
     .in("match_id", matchIds);
 
   if (mpErr) {
-    return NextResponse.json(
-      { error: mpErr.message ?? "Fehler beim Laden der Match-Spieler" },
-      { status: 500 }
-    );
+    return json({ error: mpErr.message ?? "Fehler beim Laden der Match-Spieler" }, 500);
   }
 
   // Spieler -> Profil
@@ -155,10 +149,7 @@ export async function POST(req: Request) {
     .in("id", uniquePlayerIds);
 
   if (pErr) {
-    return NextResponse.json(
-      { error: pErr.message ?? "Fehler beim Laden der Spieler" },
-      { status: 500 }
-    );
+    return json({ error: pErr.message ?? "Fehler beim Laden der Spieler" }, 500);
   }
 
   const profileIdByPlayerId = new Map<string, string>();
@@ -188,12 +179,94 @@ export async function POST(req: Request) {
   }
 
   // Hilfsfunktion: Elo-Update für ein Match
-  function applyMatchElo(mpList: MPItem[], shieldedThisRound: Record<string, boolean>) {
+  function applyMatchElo(
+    mpList: MPItem[],
+    shieldedThisRound: Record<string, boolean>,
+    formatLower: string
+  ) {
+
+console.log("[recalc-elo] applyMatchElo called", {
+  formatLower,
+  mpListLen: mpList.length,
+});
+
+
     // nur Spieler mit gesetzter Position berücksichtigen
     const players = mpList.filter((p) => p.position != null);
+    
     if (players.length < 2) return;
 
-    // jeder gegen jeden
+    // ✅ Elimination (dein Format): 1 letzter (2. Platz) verliert, alle anderen gewinnen (Group-vs-One)
+    // - keine Winner-vs-Winner Duelle
+    // - zero-sum pro Match: was der Loser verliert, bekommen die Winners zusammen
+    if (formatLower === "elimination") {
+      const maxPos = Math.max(...players.map((p) => Number(p.position)));
+      const losers = players.filter((p) => Number(p.position) === maxPos);
+      const winners = players.filter((p) => Number(p.position) !== maxPos);
+
+      // wir erwarten GENAU 1 Loser
+      if (losers.length === 1 && winners.length >= 1) {
+        const L = losers[0];
+        const LState = stateByProfile.get(L.profile_id);
+        if (!LState) return;
+
+        // ⚠️ WICHTIG: Für korrekte/faire Verteilung müssen ALLE Erwartungen
+        // mit den Ratings "vor" diesem Match berechnet werden (sonst entstehen
+        // komische Ergebnisse, weil der Loser-Rating schon angepasst wurde).
+        const loserRatingBefore = LState.rating;
+        const winnerRatingsBefore = new Map<string, number>();
+        for (const w of winners) {
+          const st = stateByProfile.get(w.profile_id);
+          if (!st) return;
+          winnerRatingsBefore.set(w.profile_id, st.rating);
+        }
+
+        // Erwartung des Losers gegen die Gruppe
+        const eList = winners.map((w) =>
+          expectedScore(loserRatingBefore, winnerRatingsBefore.get(w.profile_id)!)
+        );
+
+        const eL = eList.reduce((a, b) => a + b, 0) / winners.length;
+
+        const kL = getK(LState);
+        // In Elimination ist es in der Praxis am stabilsten, wenn wir hier KEINE
+        // Provisional-Shield-Sonderfälle anwenden (sonst ist es nicht mehr zero-sum
+        // und wirkt "komisch" bei 1 Loser + viele Sieger).
+        const dL = kL * (0 - eL); // Score_L = 0
+        const pot = -dL; // wird an Winners verteilt (>=0)
+
+        // ✅ In diesem Elimination-Format sind alle Sieger gleichwertig (alle "Platz 1").
+        // Deshalb verteilen wir den Pot bewusst GLEICHMÄSSIG auf alle Winners.
+        // (Das verhindert "komische" unterschiedliche Gewinne, obwohl alle Sieger gleich sind.)
+        const perWinner = pot / winners.length;
+
+        // ✅ Jetzt erst die Rating-Änderungen gleichzeitig anwenden (keine Reihenfolge-Effekte)
+        LState.rating = loserRatingBefore + dL;
+
+        for (let idx = 0; idx < winners.length; idx++) {
+          const w = winners[idx];
+          const wState = stateByProfile.get(w.profile_id);
+          if (!wState) continue;
+
+          wState.rating = wState.rating + perWinner;
+        }
+
+        // Matches/Provisional count (1 Match pro Spieler)
+        for (const p of players) {
+          const st = stateByProfile.get(p.profile_id);
+          if (!st) continue;
+          st.matches_played += 1;
+          if (st.provisional_matches > 0) {
+            st.provisional_matches -= 1;
+          }
+        }
+
+        return;
+      }
+      // falls kein eindeutiger Loser: fallback auf Standard
+    }
+
+    // Standard: jeder gegen jeden
     for (let i = 0; i < players.length; i++) {
       for (let j = i + 1; j < players.length; j++) {
         const A = players[i];
@@ -258,10 +331,12 @@ export async function POST(req: Request) {
 for (const r of rounds ?? []) {
   const shieldedThisRound: Record<string, boolean> = {}; // ✅ reset pro Runde
 
+  const roundFormatLower = String((r as any)?.format ?? tournamentFormat ?? "").toLowerCase();
+
   const mids = matchesByRound.get(r.id) ?? [];
   for (const mid of mids) {
     const mpl = mpByMatch.get(mid) ?? [];
-    applyMatchElo(mpl, shieldedThisRound); // ✅ Map übergeben
+    applyMatchElo(mpl, shieldedThisRound, roundFormatLower); // ✅ Map + Format übergeben
   }
 
   // ✅ merken: das ist immer die zuletzt verarbeitete (höchste) finished Runde
@@ -280,7 +355,7 @@ for (const r of rounds ?? []) {
       .eq("id", profileId);
   }
 
-  return NextResponse.json({
+  return json({
     ok: true,
     message: "Elo für dieses Turnier wurde neu berechnet.",
     shieldedByProfile: lastRoundShieldedByProfile, // ✅ nur letzte Runde

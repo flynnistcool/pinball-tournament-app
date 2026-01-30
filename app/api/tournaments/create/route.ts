@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { sha256, randomCode } from "@/lib/crypto";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
 
@@ -9,20 +12,30 @@ export async function POST(req: Request) {
 
   const rawFormat = String(body.format ?? "matchplay");
   const format =
-    rawFormat === "swiss" || rawFormat === "round_robin" || rawFormat === "dyp_round_robin"
+    rawFormat === "swiss" ||
+    rawFormat === "round_robin" ||
+    rawFormat === "dyp_round_robin" ||
+    rawFormat === "elimination" ||
+    rawFormat === "rotation"
       ? rawFormat
       : "matchplay";
 
   const categoryValue = body.category != null ? String(body.category).trim() : "";
   const category = categoryValue.length > 0 ? categoryValue : null;
 
-  const matchSizeRaw = Number(body.matchSize ?? body.match_size ?? 4);
-  let match_size: 2 | 3 | 4 = ([2, 3, 4] as const).includes(matchSizeRaw as any)
+const matchSizeRaw = Number(body.matchSize ?? body.match_size ?? 4);
+
+// ✅ Default: alle Formate außer rotation bleiben streng 2|3|4
+let match_size: number =
+  format === "rotation"
+    ? Math.max(2, Math.floor(matchSizeRaw || 4)) // ✅ Rotation: beliebig ab 2
+    : ([2, 3, 4] as const).includes(matchSizeRaw as any)
     ? (matchSizeRaw as 2 | 3 | 4)
     : 4;
 
-  // DYP 2v2: 4 Spieler pro Match (2 Teams à 2 Spieler)
-  if (format === "dyp_round_robin") match_size = 4;
+// DYP 2v2: 4 Spieler pro Match (2 Teams à 2 Spieler)
+if (format === "dyp_round_robin") match_size = 4;
+
 
   const templateTournamentId = body.templateTournamentId ? String(body.templateTournamentId) : null;
   const locationId = body.locationId ? String(body.locationId) : null;
@@ -102,5 +115,11 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ tournament: data });
+  return new NextResponse(JSON.stringify({ tournament: data }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
 }

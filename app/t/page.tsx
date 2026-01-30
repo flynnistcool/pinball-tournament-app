@@ -28,6 +28,40 @@ import PlayersTab from "./PlayersTab";
 import { ProfilePicker } from "@/components/ProfilePicker";
 import AdminTab from "./AdminTab";
 import Image from "next/image";
+import PinballScore from "@/components/PinballScore";
+
+
+function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
+  roundNumber: number,
+  rounds: any[]
+): number | null {
+  if (!roundNumber || !Array.isArray(rounds)) return null;
+
+  // erste Runde finden (kleinste Nummer)
+  const firstRound = rounds
+    .slice()
+    .sort((a, b) => Number(a.number) - Number(b.number))[0];
+
+  if (!firstRound?.matches) return null;
+
+  // Startspieler = DISTINCT player_id aus Runde 1
+  const playerIds = new Set<string>();
+
+  for (const m of firstRound.matches) {
+    for (const mp of m.match_players ?? []) {
+      if (mp.player_id) {
+        playerIds.add(String(mp.player_id));
+      }
+    }
+  }
+
+  const startTotal = playerIds.size;
+  if (!startTotal) return null;
+
+  // Elimination: jede Runde -1 Spieler
+  return Math.max(2, startTotal - (roundNumber - 1));
+}
+
 
 
 
@@ -61,6 +95,28 @@ function nCk(n: number, k: number): number {
   return Math.round(res);
 }
 
+
+// Competition Ranking (1,1,1,4 ...) based on equal points (expects rows already sorted DESC)
+function computeCompetitionPlaces<T>(rows: T[], getPoints: (r: T) => number) {
+  const places: number[] = [];
+  let lastPoints: number | null = null;
+  let lastPlace = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const pts = Number(getPoints(rows[i]) ?? 0);
+    const place = lastPoints !== null && pts === lastPoints ? lastPlace : i + 1;
+    places.push(place);
+    lastPoints = pts;
+    lastPlace = place;
+  }
+  return places;
+}
+
+function medalForPlace(place: number) {
+  return place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
+}
+
+
 function calcRoundsPerCycle(tournament: any, playersCount: number | null | undefined): number | null {
   const n =
     Number(playersCount ?? 0) ||
@@ -70,6 +126,13 @@ function calcRoundsPerCycle(tournament: any, playersCount: number | null | undef
 
   const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
   const matchesPerRound = Math.max(1, Math.floor(n / matchSize));
+
+  const formatRaw = String(tournament?.format ?? "").toLowerCase();
+  const isDyp =
+    formatRaw === "dyp_round_robin" ||
+    formatRaw === "dyp round robin" ||
+    formatRaw === "dyp" ||
+    formatRaw.includes("dyp");
 
   // ✅ 1vs1: klassische Pairings (jeder gegen jeden)
   if (matchSize === 2) {
@@ -83,8 +146,29 @@ function calcRoundsPerCycle(tournament: any, playersCount: number | null | undef
     return Math.max(1, Math.ceil(totalPairings / pairingsPerRound));
   }
 
-  // ✅ 3er/4er/...: Hauptrunde = ALLE k-Kombinationen genau einmal
-  // totalCombos = C(n, matchSize)
+  // ✅ DYP Round Robin (Teams): Match besteht aus 2 Teams (matchSize ist Gesamtspieler pro Match)
+  // Beispiel n=4, matchSize=4 → teamSize=2 → mögliche Team-vs-Team-Aufteilungen: 3 (AB vs CD, AC vs BD, AD vs BC)
+  // Allgemein:
+  // - Auswahl der Spieler fürs Match: C(n, matchSize)
+  // - Aufteilungen in 2 Teams gleicher Größe (unordered): C(matchSize, teamSize)*C(matchSize-teamSize, teamSize)/2
+  // - Pro Runde gibt es matchesPerRound Matches → combosPerRound = matchesPerRound
+  if (isDyp && matchSize >= 4 && matchSize % 2 === 0) {
+    const teamSize = matchSize / 2;
+
+    const partitionsInMatch =
+      (nCk(matchSize, teamSize) * nCk(matchSize - teamSize, teamSize)) / 2;
+
+    const totalCombos = nCk(n, matchSize) * partitionsInMatch;
+    const combosPerRound = matchesPerRound;
+
+    if (!Number.isFinite(partitionsInMatch) || partitionsInMatch <= 0) return null;
+    if (!Number.isFinite(totalCombos) || totalCombos <= 0) return null;
+    if (!Number.isFinite(combosPerRound) || combosPerRound <= 0) return null;
+
+    return Math.max(1, Math.ceil(totalCombos / combosPerRound));
+  }
+
+  // ✅ 3er/4er/...: Hauptrunde = ALLE k-Kombinationen genau einmal (C(n,k))
   // combosPerRound = matchesPerRound (jedes Match ist genau eine k-Kombi)
   const totalCombos = nCk(n, matchSize);
   const combosPerRound = matchesPerRound;
@@ -101,6 +185,7 @@ type Tournament = {
   name: string;
   created_at: string;
   category?: string;
+  format?: string | null;          // ← NEU
   season_year?: number | null;
   match_size?: number | null;
   best_of?: number | null;
@@ -283,18 +368,56 @@ function SortablePlayerRow({
   );
 }
 
-
+//Format Mapping Touor
 function formatLabel(fmt?: string | null) {
   const v = (fmt ?? "").trim();
   if (!v) return "—";
   const map: Record<string, string> = {
     matchplay: "Matchplay",
+    rotation: "Rotation",
     dyp_round_robin: "DYP Round Robin",
     dyp: "DYP",
     round_robin: "Round Robin",
     group_matchplay: "Group Matchplay",
+    elimination: "Crazy Elimination",
+    rotation: "Round the Pinball",
   };
   return map[v] ?? v.replaceAll("_", " ");
+}
+
+function formatStyle(fmt?: string | null) {
+  const v = (fmt ?? "").trim();
+
+  const map: Record<string, string> = {
+    matchplay: "bg-blue-100 text-blue-800",          // 🟦
+    elimination: "bg-red-100 text-red-800",          // 🟥
+    swiss: "bg-green-100 text-green-800",            // 🟩
+    rotation: "bg-amber-100 text-amber-800",          // 🟨
+    dyp: "bg-purple-100 text-purple-800",            // 🟪
+    dyp_round_robin: "bg-purple-100 text-purple-800",
+    round_robin: "bg-neutral-100 text-neutral-700",
+    group_matchplay: "bg-neutral-100 text-neutral-700",
+  };
+
+  return map[v] ?? "bg-neutral-100 text-neutral-600";
+}
+
+function formatStyleRound(fmt?: string | null) {
+  const v = (fmt ?? "").trim();
+
+  const map: Record<string, string> = {
+    matchplay: "text-blue-600",          // 🟦
+    elimination: "text-red-800",          // 🟥
+    swiss: "text-green-600",            // 🟩
+    rotation: "text-amber-700",          // 🟨
+
+    dyp: "test-purple-100",            // 🟪
+    dyp_round_robin: "text-purple-600",
+    round_robin: "bg-neutral-100",
+    group_matchplay: "bg-neutral-600",
+  };
+
+  return map[v] ?? "bg-neutral-100 text-neutral-600";
 }
 
 
@@ -908,6 +1031,8 @@ function toggleOpen(profileId: string) {
     return next;
   });
 }
+
+
 
 
   async function load() {
@@ -3737,6 +3862,12 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
     .slice(0, 8)
     .map((r: any) => ({ label: r.name, value: Math.round(r.winrate) }));
 
+  // Competition-Ranking Plätze (1,1,1,4 ...) für die Anzeige im Leaderboard
+  const competitionPlaces = useMemo(
+    () => computeCompetitionPlaces(rows, (r: any) => Number(r?.points ?? 0)),
+    [rows]
+  );
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-3">
@@ -3799,10 +3930,9 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
 
             {rows.map((r: any, index: number) => {
               const hist = (r.history ?? []).map((x: any) => x.points);
-              const place = index + 1;
+              const place = competitionPlaces[index] ?? index + 1;
 
-              const medal =
-                place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
+              const medal = medalForPlace(place);
               const medalClass =
                 place === 1 ? "text-lg leaderboard-glow" : "text-lg";
               const hasMedal = medal !== "";
@@ -4039,6 +4169,10 @@ function MiniLeaderboard({ code }: { code: string }) {
   }, [code]);
 
   const top = rows.slice(0, 8);
+  const topPlaces = useMemo(
+    () => computeCompetitionPlaces(top, (r: any) => Number(r?.points ?? 0)),
+    [top]
+  );
 
   return (
     <Card>
@@ -4068,8 +4202,16 @@ function MiniLeaderboard({ code }: { code: string }) {
                   key={r.id ?? r.player_id ?? index}
                   className="flex items-start gap-2 text-sm"
                 >
-                  <div className="w-3 text-right tabular-nums text-neutral-500 pt-0.5">
-                    {index + 1}.
+                  <div className="w-5 text-right tabular-nums text-neutral-500 pt-0.5">
+                    {(() => {
+                      const place = topPlaces[index] ?? index + 1;
+                      const medal = medalForPlace(place);
+                      return medal ? (
+                        <span className="text-base">{medal}</span>
+                      ) : (
+                        <span className="font-semibold">{place}.</span>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-start gap-2 flex-1 min-w-0">
                     <span
@@ -4119,6 +4261,7 @@ function CurrentRoundSticky({
   const mwrHasLoadedOnce = useRef(false);
 
   const locationId = tournament?.location_id ? String(tournament.location_id) : "";
+
 
   const currentRound = useMemo(() => {
     const rs = Array.isArray(rounds) ? rounds.slice() : [];
@@ -4278,7 +4421,7 @@ function CurrentRoundSticky({
         mwrHasLoadedOnce.current = true;
       }
     },
-    [code, locationId, currentMatches, matchPlayers, playersById, machinesInfoById]
+    [code, currentMatches, matchPlayers, playersById, machinesInfoById]
   );
 
   // Automatisch neu laden, wenn sich die "Signatur" ändert (Runde/Matches/Spieler/Startpos/Maschine/Status)
@@ -4490,6 +4633,125 @@ function CurrentRoundSticky({
 }
 
 
+
+function RotationGlobalTimerSticky({
+  locked,
+  timeLeftLabel,
+  timeLeftMs,
+  durationSec,
+  running,
+  paused,
+  onStart,
+  onPauseToggle,
+  onReset,
+}: {
+  locked: boolean;
+  timeLeftLabel: string;
+  timeLeftMs: number | null;
+  durationSec: number;
+  running: boolean;
+  paused: boolean;
+  onStart: (minutes: number) => void;
+  onPauseToggle: () => void;
+  onReset: () => void;
+}) {
+  const [minutes, setMinutes] = useState(10);
+
+  const totalMs = (durationSec ?? 600) * 1000;
+
+  let badgeClass = "bg-neutral-200 text-neutral-900";
+
+  if (timeLeftMs != null) {
+    if (timeLeftMs <= 60_000) {
+      badgeClass = "bg-red-600 text-white";
+    } else if (timeLeftMs <= totalMs / 2) {
+      badgeClass = "bg-orange-500 text-white";
+    } else {
+      badgeClass = "bg-green-600 text-white";
+    }
+  }
+
+
+  return (
+    <Card className="mt-2">
+      <CardHeader>
+        <div className="text-sm font-semibold">Rotation Timer</div>
+      </CardHeader>
+      <CardBody>
+        <div className="flex items-center justify-between gap-3">
+          
+
+          <div className="flex w-[220px] flex-col items-end gap-2">
+            <Select
+              value={String(minutes)}
+              onChange={(e) => setMinutes(Number(e.target.value) || 10)}
+              className="h-12 w-full text-xs"
+              title="Dauer (Minuten)"
+              disabled={locked || running || paused}
+            >
+              <option value="3">3 min</option>
+              <option value="5">5 min</option>
+              <option value="10">10 min</option>
+              <option value="15">15 min</option>
+              <option value="20">20 min</option>
+            </Select>
+<div className="flex w-full justify-center">
+  <div
+    className={[
+      "inline-flex items-center justify-center rounded-full",
+      "px-6 py-2",
+      "text-3xl font-semibold tabular-nums",
+      "transition-colors",
+      badgeClass,
+    ].join(" ")}
+    aria-live="polite"
+  >
+    {timeLeftLabel}
+  </div>
+</div>
+            <div className="grid w-full grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-9 px-3 text-sm w-full"
+                disabled={locked || (!running && !paused)}
+                onClick={onPauseToggle}
+                title={paused ? "Timer weiterlaufen lassen" : "Timer anhalten"}
+              >
+                {paused ? "Weiter" : "Pause"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-9 px-3 text-sm w-full"
+                disabled={locked}
+                onClick={onReset}
+              >
+                Reset
+              </Button>
+            </div>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 px-3 text-sm w-full"
+              disabled={locked || running}
+              onClick={() => onStart(minutes)}
+            >
+              Start
+            </Button>
+          </div>
+        </div>
+
+        <p className="mt-2 text-xs text-neutral-500">
+          Ein gemeinsamer Timer für alle Spieler – gilt über alle Runden/Matches.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
 function MatchplayProgressStack({
   tournament,
   rounds,
@@ -4547,46 +4809,188 @@ function MatchplayProgressStack({
     return map;
   }, [matchPlayers]);
 
+
+// ------------------------------------------------------------
+const format = String(tournament?.format ?? "");
+const isRotationFormat = format === "rotation";
+const isEliminationFormat = format === "elimination";
+
+// ------------------------------------------------------------
+// ✅ Elimination: Auto-Assign (Platzierungen nach Score) NUR wenn die Runde "voll" ist
+// Erwartete Spielerzahl = Startspieler(Runde 1) - (roundNumber-1), mind. 2
+// Beispiel Start=5: Runde2 erwartet 4, Runde3 erwartet 3, ...
+// ------------------------------------------------------------
+const getExpectedPlayersForEliminationRound = useCallback(
+  (roundNumber: number) => {
+    if (!isEliminationFormat) return null;
+
+    const sorted = (rounds ?? [])
+      .slice()
+      .sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0));
+
+    // ✅ Start-Runde für Elimination finden:
+    // die erste Runde im Turnier, in der überhaupt echte Spieler (player_id) in MatchPlayers auftauchen.
+    // (Elimination kann auch erst später starten, z.B. nach Quali.)
+    let startRoundNumber: number | null = null;
+    let startTotal = 0;
+
+    for (const rr of sorted) {
+      const roundId = String(rr?.id ?? "");
+      if (!roundId) continue;
+
+      const roundMatchIds = (matches ?? [])
+        .filter((mm: any) => String(mm.round_id) === roundId)
+        .map((mm: any) => String(mm.id));
+
+      const uniq = new Set<string>();
+      for (const mid of roundMatchIds) {
+        const mps0 = mpByMatchAll.get(mid) ?? [];
+        for (const mp of mps0) {
+          if (mp?.player_id) uniq.add(String(mp.player_id));
+        }
+      }
+
+      if (uniq.size > 0) {
+        startRoundNumber = Number(rr.number ?? 0) || null;
+        startTotal = uniq.size;
+        break;
+      }
+    }
+
+    if (!startRoundNumber || !startTotal) return null;
+
+    const rn = Number(roundNumber ?? 0) || 0;
+    if (rn <= 0) return null;
+
+    // Elimination: pro Runde 1 Spieler weniger aktiv (mindestens 2)
+    return Math.max(2, startTotal - (rn - startRoundNumber));
+  },
+  [isEliminationFormat, rounds, matches, mpByMatchAll]
+);
+
   const matchGroupCountsAll = useMemo(() => {
     const counts = new Map<string, number>();
+    const isDyp =
+      formatRaw === "dyp_round_robin" ||
+      formatRaw === "dyp round robin" ||
+      formatRaw === "dyp";
+
     for (const mm of matches ?? []) {
       const mid = String((mm as any)?.id ?? "");
       if (!mid) continue;
 
       const mps = mpByMatchAll.get(mid) ?? [];
-      const idsRaw = (mps ?? []).map((x: any) => String(x?.player_id ?? "")).filter(Boolean);
-
-      // nur "echte" Paarungen zählen (mind. 2 Spieler)
-      if (idsRaw.length < 2) continue;
+      if ((mps?.length ?? 0) < 2) continue;
 
       // Ghost rausfiltern (falls vorhanden)
-      const ids = idsRaw.filter((pid) => {
+      const mpsNoGhost = (mps ?? []).filter((mp: any) => {
+        const pid = String(mp?.player_id ?? "");
+        if (!pid) return false;
         const nm = playersById?.[pid]?.name ?? "";
         return String(nm).toLowerCase() !== "ghost";
       });
+      if ((mpsNoGhost?.length ?? 0) < 2) continue;
+
+      if (isDyp) {
+        // ✅ DYP Round Robin:
+        // Wir zählen hier bewusst die TEAM-PAARUNGEN (Teammates),
+        // weil bei 4 Spielern sonst nur 3 "Matchups" existieren (AB vs CD, AC vs BD, AD vs BC),
+        // aber 6 mögliche Team-Paare (C(4,2)=6).
+        const t1 = mpsNoGhost
+          .filter((x: any) => Number(x?.team ?? 0) === 1)
+          .map((x: any) => String(x?.player_id ?? ""))
+          .filter(Boolean)
+          .sort();
+        const t2 = mpsNoGhost
+          .filter((x: any) => Number(x?.team ?? 0) === 2)
+          .map((x: any) => String(x?.player_id ?? ""))
+          .filter(Boolean)
+          .sort();
+
+        let counted = false;
+        if (t1.length >= 2) {
+          const key = t1.join("+");
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+          counted = true;
+        }
+        if (t2.length >= 2) {
+          const key = t2.join("+");
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+          counted = true;
+        }
+        if (counted) continue;
+        // Fallback: wenn Team-Info fehlt, verhalte dich wie Default (Gruppe)
+      }
+
+      // Default (Matchplay/Swiss/RR): komplette Spielergruppe im Match zählen
+      const ids = mpsNoGhost
+        .map((x: any) => String(x?.player_id ?? ""))
+        .filter(Boolean);
+
       if (ids.length < 2) continue;
 
       const key = ids.slice().sort().join("::");
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [matches, mpByMatchAll, playersById]);
+  }, [matches, mpByMatchAll, playersById, formatRaw]);
 
   const pairingRowsAll = useMemo(() => {
     const rows: { key: string; label: string; count: number }[] = [];
+    const isDyp =
+      formatRaw === "dyp_round_robin" ||
+      formatRaw === "dyp round robin" ||
+      formatRaw === "dyp";
+
+    const shortName = (name: any) => {
+      const s = String(name ?? "").trim();
+      if (!s) return "—";
+      return s.slice(0, 12);
+    };
+
     for (const [key, count] of matchGroupCountsAll.entries()) {
+      // ✅ DYP-Key (Team-Paar): "a+b"
+      if (isDyp && key.includes("+") && !key.includes("||") && !key.includes("::")) {
+        const ids = key.split("+").filter(Boolean);
+        const names = ids.map((pid) => playersById?.[pid]?.name ?? "—").filter(Boolean);
+        rows.push({
+          key,
+          label: names.map(shortName).join(" + "),
+          count,
+        });
+        continue;
+      }
+
+      // Legacy DYP-Key (falls noch irgendwo): "a+b||c+d"
+      if (key.includes("||")) {
+        const [a, b] = key.split("||");
+        const team1Ids = String(a ?? "").split("+").filter(Boolean);
+        const team2Ids = String(b ?? "").split("+").filter(Boolean);
+
+        const team1Names = team1Ids.map((pid) => playersById?.[pid]?.name ?? "—").filter(Boolean);
+        const team2Names = team2Ids.map((pid) => playersById?.[pid]?.name ?? "—").filter(Boolean);
+
+        rows.push({
+          key,
+          label: `${team1Names.map(shortName).join(" + ")} vs ${team2Names.map(shortName).join(" + ")}`,
+          count,
+        });
+        continue;
+      }
+
+      // Default-Key: "a::b::c"
       const ids = key.split("::").filter(Boolean);
       const names = ids.map((pid) => playersById?.[pid]?.name ?? "—").filter(Boolean);
       const sep = ids.length === 2 ? " vs " : " / ";
       rows.push({ key, label: names.join(sep), count });
     }
+
     // häufigste oben
     rows.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
     return rows;
-  }, [matchGroupCountsAll, playersById]);
+  }, [matchGroupCountsAll, playersById, formatRaw]);
 
-
-  const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
+const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
 
 // ✅ Hauptrunde-Länge (Runden pro Hauptrunde) – 1:1 dieselbe Logik wie bei den farbigen Punkten links:
 // - match_size === 2: klassische Pairings (jeder gegen jeden)
@@ -4654,10 +5058,10 @@ function MatchplayProgressStack({
 
   const hasBars = bars.length > 0;
 
-  // ✅ Aussetzer (Bye) in der AKTUELLEN Runde anzeigen (nur bei ungerader Teilnehmerzahl)
+  // ✅ Aussetzer (Bye) in der AKTUELLEN Runde anzeigen (nur wenn Spielerzahl nicht durch match_size teilbar ist)
   const activePlayers = (players ?? []).filter((p: any) => p?.active !== false);
   const activeIds = activePlayers.map((p: any) => String(p.id)).filter(Boolean);
-  const hasBye = activeIds.length > 0 && activeIds.length % 2 === 1;
+  const hasBye = activeIds.length > 0 && matchSize > 0 && (activeIds.length % matchSize) !== 0;
 
   let byeName: string | null = null;
   let byeRoundLabel: string | null = null;
@@ -4839,6 +5243,9 @@ function RoundMatchesCard({
   playersCount?: number | null;
 }) {
   const [openRoundId, setOpenRoundId] = useState<string | null>(null);
+  // ✅ Elimination: alle aktiven (status=open) Runden bleiben automatisch aufgeklappt.
+  // Finished-Runden können optional manuell aufgeklappt werden.
+  const [openFinishedRoundIds, setOpenFinishedRoundIds] = useState<Set<string>>(() => new Set());
   const lastRoundCountRef = useRef<number>(0);
 
   const roundsPerCycle = useMemo(() => calcRoundsPerCycle(tournament, playersCount), [
@@ -4865,6 +5272,77 @@ function RoundMatchesCard({
 
   const locationId = tournament?.location_id ? String(tournament.location_id) : "";
 
+  const isEliminationFormat = String(tournament?.format ?? "") === "elimination";
+  const isRotationFormat = String(tournament?.format ?? "") === "rotation";
+
+
+  // ================================
+  // ✅ Elimination Helper: erwartete Spieler in Runde N
+  // Wichtig: MUSS im Scope von RoundMatchesCard sein, weil onBlur() hier läuft.
+  // Logik:
+  // - wir suchen die *erste* Runde im Turnier, in der überhaupt echte Spieler (player_id) auftauchen
+  //   (Elimination kann auch erst später starten, z.B. nach Quali.)
+  // - startTotal = distinct player_id in dieser Start-Runde
+  // - expected = startTotal - (roundNumber - startRoundNumber), mindestens 2
+  // ================================
+  const mpByMatchAll = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const mp of matchPlayers ?? []) {
+      const mid = String((mp as any)?.match_id ?? "");
+      if (!mid) continue;
+      const arr = map.get(mid) ?? [];
+      arr.push(mp);
+      map.set(mid, arr);
+    }
+    return map;
+  }, [matchPlayers]);
+
+  const getExpectedPlayersForEliminationRound = useCallback(
+    (roundNumber: number) => {
+      if (!isEliminationFormat) return null;
+
+      const sorted = (rounds ?? [])
+        .slice()
+        .sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0));
+
+      let startRoundNumber: number | null = null;
+      let startTotal = 0;
+
+      for (const rr of sorted) {
+        const roundId = String((rr as any)?.id ?? "");
+        if (!roundId) continue;
+
+        const roundMatchIds = (matches ?? [])
+          .filter((mm: any) => String((mm as any)?.round_id) === roundId)
+          .map((mm: any) => String((mm as any)?.id));
+
+        const uniq = new Set<string>();
+        for (const mid of roundMatchIds) {
+          const mps0 = (mpByMatchAll.get(mid) ?? []) as any[];
+          for (const mp of mps0) {
+            if ((mp as any)?.player_id) uniq.add(String((mp as any).player_id));
+          }
+        }
+
+        if (uniq.size > 0) {
+          startRoundNumber = Number((rr as any).number ?? 0) || null;
+          startTotal = uniq.size;
+          break;
+        }
+      }
+
+      if (!startRoundNumber || !startTotal) return null;
+
+      const rn = Number(roundNumber ?? 0) || 0;
+      if (rn <= 0) return null;
+
+      return Math.max(2, startTotal - (rn - startRoundNumber));
+    },
+    [isEliminationFormat, rounds, matches, mpByMatchAll]
+  );
+
+
+
   function fmtPct(v: number | null | undefined) {
     if (typeof v !== "number" || !Number.isFinite(v)) return "—";
     return `${v.toFixed(1)}%`;
@@ -4881,11 +5359,12 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
 
   useEffect(() => {
     const count = rounds?.length ?? 0;
+     //alert(`count=${count}`);
     if (!rounds || count === 0) {
       lastRoundCountRef.current = 0;
       return;
     }
-
+ //alert(`count > lastRoundCountRef.current=${lastRoundCountRef.current}`);
     if (count > lastRoundCountRef.current) {
       const sorted = rounds
         .slice()
@@ -4914,6 +5393,13 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
     // Auto-einklappen nur beim echten Übergang open -> finished
     if (prevStatus === "open" && nextStatus === "finished") {
       if (openRoundId === id) setOpenRoundId(null);
+      // Elimination: sobald finished, zuklappen (auch wenn vorher auto-offen)
+      setOpenFinishedRoundIds((s) => {
+        if (!s.has(id)) return s;
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
     }
 
     prev[id] = nextStatus;
@@ -4948,6 +5434,9 @@ type OcrState = {
 };
 
 const [ocrByMatch, setOcrByMatch] = useState<Record<string, OcrState>>({});
+
+
+
 
 const isOcrOpen = (st?: OcrState) =>
   !!(st?.dataUrl || st?.busy || (st?.scores?.length ?? 0) > 0 || st?.error || st?.text);
@@ -5176,6 +5665,8 @@ async function autoAssignPositionsByExplicitScores(
   orderedPlayerIds: string[],
   scores: number[]
 ) {
+
+  alert(`autoAssign`);
   const rows = orderedPlayerIds
     .map((pid, idx) => ({ player_id: pid, score: scores[idx] }))
     .filter(
@@ -5457,7 +5948,7 @@ setTWinrateByPlayerId(map);
     position: number | null
   ) {
     if (locked) return;
-
+ //alert(`setposition: playerID=${playerId}, position=${position}`);
     const key = k(matchId, playerId);
     setPosOverride((prev) => ({ ...prev, [key]: position }));
     setSaving((prev) => ({ ...prev, [key]: true }));
@@ -5534,6 +6025,8 @@ setTWinrateByPlayerId(map);
 
   // müssen alle scores haben
   const allHaveScores = rows.length >= 2 && rows.every((x) => typeof getScore(x) === "number");
+  //alert(`rows.length >= 2=${rows.length}, rows.every((x) => typeof getScore(x) === "number")=${rows.every((x) => typeof getScore(x) === "number")}`);
+  //alert(`allHaveScores=${allHaveScores}`);
   if (!allHaveScores) return;
 
   // wenn schon irgendeine position gesetzt ist -> NICHT anfassen (sicher)
@@ -5543,14 +6036,52 @@ setTWinrateByPlayerId(map);
   // Scores holen
   const scored = rows.map((x) => ({ player_id: x.player_id, score: getScore(x) as number }));
 
+
+  // 🔥 ELIMINATION-SPEZIALFALL: nur Platz 1 / Platz 2
+  if (isEliminationFormat) {
+    const minScore = Math.min(...scored.map((s) => s.score));
+    const losers = scored.filter((s) => s.score === minScore);
+
+    // Gleichstand um den letzten Platz → nicht automatisch entscheiden
+    //alert(`autoAssignPositionsByScore: 1 und 2 Plätze setzten`);
+    if (losers.length !== 1) return;
+
+    //alert(`losers.length=${losers.length}`);
+
+    const loserPlayerId = losers[0].player_id;
+
+    //alert(`loserPlayerId=${loserPlayerId}`);
+
+    //alert(`scored=${scored}`);
+
+    for (const s of scored) {
+      const pos =
+        String(s.player_id) === String(loserPlayerId) ? 2 : 1;
+
+        //alert(`autoAssignPositionsByScore ruft setPosition auf für s.player_id: ${s.player_id}`);
+
+      await setPosition(matchId, s.player_id, pos);
+    }
+
+    return; // wichtig: danach NICHT weiter mit Ranking-Logik
+  }
+
+
+//alert(`Standart Plätze`);
   // Optional: wenn Gleichstand -> abbrechen (sonst zufälliges Verhalten)
-  const uniq = new Set(scored.map((s) => s.score));
-  if (uniq.size !== scored.length) return;
+    const uniq = new Set(scored.map((s) => s.score));
+   // alert(`uniq=${uniq}`);
+   // alert(`scored.length=${scored.length}`);
+  if (uniq.size !== scored.length) {
+    alert("Gleichstand der Scores");
+    return;
+  }
 
   // absteigend sortieren
   scored.sort((a, b) => b.score - a.score);
 
   // Positionen setzen
+   //alert(`Positionen setzen`);
   for (let i = 0; i < scored.length; i++) {
     const pid = scored[i].player_id;
     const pos = i + 1;
@@ -5661,7 +6192,11 @@ return (
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-semibold">Runden & Matches</div>
         <div className="text-[12px] text-neutral-500">
-          Zum Öffnen auf eine Runde klicken
+          {isEliminationFormat
+            ? "Elimination: aktive Runden sind automatisch offen"
+            : isRotationFormat
+            ? "Rotation: alle Maschinen-Runden sind automatisch offen"
+            : "Zum Öffnen auf eine Runde klicken"}
           {locked ? " • Turnier beendet (read-only)" : ""}
         </div>
       </div>
@@ -5685,10 +6220,55 @@ return (
           .slice()
           .sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0))
           .map((r: any) => {
-            const ms = matchesByRound[r.id] ?? [];
-            const isOpen = openRoundId === r.id;
+const ms = matchesByRound[r.id] ?? [];
+const forcedOpen =
+  (isEliminationFormat && r.status === "open") ||
+  (isRotationFormat && r.status === "open");
+const isOpen =
+  forcedOpen ||
+  (isEliminationFormat ? openFinishedRoundIds.has(r.id) : openRoundId === r.id);
 
 // ✅ Sieger-Text pro Match inkl. Maschine (genau wie im aufgeklappten Match)
+
+// ✅ Elimination: Spieler-Anzeige im Runden-Header (current/expected)
+const expectedPlayers = isEliminationFormat
+  ? getExpectedPlayersForEliminationRound(Number(r?.number ?? r?.round_no ?? 0))
+  : null;
+
+const currentPlayers = (() => {
+  const uniq = new Set<string>();
+  for (const mm of ms ?? []) {
+    const mid = String((mm as any)?.id ?? "");
+    if (!mid) continue;
+    for (const mp of (mpByMatch[mid] ?? []) as any[]) {
+      if ((mp as any)?.player_id) uniq.add(String((mp as any).player_id));
+    }
+  }
+  return uniq.size;
+})();
+
+// ✅ Elimination: niedrigster (aktuell eingegebener) Score in dieser Runde
+// (wichtig für "Score to beat" / Cutline)
+const lowestScoreInRound = (() => {
+  let min: number | null = null;
+
+  for (const mm of ms ?? []) {
+    const mid = String((mm as any)?.id ?? "");
+    if (!mid) continue;
+
+    for (const mp of (mpByMatch[mid] ?? []) as any[]) {
+      if (!(mp as any)?.player_id) continue;
+      const sc = getScore(mp);
+      if (typeof sc !== "number" || !Number.isFinite(sc)) continue;
+
+      min = min == null ? sc : Math.min(min, sc);
+    }
+  }
+
+  return min;
+})();
+
+
 const winnersText = (() => {
   // nur bei finished anzeigen (sonst verwirrt’s)
   if (r.status !== "finished") return "—";
@@ -5722,22 +6302,50 @@ const winnersText = (() => {
               >
                 <button
                   className="w-full grid grid-cols-12 gap-2 px-4 py-3 items-center text-left hover:bg-neutral-50"
-                  onClick={() => setOpenRoundId(isOpen ? null : r.id)}
+                  onClick={() => {
+                    if (isEliminationFormat) {
+                      // Aktive Runden bleiben immer offen
+                      if (r.status === "open") return;
+                      setOpenFinishedRoundIds((s) => {
+                        const n = new Set(s);
+                        if (n.has(r.id)) n.delete(r.id);
+                        else n.add(r.id);
+                        return n;
+                      });
+                      return;
+                    }
+                    setOpenRoundId(isOpen ? null : r.id);
+                  }}
                 >
                   <div className="col-span-1 font-semibold text-sm  tabular-nums">
                     #{r.number}
                   </div>
-                  <div className="col-span-3 flex items-center gap-2">{(() => {
+                  <div className="col-span-3 flex items-center gap-2">
+                    {(() => {
                       const rn = Number(r?.number ?? r?.round_no ?? 0);
                       const per = roundsPerCycle ?? null;
                       if (!per || !Number.isFinite(rn) || rn <= 0) return null;
                       const idx = Math.floor((rn - 1) / per);
                       const c = MAIN_ROUND_COLORS[idx % MAIN_ROUND_COLORS.length];
                       return (
-                        <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: c }} />
+                        <span
+                          className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: c }}
+                        />
                       );
                     })()}
-                    <span className="text-xs text-gray-400">{formatLabel(r.format)}</span></div>
+
+                    <div className="flex flex-col leading-tight">
+                      <span className="text-xs text-gray-600">
+                          <span
+    className={` text-xs ${formatStyleRound(r.format)}`}
+  >
+    {formatLabel(r.format)}
+  </span>
+                      </span>
+
+                    </div>
+                  </div>
                   <div className="col-span-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span
@@ -5785,13 +6393,14 @@ const winnersText = (() => {
                       </span>
                     </div>
                   </div>
-                  <div className="col-span-4 text-center text-xs sm:text-xs text-neutral-700 truncate">
+                  <div className="col-span-4 text-center text-xs sm:text-xs text-neutral-700">
                     {winnersText}
                   </div>
                   <div className="col-span-2 text-right tabular-nums text-xs sm:text-xs">
-                    {ms.length}
+                   {ms.length}
                   </div>
                 </button>
+
 
                 {/* ✅ NEU: animiertes Auf/Zu statt {isOpen && ...} */}
                 <div
@@ -5803,6 +6412,8 @@ const winnersText = (() => {
                   }
                   aria-hidden={!isOpen}
                 >
+
+
                   <div className="border-t bg-neutral-100 px-4 py-4">
                     {ms.length === 0 ? (
                       <div className="text-sm text-neutral-500">
@@ -5855,6 +6466,39 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
 
 
 
+
+
+
+// ✅ Rotation: aktuell höchster (eingegebener) Score in diesem Match
+const highestScoreInMatch = (() => {
+  let max: number | null = null;
+
+  for (const mp of mps ?? []) {
+    if (!(mp as any)?.player_id) continue;
+    const sc = getScore(mp as any);
+    if (typeof sc !== "number" || !Number.isFinite(sc)) continue;
+
+    max = max == null ? sc : Math.max(max, sc);
+  }
+
+  return max;
+})();
+
+const scoredPlayersInMatch = (() => {
+  let c = 0;
+  for (const mp of mps ?? []) {
+    const sc = getScore(mp as any);
+    if (typeof sc === "number" && Number.isFinite(sc)) c++;
+  }
+  return c;
+})();
+
+
+
+
+                          
+
+
                           const groupIds = mps.map((x) => x.player_id).filter(Boolean);
                           const groupKey = groupIds.slice().sort().join("::");
                           const rawPlayed = matchGroupCounts.get(groupKey) ?? 0;
@@ -5891,7 +6535,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
 
 
 
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 sm:px-4 sm:py-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-2 py-1 sm:px-3 sm:py-2">
                               
                                 {/* Linke Seite: Maschine + Spiel + Hinweis */}
                                 <div className="flex flex-col gap-1">
@@ -5912,7 +6556,15 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                       value={m.machine_id ?? ""}
                                       className="rounded-lg h-02 max-h-10 w--[130px] max-w-[130px]  px-3 py-2 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8 "
                                       
-                                      disabled={
+                                                                            title={
+                                        locked
+                                          ? "Turnier ist beendet – Maschine kann nicht mehr geändert werden."
+                                          : hasResults
+                                          ? "Ergebnisse gesetzt – Maschine kann nicht mehr geändert werden."
+                                          : "Solange noch keine Ergebnisse gesetzt sind, kann die Maschine geändert werden."
+                                      }
+
+disabled={
                                         locked || hasResults || savingMachine[m.id]
                                       }
                                       onChange={(e) =>
@@ -5966,29 +6618,17 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
 
 
                                   </div>
-
-                                  {/* Hinweistext unter dem Dropdown */}
-                                  <div className="text-[11px] font-normal text-neutral-500">
-                                    {locked
-                                      ? "Turnier ist beendet – Maschine kann nicht mehr geändert werden."
-                                      : hasResults
-                                      ? "Ergebnisse gesetzt – Maschine kann nicht mehr geändert werden."
-                                      : "Solange noch keine Ergebnisse gesetzt sind, kann die Maschine geändert werden."}
-                                  </div>
-
-
-
-
-
                                 </div>
 
                                 {/* Rechte Seite: Match-ID / Speichern-Status */}
-                                <div className="text-xs text-neutral-500 whitespace-nowrap">
+                                <div className="flex text-xs text-neutral-500 whitespace-nowrap">
                                    {displayNo ? (
-                                      <div className="flex flex-col items-end gap-1">
+                                      <div className="flex  items-end flex items-center  gap-2">
                                         <span className="font-semibold text-neutral-500 whitespace-nowrap">
                                           Spiel {displayNo}
                                         </span>
+
+                                        {/* Rotation-Timer ist global im rechten Sticky-Bereich */}
 
                                         {/* OCR Button (öffnet weiterhin das Panel unten) */}
                                         <label
@@ -6003,13 +6643,14 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                                         </label>
                                       </div>
                                     ) : null}
+                                    {/*
                                     <div className="text-xs text-neutral-500 whitespace-nowrap">
                                    {m.game_number ? (
                                       <span className="font-semibold text-white whitespace-nowrap">
                                         Place
                                       </span>
                                     ) : null}
-                                </div>
+                                    </div> */}
                                 </div>
                               </div>
 
@@ -6174,9 +6815,61 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
 ) : null}
 
 
+                  {isEliminationFormat ? (
+                      <div className="p-2 bg-yellow-100 text-center text-xs sm:text-xs text-neutral-700 truncate">
+                          
+                              <>
+                                <div className="text-[12px] font-semibold text-neutral-500 tabular-nums">
+                                  Spieler: {currentPlayers}/{expectedPlayers ?? "—"}
+                                </div>
+                                <div className="text-[12px] mt-1 mb-1 font-semibold text-neutral-500 tabular-nums">
+                                  Cutoff
+                                </div>
+                                <div className="text-center text-[12px] font-semibold text-neutral-500 tabular-nums">
+                                   <div
+                                    style={{
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      gap: 6,
+                                      alignItems: "center",   // 👈 DAS ist der Punkt
+                                    }}
+                                  >
+                                    
+                                      <PinballScore
+                                        value={lowestScoreInRound}
+                                        minDigits={7}
+                                      />
+                                    </div>
+                                </div>
+                              </>
+                          
+                        </div>
+) : isRotationFormat ? (
+  <div className="p-2 bg-blue-50 text-center text-xs sm:text-xs text-neutral-700 truncate">
+    <>
+      <div className="text-[12px] mt-1 mb-1 font-semibold text-neutral-500 tabular-nums">
+        Highscore
+      </div>
 
+      <div className="text-center text-[12px] font-semibold text-neutral-500 tabular-nums">
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+          {typeof highestScoreInMatch === "number" && Number.isFinite(highestScoreInMatch) ? (
+            <PinballScore value={highestScoreInMatch} minDigits={7} />
+          ) : (
+            <span className="text-[12px] text-neutral-500">—</span>
+          )}
+        </div>
+      </div>
+    </>
+  </div>
+) : null}
                                         </div>
+                                 
                                       </div>  
+
+
+
+
 
 
 <div className="px-2 pt-0 pb-2 sm:px-4 sm:pt-0 sm:pb-4">
@@ -6296,7 +6989,7 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                   <Select
                     value={pos}
                     className="rounded-lg px-2 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs"
-                    disabled={locked}
+                    disabled={locked || isEliminationFormat}
                     onChange={(e) => setTeamResult(nr, e.target.value)}
                   >
                     <option value="">Platz —</option>
@@ -6408,118 +7101,137 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
     ) : null}
   </div>
 
-	  {/* Winrate direkt im Match (links) */}
-	  <div className="pl-9 flex items-center gap-3 text-[11px] tabular-nums">
-	    {(() => {
-	      const pid = mp?.player_id ? String(mp.player_id) : "";
-	      const profileId =
-	        pid && playersById?.[pid]?.profile_id ? String(playersById[pid].profile_id) : "";
+    {/* Winrate direkt im Match (links) */}
+    <div className="pl-9 flex items-center gap-3 text-[11px] tabular-nums">
+      {(() => {
+        const pid = mp?.player_id ? String(mp.player_id) : "";
+        const profileId =
+          pid && playersById?.[pid]?.profile_id ? String(playersById[pid].profile_id) : "";
 
-	      const t = profileId ? (tWinrateByPlayerId?.[profileId] ?? null) : null;
+        const t = profileId ? (tWinrateByPlayerId?.[profileId] ?? null) : null;
 
-	      const machineName =
-	        machinesInfoById?.[String(m?.machine_id ?? "")]?.name
-	          ? String(machinesInfoById[String(m.machine_id)].name)
-	          : "";
+        const machineName =
+          machinesInfoById?.[String(m?.machine_id ?? "")]?.name
+            ? String(machinesInfoById[String(m.machine_id)].name)
+            : "";
 
-	      const key = profileId && machineName && locationId ? `${profileId}__${machineName}__${locationId}` : "";
-	      const mwr = key ? (mWinrateByKey?.[key] ?? null) : null;
-	      const mpCount = typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0;
+        const key = profileId && machineName && locationId ? `${profileId}__${machineName}__${locationId}` : "";
+        const mwr = key ? (mWinrateByKey?.[key] ?? null) : null;
+        const mpCount = typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0;
 
-	      // ✅ Vergleich innerhalb DESSELBEN Matches: höchste Werte grün markieren (wie rechts)
-	      const getProfileId = (playerIdRaw: any) => {
-	        const p = playerIdRaw ? String(playerIdRaw) : "";
-	        return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
-	      };
-	
-	      const tVals: number[] = [];
-	      const mVals: number[] = [];
-	
-	      for (const other of mps ?? []) {
-	        const otherProfileId = getProfileId(other?.player_id);
-	        if (!otherProfileId) continue;
-	
-	        const ot = tWinrateByPlayerId?.[otherProfileId];
-	        if (typeof ot === "number" && Number.isFinite(ot)) tVals.push(ot);
-	
-	        if (machineName && locationId) {
-	          const oKey = `${otherProfileId}__${machineName}__${locationId}`;
-	          const omwr = mWinrateByKey?.[oKey];
-	          const ov = omwr?.winrate;
-	          if (typeof ov === "number" && Number.isFinite(ov)) mVals.push(ov);
-	        }
-	      }
+        // ✅ Vergleich innerhalb DESSELBEN Matches: höchste Werte grün markieren (wie rechts)
+        const getProfileId = (playerIdRaw: any) => {
+          const p = playerIdRaw ? String(playerIdRaw) : "";
+          return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
+        };
+  
+        const tVals: number[] = [];
+        const mVals: number[] = [];
+  
+        for (const other of mps ?? []) {
+          const otherProfileId = getProfileId(other?.player_id);
+          if (!otherProfileId) continue;
+  
+          const ot = tWinrateByPlayerId?.[otherProfileId];
+          if (typeof ot === "number" && Number.isFinite(ot)) tVals.push(ot);
+  
+          if (machineName && locationId) {
+            const oKey = `${otherProfileId}__${machineName}__${locationId}`;
+            const omwr = mWinrateByKey?.[oKey];
+            const ov = omwr?.winrate;
+            if (typeof ov === "number" && Number.isFinite(ov)) mVals.push(ov);
+          }
+        }
 
-	      const maxT = tVals.length > 0 ? Math.max(...tVals) : null;
-	      const maxM = mVals.length > 0 ? Math.max(...mVals) : null;
+        const maxT = tVals.length > 0 ? Math.max(...tVals) : null;
+        const maxM = mVals.length > 0 ? Math.max(...mVals) : null;
 
-	      	      // Runde-Status ist in diesem Block nicht zuverlässig vorhanden.
+                // Runde-Status ist in diesem Block nicht zuverlässig vorhanden.
 // Wir nehmen hier den Match-Status (wie rechts im Winrate-Kasten): Aktiv = nicht finished.
 const matchStatusRaw = String((m as any)?.status ?? "").toLowerCase();
 const isRoundActive = matchStatusRaw !== "finished";
 
-	      const tIsTop = typeof t === "number" && Number.isFinite(t) && typeof maxT === "number" && t === maxT;
-	      const mIsTop =
-	        typeof mwr?.winrate === "number" &&
-	        Number.isFinite(mwr.winrate) &&
-	        typeof maxM === "number" &&
-	        mwr.winrate === maxM;
+        const tIsTop = typeof t === "number" && Number.isFinite(t) && typeof maxT === "number" && t === maxT;
+        const mIsTop =
+          typeof mwr?.winrate === "number" &&
+          Number.isFinite(mwr.winrate) &&
+          typeof maxM === "number" &&
+          mwr.winrate === maxM;
 
-	      // ✅ Nur in aktiver Runde grün highlighten. Wenn finished: alles neutral.
-	      const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
-	      const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
+        // ✅ Nur in aktiver Runde grün highlighten. Wenn finished: alles neutral.
+        const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
+        const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
 
-	      // ⭐ Favorit: nur in aktiver Runde.
-	      // Favorit ist der Spieler, der mehr "grüne Werte" hat (Winrate + M-Winrate). Bei Gleichstand: kein Icon.
-	      let isFavorite = false;
-	      if (isRoundActive) {
-	        const greenCountByProfile: Record<string, number> = {};
-	        for (const other of mps ?? []) {
-	          const otherProfileId = getProfileId(other?.player_id);
-	          if (!otherProfileId) continue;
-	          const ot = tWinrateByPlayerId?.[otherProfileId];
-	          const om = machineName && locationId ? mWinrateByKey?.[`${otherProfileId}__${machineName}__${locationId}`]?.winrate : null;
-	          const otIsTop = typeof ot === "number" && Number.isFinite(ot) && typeof maxT === "number" && ot === maxT;
-	          const omIsTop = typeof om === "number" && Number.isFinite(om) && typeof maxM === "number" && om === maxM;
-	          greenCountByProfile[otherProfileId] = (otIsTop ? 1 : 0) + (omIsTop ? 1 : 0);
-	        }
-	        const counts = Object.values(greenCountByProfile);
-	        const maxCount = counts.length ? Math.max(...counts) : 0;
-	        const winners = counts.filter((c) => c === maxCount).length;
-	        const myCount = profileId ? (greenCountByProfile[profileId] ?? 0) : 0;
-	        isFavorite = maxCount > 0 && winners === 1 && myCount === maxCount;
-	      }
+        // ⭐ Favorit: nur in aktiver Runde.
+        // Favorit ist der Spieler, der mehr "grüne Werte" hat (Winrate + M-Winrate). Bei Gleichstand: kein Icon.
+        let isFavorite = false;
+        if (isRoundActive) {
+          const greenCountByProfile: Record<string, number> = {};
+          for (const other of mps ?? []) {
+            const otherProfileId = getProfileId(other?.player_id);
+            if (!otherProfileId) continue;
+            const ot = tWinrateByPlayerId?.[otherProfileId];
+            const om = machineName && locationId ? mWinrateByKey?.[`${otherProfileId}__${machineName}__${locationId}`]?.winrate : null;
+            const otIsTop = typeof ot === "number" && Number.isFinite(ot) && typeof maxT === "number" && ot === maxT;
+            const omIsTop = typeof om === "number" && Number.isFinite(om) && typeof maxM === "number" && om === maxM;
+            greenCountByProfile[otherProfileId] = (otIsTop ? 1 : 0) + (omIsTop ? 1 : 0);
+          }
+          const counts = Object.values(greenCountByProfile);
+          const maxCount = counts.length ? Math.max(...counts) : 0;
+          const winners = counts.filter((c) => c === maxCount).length;
+          const myCount = profileId ? (greenCountByProfile[profileId] ?? 0) : 0;
+          isFavorite = maxCount > 0 && winners === 1 && myCount === maxCount;
+        }
 
 return (
-	        <>
-	          <span className="text-neutral-500">
-	            Turnier-Winrate <span className={tCls}>{fmtPct(t)}</span>
-	          </span>
-	          <span className="text-neutral-500">
-	            Flipper-Winrate <span className={mCls}>{fmtPct(mwr?.winrate)}</span>
-	            {mpCount > 0 ? ` (${mpCount})` : ""}
-	          </span>
-	          {isRoundActive && isFavorite ? (
-	            <span className="text-yellow-500 text-sm" title="Favorit">★</span>
-	          ) : null}
-	          {winrateLoading ? <span className="text-neutral-400">lädt…</span> : null}
-	        </>
-	      );
-	    })()}
-	  </div>
+          <>
+            <span className="text-neutral-500">
+              Turnier-Winrate <span className={tCls}>{fmtPct(t)}</span>
+            </span>
+            <span className="text-neutral-500">
+              Flipper-Winrate <span className={mCls}>{fmtPct(mwr?.winrate)}</span>
+              {mpCount > 0 ? ` (${mpCount})` : ""}
+            </span>
+            {isRoundActive && isFavorite ? (
+              <span className="text-yellow-500 text-sm" title="Favorit">★</span>
+            ) : null}
+            {winrateLoading ? <span className="text-neutral-400">lädt…</span> : null}
+          </>
+        );
+      })()}
+    </div>
 </div>
 </div>
 
+
+
+
+
+
+
                     <div className="flex flex-col gap-1">
+
+
+
+
+
+                      
                       <Select
                         value={pos ?? ""}
                         className="rounded-lg h-10 max-h-10 w--[160px] max-w-[160px]  px-1 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8"
-                        disabled={locked}
-                        onChange={async (e) => {
+                        disabled={locked || isEliminationFormat || isRotationFormat}
+                        //onChange={async (e) => {
+                        
+                        onChange={
+                           
+                            (isEliminationFormat || isRotationFormat)
+                              ? undefined
+                              : async (e) => {
                           if (locked) return;
-
                           const v = e.target.value;
                           const next = v === "" ? null : Number(v);
+
+                          
 
                           const currentPos =
                             typeof pos === "number" && pos > 0 ? pos : null;
@@ -6589,9 +7301,11 @@ return (
 
                           return (
                             <option key={p} value={p}>
-                              {holder
-                                ? `⛔ Platz ${p} (belegt durch ${holder})`
-                                : `✅ Platz ${p}`}
+                              {isEliminationFormat
+                                ? `Platz ${p}`
+                                : holder
+                                  ? `⛔ Platz ${p} (belegt durch ${holder})`
+                                  : `✅ Platz ${p}`}
                             </option>
                           );
                         })}
@@ -6599,6 +7313,11 @@ return (
 
                       {/* ✅ NEU: Flipperpunkte/Score (unter Platz-Dropdown) */}
                       <div className="flex items-center gap-2">
+
+
+
+
+
                         <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
                           Punkte
                         </span>
@@ -6631,11 +7350,6 @@ return (
 
                             if (raw === "") {
                               await setScore(mp.match_id, mp.player_id, null);
-                              setScoreOverride((prev) => {
-                                const cp = { ...prev };
-                                delete cp[key];
-                                return cp;
-                              });
                               return;
                             }
 
@@ -6646,29 +7360,123 @@ return (
                             }
 
                             await setScore(mp.match_id, mp.player_id, n);
+// ✅ wenn jetzt alle Scores da sind: Plätze automatisch setzen
+// Elimination: NUR wenn die Runde wirklich "voll" ist (Start=5 -> Runde2 erwartet 4, Runde3 erwartet 3, ...)
+if (isEliminationFormat) {
+  const expected = getExpectedPlayersForEliminationRound(Number(r?.number ?? 0));
 
-                            // ✅ wenn jetzt alle Scores da sind: Plätze automatisch setzen
-                            await autoAssignPositionsByScore(m.id, mps); 
+  // ⚠️ Wichtig: nach setScore() kann mps im Closure stale sein.
+  // Deshalb: latest MatchPlayers direkt aus dem globalen matchPlayers-State für dieses Match ziehen.
+  const latestMps =
+    (matchPlayers ?? []).filter((x: any) => String(x?.match_id) === String(m?.id));
 
-                            setScoreOverride((prev) => {
-                              const cp = { ...prev };
-                              delete cp[key];
-                              return cp;
-                            });
+  const currentCount = (latestMps ?? []).filter((x: any) => x?.player_id).length;
+ //alert(`expected=${expected}, latestMps=${latestMps}, currentCount=${currentCount}`);
+  if (expected && currentCount === expected) {
+    //alert(`dadfm.id=${m.id}, latestMps=${latestMps}`);
+    await autoAssignPositionsByScore(m.id, latestMps);
+  }
+} else {
+  await autoAssignPositionsByScore(m.id, mps);
+}
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               (e.target as HTMLInputElement).blur();
                             }
-                          }}
-                        />
+                          }}/>
+
+                       
 
                         {savingScore[k(mp.match_id, mp.player_id)] ? (
                           <span className="text-[10px] sm:text-xs text-neutral-500">
                             speichere…
                           </span>
                         ) : null}
+
+
+
+
+
+
+
+
                       </div>
+
+
+ {/* ✅ Elimination QoL: "Cutoff + 1" Button (schnelles Weiterkommen) */}
+                        {isEliminationFormat &&
+                        typeof lowestScoreInRound === "number" &&
+                        Number.isFinite(lowestScoreInRound) &&
+                        (() => {
+                          const cutoff = lowestScoreInRound as number;
+                          const my = getScore(mp);
+                          return my == null;
+                        })() ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-5 px-1 text-[10px] bg-green-200 sm:text-xs bg-green-200"
+                            disabled={locked}
+                            title="Trägt automatisch Cutoff + 1 ein"
+                            onClick={async () => {
+                              if (locked) return;
+
+                              const cutoff = Number(lowestScoreInRound);
+                              if (!Number.isFinite(cutoff)) return;
+
+                              //const target = Math.max(0, Math.floor(cutoff) + 1 + zufallszahl zwischen 1 und 30);
+                              const randomOffset = Math.floor(Math.random() * 30) + 1; // 1..30
+                              const target = Math.max(0, Math.floor(cutoff) + 1 + randomOffset);
+
+                              const key = k(mp.match_id, mp.player_id);
+
+                              // UI sofort updaten (ohne 7-stellige Zahl tippen)
+                              setScoreOverride((prev) => ({
+                                ...prev,
+                                [key]: String(target),
+                              }));
+
+                              setScoreFocusKey(null);
+
+                              // Speichern
+                              await setScore(mp.match_id, mp.player_id, target);
+
+                              // Danach: wenn Runde "voll" + alle Scores => Plätze automatisch setzen
+                              const expected = getExpectedPlayersForEliminationRound(
+                                Number(r?.number ?? 0)
+                              );
+
+                              const latestMps = (matchPlayers ?? []).filter(
+                                (x: any) =>
+                                  String(x?.match_id) === String(m?.id)
+                              );
+
+                              const currentCount = (latestMps ?? []).filter(
+                                (x: any) => x?.player_id
+                              ).length;
+                              //alert(`expected=${expected}, currentCount=${currentCount}`);
+                              if (expected && currentCount === expected) {
+                                const latestMps = (matchPlayers ?? []).filter(
+                                  (x: any) => String(x?.match_id) === String(m?.id)
+                                );
+
+                                const latestMpsPatched = latestMps.map((x: any) => {
+                                  if (String(x?.player_id) === String(mp.player_id)) {
+                                    return { ...x, score: target }; // ✅ Button-Score ist garantiert drin
+                                  }
+                                  return x;
+                                });
+
+                                await autoAssignPositionsByScore(m.id, latestMpsPatched);
+                              }
+                            }}
+                          >
+                            ✓
+                          </Button>
+                        ) : null}
+
+
                     </div>
                   </div>
                 </SortablePlayerRow>
@@ -6714,7 +7522,7 @@ return (
 
 export default function AdminHome() {
   const [tab, setTab] = useState<
-    "start" | "create" | "archive" | "elimination" | "locations" | "players" | "stats" | "admin"
+    "start" | "create" | "archive" | "locations" | "players" | "stats" | "admin"
   >("start");
 
     // ⭐ NEU: Rolle + Mail des aktuellen Users
@@ -6847,7 +7655,7 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   const [matchSize, setMatchSize] = useState<2 | 3 | 4>(4);
 
   const [tournamentFormat, setTournamentFormat] =
-    useState<"matchplay" | "swiss" | "round_robin" | "dyp_round_robin">("matchplay");
+    useState<"matchplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation">("matchplay");
 
   const [templateTournamentId, setTemplateTournamentId] =
     useState<string>("");
@@ -7076,24 +7884,7 @@ if (joined)
               Turnier-Archiv
             </button>
 
-            {isAdmin && <span className="hidden md:inline text-neutral-300">|</span>}
 
-            {isAdmin && (
-              <button
-                onClick={() => {
-                  setJoined(null);
-                  setTab("elimination");
-                }}
-                className={
-                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
-                  (tab === "elimination"
-                    ? "bg-black text-white"
-                    : "text-neutral-600 hover:bg-neutral-100")
-                }
-              >
-                Elimination
-              </button>
-            )}
 
             {isAdmin && <span className="hidden md:inline text-neutral-300">|</span>}
 
@@ -7268,23 +8059,7 @@ if (joined)
               Turnier-Archiv
             </button>
 
-              {/* 👇 NEU: Elimination-Tab */}
-              {isAdmin && (
-                <span className="hidden md:inline text-neutral-300">|</span>
-              )}
-              {isAdmin && (
-              <button
-                onClick={() => setTab("elimination")}
-                className={
-                  "whitespace-nowrap rounded-full px-3 py-2 text-sm font-medium transition " +
-                  (tab === "elimination"
-                    ? "bg-black text-white"
-                    : "text-neutral-600 hover:bg-neutral-100")
-                }
-              >
-                Elimination
-              </button>
-              )}
+
 
 
 
@@ -7448,6 +8223,8 @@ if (joined)
       <option value="matchplay">Matchplay (Standard)</option>
       <option value="swiss">Swiss</option>
       <option value="round_robin">Round Robin (Beta)</option>
+      <option value="rotation">Rotation (alle Spieler spielen jede Maschine)</option>
+        <option value="elimination">Crazy Elimination (alle gegeneinander, -1 pro Runde)</option>
       <option value="dyp_round_robin">DYP Round Robin (2vs2, Teams rotieren)</option>
     </Select>
     <div className="mt-1 text-xs text-neutral-500">
@@ -7457,15 +8234,20 @@ if (joined)
 
   <div>
     <div className="mb-1 text-sm text-neutral-600">Spieler pro Maschine</div>
-    <Select
+      <Select
       value={String(matchSize)}
       onChange={(e) => setMatchSize(Number(e.target.value) as any)}
-      disabled={tournamentFormat === "dyp_round_robin"}
+        disabled={tournamentFormat === "dyp_round_robin" || tournamentFormat === "elimination"}
     >
       <option value="2">1 vs 1 (2 Spieler)</option>
       <option value="3">3 Spieler (1 vs 1 vs 1)</option>
       <option value="4">4 Spieler (1 vs 1 vs 1 vs 1)</option>
     </Select>
+      {tournamentFormat === "elimination" && (
+        <div className="mt-1 text-xs text-neutral-500">
+          Hinweis: Bei Elimination wird diese Einstellung ignoriert – pro Runde spielen alle verbleibenden Spieler in einem Match.
+        </div>
+      )}
   </div>
 </div>
 
@@ -7535,8 +8317,9 @@ if (joined)
               <div className="overflow-hidden rounded-2xl border bg-white">
                 {/* Desktop Header – auf Mobile ausblenden (sonst zu eng) */}
                 <div className="hidden sm:grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  <div className="col-span-6">Name</div>
+                  <div className="col-span-4">Name</div>
                   <div className="col-span-3">Kategorie / Serie</div>
+                  <div className="col-span-2">Format</div>
                   <div className="col-span-1">Code</div>
                   <div className="col-span-1">Status</div>
                   <div className="col-span-1">Erstellt</div>
@@ -7548,7 +8331,7 @@ if (joined)
                     className="grid grid-cols-1 sm:grid-cols-12 gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
                               cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition"
                   >
-                    <div className="sm:col-span-6 font-medium truncate">
+                    <div className="sm:col-span-4 font-medium truncate">
                       {t.name}
                     </div>
 
@@ -7562,6 +8345,14 @@ if (joined)
                           —
                         </span>
                       )}
+                    </div>
+
+                    <div className="col-span-2  text-sm text-neutral-400">
+                        <span
+    className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${formatStyleRound(t.format)}`}
+  >
+    {formatLabel(t.format)}
+  </span>
                     </div>
 
                     <div className="col-span-1 font-mono text-neutral-500">
@@ -7738,6 +8529,13 @@ useEffect(() => {
   // --- Kategorie Turnierleaderboard (übergreifend) ---
   const [categoryTournamentRows, setCategoryTournamentRows] = useState<any[]>([]);
   const [categoryTournamentLoading, setCategoryTournamentLoading] = useState(false);
+
+  // Competition-Platzierung (1,1,1,4 …) für die Turnierpunkte-Tabelle unten
+  // (categoryTournamentRows wird bereits absteigend nach tournamentPoints geladen)
+  const categoryTournamentPlaces = useMemo(
+    () => computeCompetitionPlaces(categoryTournamentRows, (r: any) => Number(r?.tournamentPoints ?? 0)),
+    [categoryTournamentRows]
+  );
 
   const [hsRefreshing, setHsRefreshing] = useState(false);
   const [catRefreshing, setCatRefreshing] = useState(false);
@@ -7987,6 +8785,10 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
 
   const [useElo, setUseElo] = useState(true);
 
+
+
+
+
   const prevRatingsRef = useRef<Record<string, number>>({});
   const expectEloUpdateRef = useRef(false);
   const [eloDeltas, setEloDeltas] = useState<Record<string, number>>({});
@@ -8014,13 +8816,23 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   // ✅ DYP Round Robin: Startreihenfolge soll immer zufällig sein (UI sperren)
   const isDypRR = data?.tournament?.format === "dyp_round_robin";
 
+  // ✅ Elimination: mehrere parallele Runden dürfen gleichzeitig offen sein
+  const isEliminationFormat = data?.tournament?.format === "elimination";
+
   // ✅ "Letzte Runde (schlechtester zuerst)" ist nur sinnvoll,
   // wenn die neue Runde genau 1 Match erzeugt.
   const activePlayersCount = (data?.players ?? []).filter((p: any) => p?.active !== false).length;
 
   // WICHTIG: falls dein Feld anders heißt (z.B. players_per_match),
   // hier anpassen. Default: 4
-  const matchSize = Math.max(2, Math.min(4, Number((data as any)?.tournament?.match_size ?? 4)));
+const tFormat = String((data as any)?.tournament?.format ?? "");
+const rawMatchSize = Number((data as any)?.tournament?.match_size ?? 4);
+
+const matchSize =
+  tFormat === "rotation"
+    ? Math.max(2, rawMatchSize) // ✅ Rotation: nicht mehr auf 4 klemmen
+    : Math.max(2, Math.min(4, rawMatchSize)); // ✅ alle anderen bleiben wie vorher
+
 
   const matchesPerRound = Math.ceil(activePlayersCount / matchSize);
   const canUseLastRoundOrder = matchesPerRound === 1;
@@ -8811,6 +9623,10 @@ async function reloadAll() {
   }
 
   async function recalcElo() {
+    //alert(`recalcElo in page`);
+
+    //alert(`code=${code}`);
+     
     // Stand VOR der Neuberechnung merken
     // ✅ sicherstellen, dass profiles (Ratings) wirklich da sind
     if (!profiles || profiles.length === 0) {
@@ -8825,11 +9641,19 @@ async function reloadAll() {
     prevRatingsRef.current = prev;
     expectEloUpdateRef.current = true;
 
+     //alert(`prev${prev}`);
+
     setBusy(true);
 
    
 
     setNotice(null);
+//alert(`code=${code}`);
+
+
+
+
+
 
     const res = await fetch("/api/tournaments/recalc-elo", {
       method: "POST",
@@ -8837,11 +9661,26 @@ async function reloadAll() {
       body: JSON.stringify({ code }),
     });
 
+
+
+
+
+
+
+
+
+
     const j = await res.json().catch(() => ({}));
     setBusy(false);
 
+  
+     //alert(`expected=${j.shieldedByProfile}`);
+    
+
     setEloShieldedByProfile(j.shieldedByProfile ?? {});
     console.log("shieldedByProfile payload:", j.shieldedByProfile);
+
+ //alert(`res.ok=${res.ok}`);
 
     if (!res.ok) {
       setEloShieldedByProfile({});
@@ -8925,8 +9764,280 @@ async function reloadAll() {
   return (rounds ?? []).some((r: any) => r.status === "open");
 }, [rounds]);
 
+  const isRotationFormat = String(data?.tournament?.format ?? "") === "rotation";
+
+  // ================================
+  // Rotation Global Timer (ONE timer for the whole tournament)
+  // - shared across all rounds/matches
+  // - purely local UI helper (not persisted)
+  // ================================
+  type RotTimer = {
+    endAt: number | null;          // running: absolute timestamp
+    remainingMs: number | null;    // paused: remaining time
+    durationSec: number;           // last chosen duration (for reset UX)
+  };
+  const [rotTimer, setRotTimer] = useState<RotTimer>({
+    endAt: null,
+    remainingMs: null,
+    durationSec: 600,
+  });
+  const [_rotTimerTick, setRotTimerTick] = useState(0);
+
+  // --- Prestart (15s) ---
+  const [rotPrestartEndAt, setRotPrestartEndAt] = useState<number | null>(null);
+  const [rotPendingDurationSec, setRotPendingDurationSec] = useState<number | null>(null);
+
+  // damit wir im Prestart nicht doppelt zählen/sprechen
+  const rotPrestartLastSpokenRef = useRef<number | null>(null);
+  const rotPrestartReadySpokenRef = useRef(false);
+  const rotLetsFlipSpokenRef = useRef(false);
+
+  function rotPrestartLeftMs() {
+    if (rotPrestartEndAt == null) return null;
+    return Math.max(0, rotPrestartEndAt - Date.now());
+  }
+
+    const rotHalfAnnouncedRef = useRef(false);
+    const rotOneMinuteAnnouncedRef = useRef(false);
+    const rotFinalCountdownRef = useRef<number | null>(null);
+    const rotFinishedAnnouncedRef = useRef(false);   
+
+    function rotSpeak(text: string) {
+      if (typeof window === "undefined") return;
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+
+      try {
+        synth.cancel(); // verhindert Overlap
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = "de-DE";
+        synth.speak(utter);
+      } catch {
+        // ignore
+      }
+    }
+
+
+  const rotRunning =
+    typeof rotTimer?.endAt === "number" &&
+    Number.isFinite(rotTimer.endAt) &&
+    rotTimer.endAt > Date.now();
+
+  const rotPaused =
+    !rotRunning &&
+    typeof rotTimer?.remainingMs === "number" &&
+    Number.isFinite(rotTimer.remainingMs) &&
+    rotTimer.remainingMs > 0;
+
+useEffect(() => {
+  if (!isRotationFormat) return;
+
+  const prestartActive =
+    typeof rotPrestartEndAt === "number" && rotPrestartEndAt > Date.now();
+
+  // Tick laufen lassen wenn Haupttimer läuft ODER Prestart läuft
+  if (!rotRunning && !prestartActive) return;
+
+  const id = window.setInterval(() => setRotTimerTick((x) => x + 1), 1000);
+  return () => window.clearInterval(id);
+}, [isRotationFormat, rotRunning, rotPrestartEndAt]);
+
+  function rotTimeLeftMs() {
+    if (rotRunning) return Math.max(0, (rotTimer.endAt as number) - Date.now());
+    if (rotPaused) return Math.max(0, rotTimer.remainingMs as number);
+    return null;
+  }
+
+  function rotFmt(ms: number | null) {
+    if (ms == null) return "—";
+    const total = Math.ceil(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+useEffect(() => {
+  if (!isRotationFormat) return;
+  if (!rotRunning) return;
+
+  const leftMs = rotTimeLeftMs();
+  if (leftMs == null) return;
+
+  const totalMs = (rotTimer?.durationSec ?? 600) * 1000;
+  const secondsLeft = Math.ceil(leftMs / 1000);
+
+  // 🟠 Halbzeit (einmal)
+  if (!rotHalfAnnouncedRef.current && leftMs <= totalMs / 2) {
+    rotHalfAnnouncedRef.current = true;
+    rotSpeak("Halbzeit. Die Hälfte der Zeit ist um.");
+  }
+
+  // 🔴 Noch 1 Minute (einmal)
+  if (!rotOneMinuteAnnouncedRef.current && leftMs <= 60_000) {
+    rotOneMinuteAnnouncedRef.current = true;
+    rotSpeak("Achtung. Es läuft nur noch eine Minute.");
+  }
+
+  // 🔊 Letzte 10 Sekunden runterzählen
+  if (secondsLeft <= 10 && secondsLeft > 1) {
+    if (rotFinalCountdownRef.current !== secondsLeft) {
+      rotFinalCountdownRef.current = secondsLeft;
+      rotSpeak(String(secondsLeft));
+    }
+  }
+
+  // 🛑 Zeit abgelaufen (einmal)
+  if (secondsLeft <= 1 && !rotFinishedAnnouncedRef.current) {
+    rotFinishedAnnouncedRef.current = true;
+    rotSpeak(
+      "Die Zeit ist abgelaufen! Sofort mit dem Flippern aufhören und die Highscores eintragen! Vielen Dank!"
+    );
+  }
+}, [
+  isRotationFormat,
+  rotRunning,
+  _rotTimerTick,
+  rotTimer?.durationSec,
+]);
+
+
+
+useEffect(() => {
+  if (!isRotationFormat) return;
+
+  const leftMs = rotPrestartLeftMs();
+  if (leftMs == null) return;
+
+  const secondsLeft = Math.ceil(leftMs / 1000);
+
+  // bei 10s: Ready-Ansage (einmal)
+  if (secondsLeft <= 10 && !rotPrestartReadySpokenRef.current) {
+    rotPrestartReadySpokenRef.current = true;
+    rotSpeak("Macht euch bereit, es geht in wenigen Sekunden los.");
+  }
+
+  // bei 3,2,1: runterzählen (jeweils einmal)
+  if (secondsLeft <= 3 && secondsLeft > 0) {
+    if (rotPrestartLastSpokenRef.current !== secondsLeft) {
+      rotPrestartLastSpokenRef.current = secondsLeft;
+      rotSpeak(String(secondsLeft));
+    }
+  }
+
+  // bei 0: Let's flip + Haupttimer starten (einmal)
+  if (secondsLeft <= 0 && !rotLetsFlipSpokenRef.current) {
+    rotLetsFlipSpokenRef.current = true;
+    rotSpeak("Los gehts");
+
+    if (rotPendingDurationSec == null) {
+      // Sicherheitsgurt – sollte eigentlich nie passieren
+      return;
+    }
+
+    rotStartMainTimer(rotPendingDurationSec);
+
+    // Prestart beenden
+    setRotPrestartEndAt(null);
+    setRotPendingDurationSec(null);
+    rotPrestartLastSpokenRef.current = null;
+    rotPrestartReadySpokenRef.current = false;
+  }
+}, [isRotationFormat, _rotTimerTick, rotPrestartEndAt, rotPendingDurationSec]);
+
+
+
+
+function rotStartMainTimer(durationSec: number) {
+  // reset Haupttimer-Ansagen
+  rotHalfAnnouncedRef.current = false;
+  rotOneMinuteAnnouncedRef.current = false;
+  rotFinalCountdownRef.current = null;
+  rotFinishedAnnouncedRef.current = false;
+
+  setRotTimer({
+    endAt: Date.now() + durationSec * 1000,
+    remainingMs: null,
+    durationSec,
+  });
+}
+
+
+
+function rotStartGlobal(minutes = 10) {
+  const dur = Math.max(1, Math.floor(minutes)) * 60;
+
+  // Prestart-Flags reset
+  setRotPrestartEndAt(null);
+  setRotPendingDurationSec(null);
+  rotPrestartLastSpokenRef.current = null;
+  rotPrestartReadySpokenRef.current = false;
+  rotLetsFlipSpokenRef.current = false;
+
+  // Haupttimer erstmal NICHT starten – nur merken
+  setRotPendingDurationSec(dur);
+
+  // Prestart 15 Sekunden starten
+  setRotPrestartEndAt(Date.now() + 15_000);
+
+  // Optional: falls vorher ein Timer lief, hart stoppen (damit’s sauber ist)
+  setRotTimer((prev) => ({
+    endAt: null,
+    remainingMs: null,
+    durationSec: prev?.durationSec ?? dur,
+  }));
+}
+
+
+  function rotPauseToggleGlobal() {
+    // Pause (running -> paused)
+    if (rotRunning) {
+      const remaining = Math.max(0, (rotTimer.endAt as number) - Date.now());
+      setRotTimer((prev) => ({
+        endAt: null,
+        remainingMs: remaining,
+        durationSec: prev?.durationSec ?? 600,
+      }));
+      return;
+    }
+
+    // Resume (paused -> running)
+    if (rotPaused) {
+      const remaining = Math.max(0, rotTimer.remainingMs as number);
+      setRotTimer((prev) => ({
+        endAt: Date.now() + remaining,
+        remainingMs: null,
+        durationSec: prev?.durationSec ?? 600,
+      }));
+    }
+  }
+
+  function rotResetGlobal() {
+setRotPrestartEndAt(null);
+setRotPendingDurationSec(null);
+rotPrestartLastSpokenRef.current = null;
+rotPrestartReadySpokenRef.current = false;
+rotLetsFlipSpokenRef.current = false;
+
+    setRotTimer((prev) => ({
+      endAt: null,
+      remainingMs: null,
+      durationSec: prev?.durationSec ?? 600,
+    }));
+  }
+
+
+
   async function createRound() {
     if (locked) return;
+
+    // Rotation erzeugt alle Runden (1 pro Maschine) auf einmal.
+    // Danach darf dieser Button nichts mehr erzeugen.
+    if (isRotationFormat && (rounds ?? []).length > 0) {
+      setNotice(
+        "Rotation: Die Maschinen-Runden wurden bereits erzeugt. Bitte jetzt nur noch Scores eintragen und die Runden beenden."
+      );
+      return;
+    }
 
     if (finalState && finalState.status !== "finished") {
       setNotice(
@@ -9041,6 +10152,10 @@ const machinesInfoById = useMemo(
       ? "Round Robin"
       : (typeof data === "undefined" ? undefined : data?.tournament?.format) === "dyp_round_robin"
       ? "DYP Round Robin"
+      : (typeof data === "undefined" ? undefined : data?.tournament?.format) === "rotation"
+      ? "Round the pinball"
+      : (typeof data === "elimination" ? undefined : data?.tournament?.format) === "elimination"
+      ? "Crazy Elimination"
       : "Matchplay";
 
   const gamesPlayed = (finalState?.players ?? []).reduce(
@@ -9756,15 +10871,38 @@ const machinesInfoById = useMemo(
       playersById={playersById}
       compact
     />
-    <CurrentRoundSticky
-      code={code}
-      tournament={(data as any)?.tournament}
-      rounds={rounds}
-      matches={matches}
-      matchPlayers={matchPlayers}
-      playersById={playersById}
-      machinesInfoById={machinesInfoById}
-    />
+{isRotationFormat ? (
+  (() => {
+    const preLeftMs = rotPrestartLeftMs();
+    const displayMs = preLeftMs != null ? preLeftMs : rotTimeLeftMs();
+
+    return (
+      <RotationGlobalTimerSticky
+        locked={locked}
+        timeLeftLabel={rotFmt(displayMs)}
+        timeLeftMs={displayMs}
+        durationSec={preLeftMs != null ? 15 : (rotTimer?.durationSec ?? 600)}
+        running={preLeftMs != null ? true : rotRunning}
+        paused={preLeftMs != null ? false : rotPaused}
+        onStart={rotStartGlobal}
+        onPauseToggle={rotPauseToggleGlobal}
+        onReset={rotResetGlobal}
+      />
+    );
+  })()
+) : (
+  <CurrentRoundSticky
+    code={code}
+    tournament={(data as any)?.tournament}
+    rounds={rounds}
+    matches={matches}
+    matchPlayers={matchPlayers}
+    playersById={playersById}
+    machinesInfoById={machinesInfoById}
+  />
+)}
+
+
   </div>
 </div>
   </div>
@@ -9901,35 +11039,50 @@ const machinesInfoById = useMemo(
                         Finalpunkte
                       </div>
                     </div>
-                    {finalState.ranking.map((r: any) => (
-                      <div
-                        key={r.playerId}
-                        className={
-                          "grid grid-cols-12 gap-2 px-4 py-2 text-sm items-center " +
-                          (r.rank === 1
-                            ? "bg-amber-50 font-semibold"
-                            : "")
-                        }
-                      >
-                        <div className="col-span-2">
-                          {r.rank === 1
+                    {(() => {
+                      const sorted = [...(finalState.ranking ?? [])].sort(
+                        (a: any, b: any) =>
+                          Number(b?.points ?? 0) - Number(a?.points ?? 0)
+                      );
+                      const places = computeCompetitionPlaces(
+                        sorted,
+                        (x: any) => Number(x?.points ?? 0)
+                      );
+
+                      return sorted.map((r: any, idx: number) => {
+                        const place = places[idx] ?? idx + 1;
+                        const medal =
+                          place === 1
                             ? "🥇"
-                            : r.rank === 2
+                            : place === 2
                             ? "🥈"
-                            : r.rank === 3
+                            : place === 3
                             ? "🥉"
-                            : r.rank}
-                          .
-                        </div>
-                        <div className="col-span-4">{r.name}</div>
-                        <div className="col-span-3 text-right">
-                          #{r.seed}
-                        </div>
-                        <div className="col-span-3 text-right tabular-nums">
-                          {r.points}
-                        </div>
-                      </div>
-                    ))}
+                            : null;
+
+                        const rowClass =
+                          "grid grid-cols-12 gap-2 px-4 py-2 text-sm items-center " +
+                          (place === 1
+                            ? "bg-amber-50 font-semibold"
+                            : "");
+
+                        return (
+                          <div key={r.playerId} className={rowClass}>
+                            <div className="col-span-2">
+                              {medal ? medal : place}
+                              .
+                            </div>
+                            <div className="col-span-4">{r.name}</div>
+                            <div className="col-span-3 text-right">
+                              #{r.seed}
+                            </div>
+                            <div className="col-span-3 text-right tabular-nums">
+                              {r.points}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               ) : null}
@@ -9968,24 +11121,33 @@ const machinesInfoById = useMemo(
               </tr>
             </thead>
             <tbody>
-              {categoryTournamentRows.map((r: any, idx: number) => (
-                <tr key={r.profileId ?? r.name ?? idx}   
-                  className={`border-b last:border-0 hover:bg-neutral-50 ${
-                  idx === 0
+              {categoryTournamentRows.map((r: any, idx: number) => {
+                const place = categoryTournamentPlaces[idx] ?? idx + 1;
+                const medal = place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : null;
+                const rowBg =
+                  place === 1
                     ? "bg-yellow-50"
-                    : idx === 1
+                    : place === 2
                     ? "bg-neutral-100"
-                    : idx === 2
+                    : place === 3
                     ? "bg-orange-50"
-                    : ""
-                }`}>
-                  <td className="py-1 pr-2 text-neutral-500 tabular-nums">{idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : idx + 1}</td>
-                  <td className="py-1 pr-2">{r.name ?? "—"}</td>
-                  <td className="py-1 pr-2 text-right tabular-nums font-semibold">
-                    {Number(r.tournamentPoints ?? 0).toLocaleString("en-US")}
-                  </td>
-                </tr>
-              ))}
+                    : "";
+
+                return (
+                  <tr
+                    key={r.profileId ?? r.profile_id ?? r.name ?? idx}
+                    className={`border-b last:border-0 hover:bg-neutral-50 ${rowBg}`}
+                  >
+                    <td className="py-1 pr-2 text-neutral-500 tabular-nums">
+                      {medal ? medal : `${place}.`}
+                    </td>
+                    <td className="py-1 pr-2">{r.name ?? "—"}</td>
+                    <td className="py-1 pr-2 text-right tabular-nums font-semibold">
+                      {Number(r.tournamentPoints ?? 0).toLocaleString("en-US")}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -10163,6 +11325,7 @@ const machinesInfoById = useMemo(
     type="button"
     disabled={busy || locked}
     onClick={() => setUseElo((prev) => !prev)}
+    //onClick={toggleUseElo}
     className={`text-xs sm:text-sm font-medium ${
       useElo ? "text-green-400" : "text-gray-500"
     }`}

@@ -1,6 +1,8 @@
 // @ts-nocheck
 "use client";
 
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
+
 
 
 // ---- safeText: verhindert React-Crash wenn versehentlich ein Object/Date gerendert wird
@@ -14,6 +16,177 @@ const safeText = (v: any): string => {
   } catch {}
   return String(v);
 };
+
+
+
+// ---- Minimaler Markdown-Renderer (ohne externe Libs)
+// Unterstützt: Überschriften (#/##/###), Listen (-/* und 1.), Links [text](url), **fett**, *kursiv*, > Zitate
+const mdParseInline = (s: string) => {
+  const out: any[] = [];
+  const re = /\[([^\]]+)\]\(([^\)]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    if (m[1] && m[2]) {
+      const label = m[1];
+      const href = m[2];
+      out.push(
+        <a
+          key={`a-${m.index}-${href}`}
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="text-blue-600 underline underline-offset-2 hover:text-blue-700"
+        >
+          {label}
+        </a>
+      );
+    } else if (m[3]) {
+      out.push(<strong key={`b-${m.index}`}>{m[3]}</strong>);
+    } else if (m[4]) {
+      out.push(<em key={`i-${m.index}`}>{m[4]}</em>);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+};
+
+const mdRender = (mdRaw: string) => {
+  const md = String(mdRaw ?? "").replace(/\r\n/g, "\n");
+  const lines = md.split("\n");
+  const blocks: any[] = [];
+
+  let i = 0;
+  const pushParagraph = (paraLines: string[]) => {
+    const t = paraLines.join(" ").trim();
+    if (!t) return;
+    blocks.push(
+      <p key={`p-${blocks.length}`} className="text-sm leading-relaxed text-neutral-800 whitespace-pre-wrap">
+        {mdParseInline(t)}
+      </p>
+    );
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Leerzeile → Absatz flush
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+
+    // Headings
+    const h3 = line.match(/^###\s+(.*)$/);
+    if (h3) {
+      blocks.push(
+        <h3 key={`h3-${blocks.length}`} className="text-sm font-semibold text-neutral-900 mt-2">
+          {mdParseInline(h3[1].trim())}
+        </h3>
+      );
+      i++;
+      continue;
+    }
+    const h2 = line.match(/^##\s+(.*)$/);
+    if (h2) {
+      blocks.push(
+        <h2 key={`h2-${blocks.length}`} className="text-base font-semibold text-neutral-900 mt-2">
+          {mdParseInline(h2[1].trim())}
+        </h2>
+      );
+      i++;
+      continue;
+    }
+    const h1 = line.match(/^#\s+(.*)$/);
+    if (h1) {
+      blocks.push(
+        <h1 key={`h1-${blocks.length}`} className="text-lg font-semibold text-neutral-900 mt-2">
+          {mdParseInline(h1[1].trim())}
+        </h1>
+      );
+      i++;
+      continue;
+    }
+
+    // Blockquote (mehrere Zeilen)
+    if (line.trim().startsWith(">")) {
+      const q: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith(">")) {
+        q.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      const qt = q.join("\n").trim();
+      blocks.push(
+        <div key={`q-${blocks.length}`} className="border-l-4 border-neutral-200 pl-3 py-1 text-sm text-neutral-700 bg-neutral-50 rounded-md">
+          {qt.split("\n").map((l, idx2) => (
+            <div key={idx2}>{mdParseInline(l)}</div>
+          ))}
+        </div>
+      );
+      continue;
+    }
+
+    // Unordered list
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-*]\s+/, ""));
+        i++;
+      }
+      blocks.push(
+        <ul key={`ul-${blocks.length}`} className="list-disc pl-5 text-sm text-neutral-800 space-y-1">
+          {items.map((it, idx2) => (
+            <li key={idx2}>{mdParseInline(it.trim())}</li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    // Ordered list
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
+        i++;
+      }
+      blocks.push(
+        <ol key={`ol-${blocks.length}`} className="list-decimal pl-5 text-sm text-neutral-800 space-y-1">
+          {items.map((it, idx2) => (
+            <li key={idx2}>{mdParseInline(it.trim())}</li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    // Absatz sammeln bis Leerzeile oder Blockstart
+    const para: string[] = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^###\s+/.test(lines[i]) &&
+      !/^##\s+/.test(lines[i]) &&
+      !/^#\s+/.test(lines[i]) &&
+      !lines[i].trim().startsWith(">") &&
+      !/^\s*[-*]\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i])
+    ) {
+      para.push(lines[i]);
+      i++;
+    }
+    pushParagraph(para);
+  }
+
+  if (blocks.length === 0) {
+    return <div className="text-sm text-neutral-500">Keine Infos vorhanden.</div>;
+  }
+
+  return <div className="space-y-2">{blocks}</div>;
+};
+
 
 /*
 type PlayersTabProps = {
@@ -58,6 +231,7 @@ type Profile = {
   color?: string | null;
   icon?: string | null;
   total_tournament_points?: number;
+  info?: string | null;
 };
 
 type Draft = {
@@ -547,6 +721,17 @@ export default function PlayersTab({ isAdmin, joined, setJoined }: PlayersTabPro
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [savingKey, setSavingKey] = useState<string | "new" | null>(null);
 
+    // 🆕 Welche profile.id gehört zum aktuell eingeloggten User?
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  const [myProfileIdLoading, setMyProfileIdLoading] = useState(false);
+
+
+  // 🆕 Info/Notizen pro Profil
+  const [infoDraft, setInfoDraft] = useState<Record<string, string>>({});
+  const [infoSaving, setInfoSaving] = useState<Record<string, boolean>>({});
+  const [infoMsg, setInfoMsg] = useState<Record<string, string | null>>({});
+  const [infoMode, setInfoMode] = useState<Record<string, "edit" | "preview">>({});
+
   // Elo-History-States: pro Profil
   const [eloHistory, setEloHistory] = useState<Record<string, EloPoint[]>>({});
   const [eloLoading, setEloLoading] = useState<Record<string, boolean>>({});
@@ -688,6 +873,7 @@ const [spSaveDrainDetailFilter, setSpSaveDrainDetailFilter] = useState<Record<st
             color: p.color ?? null,
             icon: p.icon ?? null,
             total_tournament_points: p.total_tournament_points ?? 0,
+            info: p.info ?? null,
           }))
         );
       }
@@ -702,6 +888,48 @@ const [spSaveDrainDetailFilter, setSpSaveDrainDetailFilter] = useState<Record<st
   useEffect(() => {
     load();
   }, []);
+
+  
+  // 🆕 Mapping: auth user -> profile_id laden (direkt via supabaseBrowser)
+  useEffect(() => {
+    (async () => {
+      setMyProfileIdLoading(true);
+      try {
+        const sb = supabaseBrowser();
+
+        // 1) eingeloggten User holen
+        const { data: userData } = await sb.auth.getUser();
+        const userId = userData?.user?.id ?? null;
+
+        if (!userId) {
+          setMyProfileId(null);
+          return;
+        }
+
+        // 2) Mapping holen
+        const { data: link, error } = await sb
+          .from("profile_links")
+          .select("profile_id")
+          .eq("auth_user_id", userId)
+          .maybeSingle();
+
+        if (error) {
+          console.warn("profile_links load failed:", error.message);
+          setMyProfileId(null);
+          return;
+        }
+
+        setMyProfileId(link?.profile_id ?? null);
+      } catch (e: any) {
+        console.warn("profile_links load crashed:", e?.message ?? e);
+        setMyProfileId(null);
+      } finally {
+        setMyProfileIdLoading(false);
+      }
+    })();
+  }, []);
+
+
 
   // ✅ Single-Play Player/Stats: Ball-Events (Drains & letzter Rettungsversuch) automatisch laden
   // - sobald ein Profil im "Single"-Tab ist
@@ -826,6 +1054,12 @@ async function loadSinglePlayStatsEvents(profileId: string, machineId: string, r
     setSpStatsEventsLoading((prev) => ({ ...prev, [profileId]: false }));
   }
 }
+
+
+
+  const isOwnerOfProfile = (profileId: string) => {
+    return !!myProfileId && myProfileId === profileId;
+  };
 
 
 
@@ -1666,6 +1900,44 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
       setOpenId(null);
     } finally {
       setSavingKey(null);
+    }
+  }
+
+
+  // ─────────────────────────────────────────────────────────
+  // Info/Notizen speichern
+  // ─────────────────────────────────────────────────────────
+  async function saveInfo(profileId: string) {
+    if (!isAdmin) return;
+
+    const info = String(infoDraft[profileId] ?? "").trimEnd(); // End-Whitespace behalten wir nicht unnötig
+    setInfoSaving((prev) => ({ ...prev, [profileId]: true }));
+    setInfoMsg((prev) => ({ ...prev, [profileId]: null }));
+
+    try {
+      const res = await fetch(`/api/profiles/setInfo?ts=${Date.now()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ id: profileId, info }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setInfoMsg((prev) => ({ ...prev, [profileId]: j.error ?? "Konnte Info nicht speichern" }));
+        return;
+      }
+
+      // local state updaten
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === profileId ? { ...p, info: info.length ? info : null } : p))
+      );
+
+      setInfoMsg((prev) => ({ ...prev, [profileId]: "Gespeichert ✅" }));
+    } catch {
+      setInfoMsg((prev) => ({ ...prev, [profileId]: "Konnte Info nicht speichern (Netzwerkfehler?)" }));
+    } finally {
+      setInfoSaving((prev) => ({ ...prev, [profileId]: false }));
     }
   }
 
@@ -2743,6 +3015,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
     Statistiken
   </button>
 
+{(isOwnerOfProfile(p.id) || isAdmin) &&  (
   <button
     type="button"
     onClick={() => {
@@ -2757,8 +3030,31 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
   >
     Single Play
   </button>
+)}
 
-  {isAdmin ? (
+{(isOwnerOfProfile(p.id) || isAdmin) &&  (
+
+  <button
+    type="button"
+    onClick={() => {
+      setDetailTabs((prev) => ({ ...prev, [p.id]: "info" }));
+      setInfoDraft((prev) => ({
+        ...prev,
+        [p.id]: prev[p.id] ?? (p.info ?? ""),
+      }));
+    }}
+    className={`px-3 py-1 rounded-full border ${
+      currentDetailTab === "info"
+        ? "bg-white shadow-sm font-semibold"
+        : "bg-transparent text-neutral-500"
+    }`}
+  >
+    Info
+  </button>
+  
+)}
+
+{(isOwnerOfProfile(p.id) || isAdmin) &&  (
     <button
       type="button"
       onClick={() => {
@@ -2772,7 +3068,8 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
     >
       Profil bearbeiten
     </button>
-  ) : null}
+)}
+
 </div>
 
 
@@ -2956,7 +3253,100 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
 
                     
 
-                    {/* Tab: SINGLE PLAY */}
+                    
+                    {/* Tab: INFO */}
+{currentDetailTab === "info" && (() => {
+  const mode = infoMode[p.id] ?? (isAdmin ? "edit" : "preview");
+  const currentText = infoDraft[p.id] ?? (p.info ?? "");
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border bg-white p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="font-semibold text-neutral-900">ℹ️ Info</div>
+            <div className="text-xs text-neutral-500">
+              Freie Notizen zum Spieler (z.B. Lieblingsmaschine, Besonderheiten, Kontakt, etc.). Markdown wird unterstützt.
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!isAdmin ? (
+              <div className="text-[11px] text-neutral-400">nur Admin kann bearbeiten</div>
+            ) : null}
+
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                setInfoMode((prev) => ({
+                  ...prev,
+                  [p.id]: mode === "edit" ? "preview" : "edit",
+                }))
+              }
+            >
+              {mode === "edit" ? "Vorschau" : "Bearbeiten"}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {infoMsg[p.id] ? (
+        <div
+          className={`rounded-xl border p-3 text-sm ${
+            String(infoMsg[p.id]).includes("✅")
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          {infoMsg[p.id]}
+        </div>
+      ) : null}
+
+      {mode === "preview" ? (
+        <div className="rounded-xl border bg-white p-3">
+          <div className="mb-2 text-[11px] text-neutral-500">
+            Vorschau
+          </div>
+          {mdRender(currentText)}
+          {isAdmin ? (
+            <div className="mt-3 text-[11px] text-neutral-400">
+              Tipp: Überschrift mit <span className="font-mono">##</span>, Liste mit <span className="font-mono">-</span>, fett mit <span className="font-mono">**text**</span>, Link mit <span className="font-mono">[text](url)</span>.
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-xl border bg-white p-3 space-y-2">
+          <label className="block text-xs font-medium text-neutral-600">
+            Notizen (Markdown möglich)
+          </label>
+          <textarea
+            className="w-full min-h-[160px] rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-neutral-200 disabled:bg-neutral-100"
+            placeholder={"Beispiele:\n## Stärken\n- Multiball\n- Kontrolle\n\n> Achtung bei Tilt\n\nLieblingsmaschine: [Attack from Mars](https://ipdb.org)"}
+            value={currentText}
+            onChange={(e) =>
+              setInfoDraft((prev) => ({ ...prev, [p.id]: e.target.value }))
+            }
+            disabled={!isAdmin || infoSaving[p.id]}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[11px] text-neutral-500">
+              {isAdmin ? "Wird im Profil gespeichert." : "Du kannst es lesen, aber nicht ändern."}
+            </div>
+            <Button
+              size="sm"
+              disabled={!isAdmin || infoSaving[p.id]}
+              onClick={() => saveInfo(p.id)}
+            >
+              {infoSaving[p.id] ? "Speichert…" : "Speichern"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+})()}
+
+{/* Tab: SINGLE PLAY */}
                     {currentDetailTab === "single" && (
                       <div className="space-y-3">
                         {/* Header */}

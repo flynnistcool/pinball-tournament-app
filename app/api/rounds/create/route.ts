@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 type StartOrderMode = "random" | "standings_asc" | "last_round_asc";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type PlayerRow = {
   id: string;
   name: string;
@@ -349,11 +352,15 @@ export async function POST(req: Request) {
     | "swiss"
     | "round_robin"
     | "dyp_round_robin"
+    | "elimination"
+    | "rotation"
     | null =
     requestedFormatRaw === "matchplay" ||
     requestedFormatRaw === "swiss" ||
     requestedFormatRaw === "round_robin" ||
-    requestedFormatRaw === "dyp_round_robin"
+    requestedFormatRaw === "dyp_round_robin" ||
+    requestedFormatRaw === "elimination" ||
+    requestedFormatRaw === "rotation"
       ? (requestedFormatRaw as any)
       : null;
 
@@ -380,25 +387,35 @@ export async function POST(req: Request) {
     );
   }
 
-  const tournamentFormat: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" =
-    t.format === "swiss" || t.format === "round_robin" || t.format === "dyp_round_robin"
+  const tournamentFormat: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
+    t.format === "swiss" ||
+    t.format === "round_robin" ||
+    t.format === "dyp_round_robin" ||
+    t.format === "elimination" ||
+    t.format === "rotation"
       ? (t.format as any)
       : "matchplay";
 
   // ✅✅✅ NEU: effective format (Override > DB)
-  const format: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" =
+  const format: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
     requestedFormat ?? tournamentFormat;
 
-  const groupSize =
-    format === "dyp_round_robin"
-      ? (4 as const)
-      : (Math.min(4, Math.max(2, Number(t.match_size ?? 4))) as 2 | 3 | 4);
+const groupSizeAny =
+  format === "dyp_round_robin"
+    ? 4
+    : format === "rotation"
+    ? Math.max(2, Number(t.match_size ?? 4)) // rotation: beliebig
+    : Math.min(4, Math.max(2, Number(t.match_size ?? 4))); // andere: 2..4
+
+const groupSizeFixed = (Math.min(4, Math.max(2, Number(t.match_size ?? 4))) as 2 | 3 | 4);
+
+const groupSize = format === "rotation" ? groupSizeAny : groupSizeFixed;
 
   // Spieler + Maschinen holen (mit profile_id!)
   const [{ data: playersRaw }, { data: machinesRaw }] = await Promise.all([
     sb
       .from("players")
-      .select("id, name, active, profile_id")
+      .select("id, name, active, profile_id, eliminated_round")
       .eq("tournament_id", t.id)
       .order("created_at"),
     sb
@@ -408,12 +425,25 @@ export async function POST(req: Request) {
       .order("created_at"),
   ]);
 
-  const players = (playersRaw ?? []).filter((p: any) => p.active);
+  // ✅ Elimination: ausgeschiedene Spieler bleiben sichtbar (Option A),
+  // aber werden für neue Matches nicht mehr verwendet.
+  const players = (playersRaw ?? []).filter((p: any) => {
+    if (!p?.active) return false;
+    if (format === "elimination") return p.eliminated_round == null;
+    return true;
+  });
   const machines = (machinesRaw ?? []).filter((m: any) => m.active);
 
   if (!players.length) {
     return NextResponse.json(
       { error: "Keine aktiven Spieler im Turnier" },
+      { status: 400 }
+    );
+  }
+
+  if (format === "elimination" && players.length < 2) {
+    return NextResponse.json(
+      { error: "Elimination benötigt mindestens 2 nicht ausgeschiedene Spieler" },
       { status: 400 }
     );
   }
@@ -455,6 +485,223 @@ export async function POST(req: Request) {
         .select("match_id, player_id, position, team")
         .in("match_id", matchIds)
     : { data: [] as any[] };
+
+  // ================================
+  // ROTATION
+  // - erstellt ALLE Runden auf einmal: 1 Runde pro aktiver Maschine
+  // - jede Runde enthält GENAU 1 Match
+  // - in jedem Match spielen ALLE aktiven Spieler (n = 2..4 in dieser App)
+  // ================================
+  if (format === "rotation") {
+    const warnings: string[] = [];
+
+    if ((rounds ?? []).length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Rotation erstellt alle Maschinen-Runden in einem Rutsch. In diesem Turnier existieren bereits Runden – bitte ein neues Rotation-Turnier anlegen.",
+        },
+        { status: 400 }
+      );
+    }
+
+
+
+    // Standings-basierte Startreihenfolgen passen bei Rotation nicht sauber (weil wir 0 History haben).
+    // Wir degradieren deshalb auf random.
+    const startOrderModeRaw2 = String(startOrderMode ?? "random");
+    const effectiveStartOrderMode: StartOrderMode =
+      startOrderModeRaw2 === "standings_asc" || startOrderModeRaw2 === "last_round_asc"
+        ? "random"
+        : "random";
+    if (startOrderModeRaw2 !== "random") {
+      warnings.push(
+        "Rotation: Startreihenfolge wird aktuell immer zufällig gesetzt (Timer/Rotation-Modus)."
+      );
+    }
+
+
+
+    // Rotation-Regel (wie von dir beschrieben):
+    // Es werden genau so viele Runden erzeugt wie es SPIELER gibt.
+    // Die Maschinen werden dabei zufällig aus dem Pool aktiver Maschinen gezogen,
+    // aber ohne Wiederholung (jede Runde hat einen anderen Flipper).
+    const playerCount = (players as any[]).length;
+    const allMachines = (machines as any[]) ?? [];
+    const useMachineCount = Math.min(playerCount, allMachines.length);
+    const machinesForRotation = shuffle(allMachines).slice(0, useMachineCount);
+
+    if (allMachines.length > useMachineCount) {
+      warnings.push(
+        `Rotation: Es sind ${allMachines.length} Maschinen aktiv, aber es werden nur ${useMachineCount} genutzt (= Spieleranzahl).`
+      );
+    }
+    if (allMachines.length < playerCount) {
+      warnings.push(
+        `Rotation: Es sind nur ${allMachines.length} Maschinen aktiv – es werden daher nur ${useMachineCount} Runden erzeugt.`
+      );
+    }
+    // 1) Runden anlegen (1 pro Maschine)
+    const roundsToInsert = (machinesForRotation ?? []).map((m: any, i: number) => ({
+      tournament_id: t.id,
+      format: "rotation",
+      number: nextRoundNumber + i,
+      status: "open",
+      elo_enabled: useElo,
+    }));
+
+    const { data: newRounds, error: roundsErr } = await sb
+      .from("rounds")
+      .insert(roundsToInsert)
+      .select("id, number");
+
+    if (roundsErr || !newRounds?.length) {
+      return NextResponse.json(
+        { error: roundsErr?.message ?? "Rotation-Runden konnten nicht erstellt werden" },
+        { status: 500 }
+      );
+    }
+
+    // 2) tournament_ratings sicherstellen (wie im Standard-Flow)
+    const { data: trExisting, error: trErr } = await sb
+      .from("tournament_ratings")
+      .select("profile_id")
+      .eq("tournament_id", t.id);
+
+    if (trErr) {
+      return NextResponse.json(
+        { error: trErr.message ?? "Fehler beim Laden von tournament_ratings" },
+        { status: 500 }
+      );
+    }
+
+    const existingTrProfiles = new Set<string>(
+      (trExisting ?? []).map((r: any) => r.profile_id)
+    );
+
+    const allProfileIds = Array.from(
+      new Set(
+        (players as any[])
+          .map((p: any) => p.profile_id)
+          .filter(Boolean)
+          .map(String)
+      )
+    );
+
+    const missingProfileIds = allProfileIds.filter(
+      (pid) => !existingTrProfiles.has(pid)
+    );
+
+    // ✅ WICHTIG: tournament_ratings braucht die Startwerte (rating_before / provisional_before / matches_before),
+    // sonst bricht /api/tournaments/recalc-elo später mit 400 ab.
+    if (missingProfileIds.length) {
+      const { data: profs, error: profErr } = await sb
+        .from("profiles")
+        .select("id, rating, provisional_matches, matches_played")
+        .in("id", missingProfileIds);
+
+      if (profErr) {
+        return NextResponse.json(
+          { error: profErr.message ?? "Fehler beim Laden der Profile für Elo-Startwerte" },
+          { status: 500 }
+        );
+      }
+
+      if (!profs || profs.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Keine Profile gefunden, um Elo-Startwerte anzulegen (profiles-Abfrage leer).",
+          },
+          { status: 500 }
+        );
+      }
+
+      const rows = profs.map((p: any) => ({
+        tournament_id: t.id,
+        profile_id: p.id,
+        rating_before: p.rating,
+        provisional_before: p.provisional_matches,
+        matches_before: p.matches_played,
+      }));
+
+      const { error: trInsErr } = await sb.from("tournament_ratings").insert(rows);
+
+      if (trInsErr) {
+        return NextResponse.json(
+          { error: trInsErr.message ?? "Elo-Startwerte konnten nicht gespeichert werden" },
+          { status: 500 }
+        );
+      }
+
+      for (const p of profs) {
+        existingTrProfiles.add(p.id);
+      }
+    }
+
+    // 3) pro Runde genau 1 Match erstellen und ALLE Spieler als match_players eintragen
+    // Wichtig:
+    // - Maschinen: zufällig, aber ohne Wiederholung (siehe machinesForRotation)
+    // - Spieler-Reihenfolge: einmalig pro Runde (zyklische Verschiebung)
+    //   Bei 3 Spielern entstehen z.B. genau die 3 möglichen Startreihenfolgen.
+
+    const baseOrder = shuffle((players as any[]).slice());
+
+    for (let i = 0; i < (machinesForRotation ?? []).length; i++) {
+      const machine = (machinesForRotation as any[])[i];
+      const round = (newRounds as any[])[i];
+      if (!machine?.id || !round?.id) continue;
+
+      const { data: match, error: matchErr } = await sb
+        .from("matches")
+        .insert({
+          round_id: round.id,
+          machine_id: machine.id,
+          status: "open",
+          game_number: 1,
+        })
+        .select("id")
+        .single();
+
+      if (matchErr || !match?.id) {
+        warnings.push(
+          `Rotation: Match konnte nicht erstellt werden (${machine?.name ?? "Maschine"}).`
+        );
+        continue;
+      }
+
+      // Einmalige Startreihenfolge pro Runde:
+      // wir nehmen eine Basisreihenfolge (random) und verschieben sie pro Runde um i.
+      // => jede Runde hat eine andere, aber deterministisch eindeutige Reihenfolge.
+      const shift = i % baseOrder.length;
+      const playersInThisMatch = baseOrder.slice(shift).concat(baseOrder.slice(0, shift));
+
+      const mpsToInsert = playersInThisMatch.map((p: any, idx: number) => ({
+        match_id: match.id,
+        player_id: p.id,
+        position: null,
+        start_position: idx + 1,
+        team: null,
+      }));
+
+      await sb.from("match_players").insert(mpsToInsert);
+    }
+
+    return new NextResponse(
+      JSON.stringify({
+        created_rounds: newRounds,
+        warnings,
+        effective_format: format,
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      }
+    );
+  }
 
   // Standings berechnen (wie Leaderboard)
   const mpByMatch: Record<
@@ -544,7 +791,12 @@ export async function POST(req: Request) {
 
   const byId = new Map((players as PlayerRow[]).map((p) => [p.id, p] as const));
 
-  if (format === "dyp_round_robin") {
+  // ✅ Elimination: immer genau EIN Match pro Runde.
+  // Gruppe = alle aktuell noch nicht ausgeschiedenen Spieler.
+  // match_size wird hier bewusst ignoriert.
+  if (format === "elimination") {
+    plannedGroups = [{ group: players as PlayerRow[] }];
+  } else if (format === "dyp_round_robin") {
     const idsAll = (players as PlayerRow[]).map((p) => p.id);
 
     let idsForPairing = idsAll.slice();
@@ -664,9 +916,9 @@ export async function POST(req: Request) {
       // Nur bei 1vs1 ist die Bye-Fairness relevant.
       const res = makeMatchplayGroupsAvoidingRepeats(
         players as PlayerRow[],
-        groupSize,
+        groupSizeFixed,
         pairCounts,
-        groupSize === 2 ? byeCounts : undefined
+        groupSizeFixed === 2 ? byeCounts : undefined
       );
       groups = res.groups;
       if (res.lone) warnings.push(`Ein Spieler ohne Gruppe: ${res.lone.name ?? "?"} (setzt diese Runde aus)`);
@@ -922,16 +1174,25 @@ export async function POST(req: Request) {
     .update({ current_round: nextRoundNumber })
     .eq("id", t.id);
 
-  return NextResponse.json({
-    ok: true,
-    warnings,
-    round_number: nextRoundNumber,
-    startOrderMode,
-    effectiveStartOrderMode,
-    // ✅✅✅ NEU: Debug, damit wir sofort sehen, ob DYP wirklich aktiv war
-    tournament_format: tournamentFormat,
-    requested_format: requestedFormat,
-    effective_format: format,
-  });
+  return new NextResponse(
+    JSON.stringify({
+      ok: true,
+      warnings,
+      round_number: nextRoundNumber,
+      startOrderMode,
+      effectiveStartOrderMode,
+      // ✅✅✅ NEU: Debug, damit wir sofort sehen, ob DYP wirklich aktiv war
+      tournament_format: tournamentFormat,
+      requested_format: requestedFormat,
+      effective_format: format,
+    }),
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+    }
+  );
 }
 

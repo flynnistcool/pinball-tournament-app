@@ -12,7 +12,7 @@ export async function GET() {
   // 🔹 1) Profile laden (unverändert)
   const { data: profiles, error } = await sb
     .from("profiles")
-    .select("id, name, rating, matches_played, provisional_matches, color, icon")
+    .select("id, name, rating, matches_played, provisional_matches, color, icon, info")
     .order("name");
 
   if (error) {

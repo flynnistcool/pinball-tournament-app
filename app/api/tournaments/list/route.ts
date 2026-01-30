@@ -10,7 +10,7 @@ export async function GET() {
 
     const { data, error } = await sb
       .from("tournaments")
-      .select("id, code, name, created_at, category, match_size, location_id, status")
+      .select("id, code, name, created_at, category, format, match_size, location_id, status")
       .order("created_at", { ascending: false })
       .limit(100);
 
