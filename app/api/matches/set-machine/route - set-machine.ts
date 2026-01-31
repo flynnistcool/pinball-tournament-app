@@ -12,25 +12,22 @@ async function pickRandomTaskForMatch(
   // 1) Match → Tournament (über rounds)
   const { data: m } = await supabase
     .from("matches")
-    .select("id, rounds!inner(tournament_id, format)")
+    .select("id, rounds!inner(tournament_id)")
     .eq("id", matchId)
     .single();
 
   const tournamentId = (m as any)?.rounds?.tournament_id;
-  const roundFormat = String((m as any)?.rounds?.format ?? "").toLowerCase();
-
   if (!tournamentId) return null;
-
-  // ✅ nur wenn das Match/Round wirklich timeplay ist
-  if (roundFormat !== "timeplay") return null;
-
 
   // 2) Tournament → location_id + format (nur timeplay!)
   const { data: t } = await supabase
     .from("tournaments")
-    .select("location_id")
+    .select("location_id, format")
     .eq("id", tournamentId)
     .single();
+
+  const format = String((t as any)?.format ?? "");
+  if (format !== "timeplay") return null;
 
   const locationId = (t as any)?.location_id;
   if (!locationId) return null;
@@ -59,27 +56,27 @@ async function pickRandomTaskForMatch(
   // 5) Tasks laden (WICHTIG: location_machine_id)
   const { data: tasks } = await supabase
     .from("machine_tasks")
-    .select("id, title")
+    .select("id")
     .eq("location_machine_id", lm.id)
     .eq("active", true);
 
   if (!tasks || tasks.length === 0) return null;
 
+  // 6) zufällig wählen
   const idx = Math.floor(Math.random() * tasks.length);
-  const picked = tasks[idx] as any;
-
-  return picked ? { id: picked.id, title: picked.title } : null;
-  }
+  return tasks[idx]?.id ?? null;
+}
 
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const matchId = String(body?.matchId ?? body?.match_id ?? "").trim();
+    const matchId = String(body?.matchId ?? "").trim();
 
+    // machineId darf null sein (Maschine entfernen)
     const machineId =
-      (body?.machineId ?? body?.machine_id) === null
+      body?.machineId === null
         ? null
-        : String(body?.machineId ?? body?.machine_id ?? "").trim() || null;
+        : String(body?.machineId ?? "").trim() || null;
 
     if (!matchId) {
       return NextResponse.json({ error: "matchId ist erforderlich" }, { status: 400 });
@@ -90,7 +87,7 @@ export async function POST(req: Request) {
     // 1) Maschine setzen + Task resetten
     const { data, error } = await supabase
       .from("matches")
-      .update({ machine_id: machineId, task_id: null, task_text: null })
+      .update({ machine_id: machineId, task_id: null })
       .eq("id", matchId)
       .select("id")
       .maybeSingle();
@@ -112,12 +109,12 @@ export async function POST(req: Request) {
 
     // 2) Wenn Maschine gesetzt ist: Task neu setzen (nur timeplay)
     if (machineId) {
-      const picked = await pickRandomTaskForMatch(supabase, matchId, machineId);
+      const taskId = await pickRandomTaskForMatch(supabase, matchId, machineId);
 
-      if (picked?.id) {
+      if (taskId) {
         const { error: taskErr } = await supabase
           .from("matches")
-          .update({ task_id: picked.id, task_text: String(picked.title ?? "").trim() || null })
+          .update({ task_id: taskId })
           .eq("id", matchId);
 
         if (taskErr) {

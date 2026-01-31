@@ -16,7 +16,8 @@ export async function POST(req: Request) {
     rawFormat === "round_robin" ||
     rawFormat === "dyp_round_robin" ||
     rawFormat === "elimination" ||
-    rawFormat === "rotation"
+    rawFormat === "rotation" ||
+    rawFormat === "timeplay"
       ? rawFormat
       : "matchplay";
 

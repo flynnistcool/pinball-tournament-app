@@ -50,7 +50,7 @@ export async function POST(req: Request) {
     .eq("rounds.tournament_id", t.id)
     .single();
 
-    const currentUseElo = Boolean((m as any)?.rounds?.elo_enabled);
+    
 
   if (mErr || !m) {
     return NextResponse.json(
@@ -58,6 +58,8 @@ export async function POST(req: Request) {
       { status: 404 }
     );
   }
+
+  const currentUseElo = Boolean((m as any)?.rounds?.elo_enabled);
 
   // Update match_players
   const { data: updated, error: uErr } = await sb
@@ -84,6 +86,8 @@ export async function POST(req: Request) {
   const roundNumber = Number((m as any)?.rounds?.number ?? 0) || 0;
   const roundFormat = String((m as any)?.rounds?.format ?? "").toLowerCase();
   const isElimination = tournamentFormat === "elimination" || roundFormat === "elimination";
+  let speakText: string | null = null;
+  let speakPlayerId: string | null = null;
 
   if (isElimination) {
     // Erwartete Spieleranzahl pro Runde im Elimination-Modus
@@ -145,6 +149,7 @@ export async function POST(req: Request) {
     // Erwartete Spieler dieser Runde / nächste Runde
     const expectedThisRound = Math.max(2, startTotal - (roundNumber - startRoundNumber));
     const expectedNextRound = Math.max(0, expectedThisRound - 1);
+    const isFinalWin = expectedNextRound < 2;
 
     // 1) Alle Match-Players dieses Matches laden (Scores + ggf. Position)
     const { data: allMps, error: mpLoadErr } = await sb
@@ -171,6 +176,103 @@ export async function POST(req: Request) {
           .filter((x) => (x.score as number) > minScore)
           .map((x) => x.player_id);
       }
+
+      // 🔊 Speak-Trigger: sobald nach >=2 Scores klar ist, dass dieser Spieler NICHT letzter ist
+// (also "safe" / nächste Runde – wie ihr es im UI schon macht)
+if (scored.length >= 2 && safePlayerIds.includes(playerId)) {
+  // Player-Name holen (für Speak)
+  const { data: p } = await sb
+    .from("players")
+    .select("name")
+    .eq("id", playerId)
+    .eq("tournament_id", (t as any).id)
+    .maybeSingle();
+
+  const playerName = String((p as any)?.name ?? "").trim() || "Player";
+
+
+  // ✅ Prüfen: ist der Spieler der ERSTE in der nächsten Runde?
+let isFirstInNextRound = false;
+
+try {
+  const nextRoundNumber = roundNumber + 1;
+
+  // nächste Runde finden
+  const { data: nextR } = await sb
+    .from("rounds")
+    .select("id")
+    .eq("tournament_id", (t as any).id)
+    .eq("number", nextRoundNumber)
+    .maybeSingle();
+
+  if (nextR?.id) {
+    // erstes Match der nächsten Runde finden (bei dir: genau 1 Match pro Runde)
+    const { data: nextM } = await sb
+      .from("matches")
+      .select("id")
+      .eq("round_id", (nextR as any).id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (nextM?.id) {
+      // wer ist bereits in der nächsten Runde?
+      const { data: nextMps } = await sb
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", (nextM as any).id);
+
+      const othersAlreadyThere =
+        (nextMps ?? []).some((x: any) => String(x.player_id) !== String(playerId));
+
+      // wenn NOCH NIEMAND (außer evtl. er selbst) drin ist => er ist "der erste"
+      isFirstInNextRound = !othersAlreadyThere;
+    } else {
+      // noch kein Match in nächster Runde => er wäre der erste
+      isFirstInNextRound = true;
+    }
+  } else {
+    // nächste Runde existiert noch nicht => er wäre der erste
+    isFirstInNextRound = true;
+  }
+} catch {
+  // wenn DB-Check mal scheitert: lieber neutral bleiben
+  isFirstInNextRound = false;
+}
+
+
+speakPlayerId = playerId;
+
+
+  if (isFinalWin) {
+    // 🏆 Text C
+    speakText = `Wow, what a performance! ${playerName}! You played brilliantly, your pinball skills are exceptional! Let yourself be celebrated! ${playerName}, you won the tournament!
+`;
+
+  } else {
+
+    if (isFirstInNextRound) {
+      // ✅ Text A: er ist der erste in der neuen Runde
+      speakText =
+        `Great play! ${playerName}. ` +
+        `You're the firt player in the next round. ` +
+        `Go to the next round's pinball machine and set your score.`;
+    } else {
+      // ✅ Text B: es ist schon jemand in der neuen Runde
+      speakText =
+        `Very well played! ${playerName}. ` +
+        `You're in the next round. ` +
+        `Try to beat the cutoff score on the next round's pinball machine to stay in the game.`;
+
+    }
+  }
+}
+
+
+
+
+
+
 
       // 3) Runde komplett?
       const isComplete =
@@ -353,11 +455,21 @@ if (isComplete) {
     }
   }
 
-  return new NextResponse(JSON.stringify({ ok: true, row: updated }), {
+return new NextResponse(
+  JSON.stringify({
+    ok: true,
+    row: updated,
+    speak: speakText
+      ? { kind: "elimination_next_round", playerId: speakPlayerId, text: speakText }
+      : null,
+  }),
+  {
     status: 200,
     headers: {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
     },
-  });
+  }
+);
+
 }

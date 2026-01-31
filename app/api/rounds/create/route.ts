@@ -349,6 +349,7 @@ export async function POST(req: Request) {
   const requestedFormatRaw = String(body.format ?? body.forceFormat ?? "").trim();
   const requestedFormat:
     | "matchplay"
+    | "timeplay"
     | "swiss"
     | "round_robin"
     | "dyp_round_robin"
@@ -356,6 +357,7 @@ export async function POST(req: Request) {
     | "rotation"
     | null =
     requestedFormatRaw === "matchplay" ||
+    requestedFormatRaw === "timeplay" ||
     requestedFormatRaw === "swiss" ||
     requestedFormatRaw === "round_robin" ||
     requestedFormatRaw === "dyp_round_robin" ||
@@ -369,7 +371,7 @@ export async function POST(req: Request) {
   // Turnier laden
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, format, match_size, status")
+    .select("id, format, match_size, status,location_id")
     .eq("code", code)
     .single();
 
@@ -387,17 +389,18 @@ export async function POST(req: Request) {
     );
   }
 
-  const tournamentFormat: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
+  const tournamentFormat: "matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
     t.format === "swiss" ||
     t.format === "round_robin" ||
     t.format === "dyp_round_robin" ||
     t.format === "elimination" ||
-    t.format === "rotation"
+    t.format === "rotation" ||
+    t.format === "timeplay"
       ? (t.format as any)
       : "matchplay";
 
   // ✅✅✅ NEU: effective format (Override > DB)
-  const format: "matchplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
+  const format: "matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
     requestedFormat ?? tournamentFormat;
 
 const groupSizeAny =

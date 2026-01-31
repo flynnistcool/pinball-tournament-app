@@ -50,12 +50,25 @@ async function handle(codeRaw: string) {
         ? sb
             .from("matches")
             .select(
-              "id, round_id, machine_id, status, series_id, game_number, created_at"
+              "id, round_id, machine_id, status, series_id, game_number, created_at, task_id, task_text"
             )
             .in("round_id", roundIds)
             .order("created_at")
         : Promise.resolve({ data: [] as any[] }),
     ]);
+
+    // 3b) Tasks für Matches laden (für Beschreibung)
+    const taskIds = Array.from(
+      new Set((matches ?? []).map((m: any) => m.task_id).filter(Boolean))
+    );
+
+    const { data: tasks } = taskIds.length
+      ? await sb
+          .from("machine_tasks")
+          .select("id, title, description")
+          .in("id", taskIds)
+      : { data: [] as any[] };
+
 
   // 4) Profile für die Turnier-Spieler nachladen und mergen
   const rawPlayers = players ?? [];
@@ -106,7 +119,7 @@ async function handle(codeRaw: string) {
     ? await sb
         .from("match_players")
         // 👇 team ist wichtig für DYP (2vs2)
-        .select("match_id, player_id, position, start_position, score, team")
+        .select("match_id, player_id, position, start_position, score, time_ms, team")
         .in("match_id", matchIds)
         .order("start_position", { ascending: true })
     : { data: [] as any[] };
@@ -119,6 +132,7 @@ async function handle(codeRaw: string) {
     rounds: rounds ?? [],
     matches: matches ?? [],
     match_players: match_players ?? [],
+    tasks: tasks ?? [],   
   });
 }
 

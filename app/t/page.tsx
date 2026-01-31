@@ -220,6 +220,8 @@ type MP = {
   score?: number | null;
   // 👇 DYP: Team (1|2)
   team?: number | null;
+  // ✅ TIMEPLAY
+  time_ms?: number | null;
 };
 
 type Location = { id: string; name: string };
@@ -4243,6 +4245,7 @@ function CurrentRoundSticky({
   matchPlayers,
   playersById,
   machinesInfoById,
+  tasksById, // <- MUSS hier drinstehen
 }: {
   code: string;
   tournament: any;
@@ -4251,6 +4254,7 @@ function CurrentRoundSticky({
   matchPlayers: MP[];
   playersById: Record<string, PlayerVisual>;
   machinesInfoById: Record<string, { name: string; emoji?: string | null }>;
+  tasksById: Record<string, any>;
 }) {
   const [tWinrateByPlayerId, setTWinrateByPlayerId] = useState<Record<string, number | null>>({});
   const [mWinrateByKey, setMWinrateByKey] = useState<Record<string, { winrate: number | null; matchesPlayed: number }>>({});
@@ -5226,6 +5230,7 @@ function RoundMatchesCard({
   matchPlayers,
   machinesInfoById,
   playersById,
+  tasksById,      // ✅ HINZUFÜGEN
   onSaved,
   locked,
   tournament,
@@ -5237,6 +5242,7 @@ function RoundMatchesCard({
   matchPlayers: MP[];
   machinesInfoById: Record<string, { name: string; emoji?: string | null }>;
   playersById: Record<string, PlayerVisual>;
+  tasksById: Record<string, any>;   // ✅ HINZUFÜGEN
   onSaved: () => void;
   locked: boolean;
   tournament?: any;
@@ -5274,6 +5280,8 @@ function RoundMatchesCard({
 
   const isEliminationFormat = String(tournament?.format ?? "") === "elimination";
   const isRotationFormat = String(tournament?.format ?? "") === "rotation";
+
+  const isTimeplayFormat = String(tournament?.format ?? "") === "timeplay";
 
 
   // ================================
@@ -5420,6 +5428,10 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
   const [scoreOverride, setScoreOverride] = useState<Record<string, string>>({});
   const [savingScore, setSavingScore] = useState<Record<string, boolean>>({});
   const [scoreFocusKey, setScoreFocusKey] = useState<string | null>(null);
+
+  const [timeOverride, setTimeOverride] = useState<Record<string, string>>({});
+  const [savingTime, setSavingTime] = useState<Record<string, boolean>>({});
+  const [timeFocusKey, setTimeFocusKey] = useState<string | null>(null);
 
   // ================================
 // OCR pro Match (Foto NICHT speichern)
@@ -5666,7 +5678,7 @@ async function autoAssignPositionsByExplicitScores(
   scores: number[]
 ) {
 
-  alert(`autoAssign`);
+  //alert(`autoAssign`);
   const rows = orderedPlayerIds
     .map((pid, idx) => ({ player_id: pid, score: scores[idx] }))
     .filter(
@@ -5977,11 +5989,39 @@ setTWinrateByPlayerId(map);
         delete cp[key];
         return cp;
       });
-      alert("Speichern fehlgeschlagen (Netzwerk)");
+      alert("Speichern fehlgeschlagen (Netzwerk setPosition)");
     } finally {
       setSaving((prev) => ({ ...prev, [key]: false }));
     }
   }
+
+function elimSpeak(text: string) {
+  try {
+    if (typeof window === "undefined") return;
+
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-US";
+
+    // Stimmen laden (wichtig v.a. Safari/iOS)
+    const voices = synth.getVoices?.() ?? [];
+
+    // "Vicki" bevorzugen, sonst irgendeine englische Stimme
+    const vicki =
+      voices.find((v) => (v.name || "").toLowerCase().includes("vicki")) ?? null;
+    const en =
+      voices.find((v) => (v.lang || "").toLowerCase().startsWith("en")) ?? null;
+
+    if (vicki) utter.voice = vicki;
+    else if (en) utter.voice = en;
+
+    synth.speak(utter);
+  } catch (e) {
+    console.warn("elimSpeak failed (ignored):", e);
+  }
+}
 
   async function setScore(matchId: string, playerId: string, score: number | null) {
     if (locked) return;
@@ -6006,6 +6046,45 @@ setTWinrateByPlayerId(map);
         body: JSON.stringify({ code, match_id: matchId, player_id: playerId, score }),
       });
 
+const j = await res.json().catch(() => ({}));
+
+//alert(`j?.speak?.text: ${j?.speak?.text}`);
+//alert(`j?.speak?.kindt: ${j?.speak?.kind}`);
+
+try {
+  if (j?.speak?.text && j?.speak?.kind === "elimination_next_round") {
+    elimSpeak(j.speak.text);
+  }
+} catch (e: any) {
+  console.error("setScore failed:", e);
+  alert("setScore fehlgeschlagen: " + (e?.message ?? "unknown"));
+}
+
+      if (!res.ok) {
+        alert(j.error ?? "Speichern fehlgeschlagen");
+      } else {
+        onSaved();
+      }
+    } catch {
+      alert("Speichern fehlgeschlagen (Netzwerk setScore)");
+    } finally {
+      setSavingScore((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+    async function setTime(matchId: string, playerId: string, time_ms: number | null) {
+    if (locked) return;
+
+    const key = k(matchId, playerId);
+    setSavingTime((prev) => ({ ...prev, [key]: true }));
+
+    try {
+      const res = await fetch("/api/match_players/set-time", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, match_id: matchId, player_id: playerId, time_ms }),
+      });
+
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         alert(j.error ?? "Speichern fehlgeschlagen");
@@ -6013,11 +6092,12 @@ setTWinrateByPlayerId(map);
         onSaved();
       }
     } catch {
-      alert("Speichern fehlgeschlagen (Netzwerk)");
+      alert("Speichern fehlgeschlagen (Netzwerk setTime)");
     } finally {
-      setSavingScore((prev) => ({ ...prev, [key]: false }));
+      setSavingTime((prev) => ({ ...prev, [key]: false }));
     }
   }
+
 
   async function autoAssignPositionsByScore(matchId: string, mps: any[]) {
   // nur Teilnehmer mit player_id
@@ -6114,6 +6194,49 @@ function getScore(mp: any) {
 
   // ✅ 2) Fallback: Daten aus DB/Reload
   const v = mp.score;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+
+function parseTimeToMs(raw: string): number | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  // erlaubt: "ss" oder "mm:ss"
+  if (/^\d+$/.test(s)) {
+    const sec = Number(s);
+    if (!Number.isFinite(sec) || sec < 0) return null;
+    return Math.round(sec * 1000);
+  }
+
+  const m = s.match(/^(\d+):(\d{1,2})$/);
+  if (m) {
+    const mm = Number(m[1]);
+    const ss = Number(m[2]);
+    if (![mm, ss].every(Number.isFinite) || mm < 0 || ss < 0 || ss > 59) return null;
+    return (mm * 60 + ss) * 1000;
+  }
+
+  return null;
+}
+
+function formatTimeFromMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return "";
+  const totalSec = Math.round(ms / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  if (mm <= 0) return String(ss);
+  return `${mm}:${String(ss).padStart(2, "0")}`;
+}
+
+function getTimeMs(mp: any) {
+  const key = k(mp.match_id, mp.player_id);
+  const raw = timeOverride[key];
+  if (raw != null) {
+    const parsed = parseTimeToMs(raw);
+    if (parsed != null) return parsed;
+  }
+  const v = mp.time_ms;
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
@@ -6483,6 +6606,22 @@ const highestScoreInMatch = (() => {
 
   return max;
 })();
+
+// ✅ Timeplay: beste (kleinste) Zeit in diesem Match
+const bestTimeInMatch = (() => {
+  let min: number | null = null;
+
+  for (const mp of mps ?? []) {
+    if (!(mp as any)?.player_id) continue;
+    const tm = getTimeMs(mp as any);
+    if (typeof tm !== "number" || !Number.isFinite(tm)) continue;
+
+    min = min == null ? tm : Math.min(min, tm);
+  }
+
+  return min;
+})();
+
 
 const scoredPlayersInMatch = (() => {
   let c = 0;
@@ -6861,6 +7000,35 @@ disabled={
         </div>
       </div>
     </>
+  </div>
+) : isTimeplayFormat ? (
+  <div className="p-2 bg-emerald-50 text-center text-xs sm:text-xs text-neutral-700 truncate">
+{(() => {
+  const taskId = String((m as any)?.task_id ?? "");
+  const taskObj = taskId ? (tasksById as any)[taskId] : null;
+
+  const taskTitle = String((m as any)?.task_text ?? taskObj?.title ?? "").trim();
+  const taskDesc = String(taskObj?.description ?? "").trim();
+
+  return (
+    <>
+      <div className="text-[12px] font-semibold text-neutral-500 tabular-nums">
+        Aufgabe: {taskTitle || "—"}
+      </div>
+
+      {taskDesc ? (
+        <div className="text-[11px] mt-1 text-neutral-500 whitespace-normal">
+          {taskDesc}
+        </div>
+      ) : null}
+
+      <div className="text-[12px] mt-1 text-neutral-500 tabular-nums">
+        Beste Zeit: {bestTimeInMatch != null ? formatTimeFromMs(bestTimeInMatch) : "—"}
+      </div>
+    </>
+  );
+})()}
+
   </div>
 ) : null}
                                         </div>
@@ -7318,81 +7486,194 @@ return (
 
 
 
-                        <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
-                          Punkte
-                        </span>
-                        <Input
-                          value={
-                            scoreFocusKey === k(mp.match_id, mp.player_id)
-                              ? getScoreStr(mp)
-                              : formatScoreStr(getScoreStr(mp))
-                          }
-                          onFocus={() =>
-                            setScoreFocusKey(k(mp.match_id, mp.player_id))
-                          }
-                          inputMode="numeric"
-                          placeholder="0"
-                          className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 w--[115px] max-w-[115px]  text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
-                          disabled={locked}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            const cleaned = raw.replace(/[^0-9]/g, "");
-                            const key = k(mp.match_id, mp.player_id);
-                            setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
-                          }}
-                          onBlur={async () => {
-                            setScoreFocusKey(null);
-                            const key = k(mp.match_id, mp.player_id);
-                            const raw = (
-                              scoreOverride[key] ??
-                              (mp.score == null ? "" : String(mp.score))
-                            ).trim();
+{isTimeplayFormat ? (
+  <>
+    <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
+      Zeit
+    </span>
 
-                            if (raw === "") {
-                              await setScore(mp.match_id, mp.player_id, null);
-                              return;
-                            }
+    <Input
+      value={
+        timeFocusKey === k(mp.match_id, mp.player_id)
+          ? (timeOverride[k(mp.match_id, mp.player_id)] ?? formatTimeFromMs(getTimeMs(mp)))
+          : (timeOverride[k(mp.match_id, mp.player_id)] ?? formatTimeFromMs(getTimeMs(mp)))
+      }
+      onFocus={() => setTimeFocusKey(k(mp.match_id, mp.player_id))}
+      inputMode="text"
+      placeholder="z.B. 45 oder 1:12"
+      className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 max-w-[115px] text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
+      disabled={locked}
+      onChange={(e) => {
+        const key = k(mp.match_id, mp.player_id);
+        setTimeOverride((prev) => ({ ...prev, [key]: e.target.value }));
+      }}
+      onBlur={async () => {
+        setTimeFocusKey(null);
 
-                            const n = Number(raw);
-                            if (!Number.isFinite(n) || n < 0) {
-                              alert("Ungültige Punkte");
-                              return;
-                            }
+        const key = k(mp.match_id, mp.player_id);
+        const raw = (timeOverride[key] ?? "").trim();
 
-                            await setScore(mp.match_id, mp.player_id, n);
-// ✅ wenn jetzt alle Scores da sind: Plätze automatisch setzen
-// Elimination: NUR wenn die Runde wirklich "voll" ist (Start=5 -> Runde2 erwartet 4, Runde3 erwartet 3, ...)
-if (isEliminationFormat) {
-  const expected = getExpectedPlayersForEliminationRound(Number(r?.number ?? 0));
+        // leer -> Zeit löschen
+        if (raw === "") {
+          await setTime(mp.match_id, mp.player_id, null);
+          return;
+        }
 
-  // ⚠️ Wichtig: nach setScore() kann mps im Closure stale sein.
-  // Deshalb: latest MatchPlayers direkt aus dem globalen matchPlayers-State für dieses Match ziehen.
-  const latestMps =
-    (matchPlayers ?? []).filter((x: any) => String(x?.match_id) === String(m?.id));
+        const ms = parseTimeToMs(raw);
+        if (ms == null) {
+          alert("Ungültige Zeit. Nutze z.B. '45' oder '1:12'");
+          return;
+        }
 
-  const currentCount = (latestMps ?? []).filter((x: any) => x?.player_id).length;
- //alert(`expected=${expected}, latestMps=${latestMps}, currentCount=${currentCount}`);
-  if (expected && currentCount === expected) {
-    //alert(`dadfm.id=${m.id}, latestMps=${latestMps}`);
-    await autoAssignPositionsByScore(m.id, latestMps);
-  }
-} else {
-  await autoAssignPositionsByScore(m.id, mps);
-}
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              (e.target as HTMLInputElement).blur();
-                            }
-                          }}/>
+        // 1) Zeit speichern
+        await setTime(mp.match_id, mp.player_id, ms);
+
+        // 2) Prüfen: sind alle Zeiten im Match gesetzt?
+        //    ⚠️ wie bei deinem Elimination-Fix: NICHT mps aus Closure vertrauen
+        const latestMps =
+          (matchPlayers ?? []).filter((x: any) => String(x?.match_id) === String(m?.id));
+
+        const rows = (latestMps ?? []).filter((x: any) => x?.player_id);
+        const allHaveTimes = rows.length >= 2 && rows.every((x: any) => typeof getTimeMs(x) === "number");
+        if (!allHaveTimes) return;
+
+        // 3) Tie-Check
+        const times = rows.map((x: any) => getTimeMs(x) as number);
+        const uniq = new Set(times);
+        if (uniq.size !== times.length) {
+          alert("Gleichstand der Zeiten");
+          return;
+        }
+
+        // 4) Sortieren: kleinste Zeit = best
+        const sorted = rows
+          .map((x: any) => ({ player_id: x.player_id, time_ms: getTimeMs(x) as number }))
+          .sort((a: any, b: any) => a.time_ms - b.time_ms);
+
+        // 5) Score-Mapping (100/99/98...) + speichern
+        const scoreByPid: Record<string, number> = {};
+        for (let i = 0; i < sorted.length; i++) {
+          const pid = String(sorted[i].player_id);
+          const score = 100 - i;
+          scoreByPid[pid] = score;
+
+          // optional: optimistic Override setzen, damit autoAssign sofort korrekt läuft
+          setScoreOverride((prev) => ({ ...prev, [k(mp.match_id, pid)]: String(score) }));
+
+          await setScore(mp.match_id, pid, score);
+        }
+
+        // 6) autoAssign: mit gepatchten Scores, damit es sofort korrekt arbeitet
+        const patchedLatestMps = rows.map((x: any) => ({
+          ...x,
+          score: scoreByPid[String(x.player_id)] ?? x.score,
+        }));
+
+        if (isEliminationFormat) {
+          // Timeplay wirst du normalerweise nicht als elimination fahren,
+          // aber falls doch, bleibt die Logik konsistent.
+          const expected = getExpectedPlayersForEliminationRound(Number(r?.number ?? 0));
+          const currentCount = patchedLatestMps.length;
+          if (expected && currentCount === expected) {
+            await autoAssignPositionsByScore(m.id, patchedLatestMps);
+          }
+        } else {
+          await autoAssignPositionsByScore(m.id, patchedLatestMps);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+    />
+
+    {savingTime[k(mp.match_id, mp.player_id)] ? (
+      <span className="text-[10px] sm:text-xs text-neutral-500">
+        speichere…
+      </span>
+    ) : null}
+  </>
+) : (
+  <>
+    <span className="text-[10px] sm:text-xs text-neutral-500 whitespace-nowrap">
+      Punkte
+    </span>
+
+    <Input
+      value={
+        scoreFocusKey === k(mp.match_id, mp.player_id)
+          ? getScoreStr(mp)
+          : formatScoreStr(getScoreStr(mp))
+      }
+      onFocus={() =>
+        setScoreFocusKey(k(mp.match_id, mp.player_id))
+      }
+      inputMode="numeric"
+      placeholder="0"
+      className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 w--[115px] max-w-[115px]  text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
+      disabled={locked}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const cleaned = raw.replace(/[^0-9]/g, "");
+        const key = k(mp.match_id, mp.player_id);
+        setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
+      }}
+      onBlur={async () => {
+        setScoreFocusKey(null);
+        const key = k(mp.match_id, mp.player_id);
+        const raw = (
+          scoreOverride[key] ??
+          (mp.score == null ? "" : String(mp.score))
+        ).trim();
+
+        if (raw === "") {
+          await setScore(mp.match_id, mp.player_id, null);
+          return;
+        }
+
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0) {
+          alert("Ungültige Punkte");
+          return;
+        }
+
+        await setScore(mp.match_id, mp.player_id, n);
+
+        // ✅ wenn jetzt alle Scores da sind: Plätze automatisch setzen
+        if (isEliminationFormat) {
+          const expected = getExpectedPlayersForEliminationRound(Number(r?.number ?? 0));
+
+          const latestMps =
+            (matchPlayers ?? []).filter((x: any) => String(x?.match_id) === String(m?.id));
+
+          const currentCount = (latestMps ?? []).filter((x: any) => x?.player_id).length;
+
+          if (expected && currentCount === expected) {
+            await autoAssignPositionsByScore(m.id, latestMps);
+          }
+        } else {
+          await autoAssignPositionsByScore(m.id, mps);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+
+    {savingScore[k(mp.match_id, mp.player_id)] ? (
+      <span className="text-[10px] sm:text-xs text-neutral-500">
+        speichere…
+      </span>
+    ) : null}
+  </>
+)}
+
+
 
                        
 
-                        {savingScore[k(mp.match_id, mp.player_id)] ? (
-                          <span className="text-[10px] sm:text-xs text-neutral-500">
-                            speichere…
-                          </span>
-                        ) : null}
+
 
 
 
@@ -7533,7 +7814,15 @@ export default function AdminHome() {
 
   const [showBottomBar, setShowBottomBar] = useState(true);
 
-useEffect(() => {
+
+  // 🔊 Stimmen einmal initialisieren (Safari / iOS)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.speechSynthesis.getVoices();
+  }, []);
+
+
+  useEffect(() => {
   let raf = 0;
 
   function onScroll() {
@@ -7562,6 +7851,8 @@ useEffect(() => {
     window.removeEventListener("scroll", onScroll);
   };
 }, []);
+
+
 
 
 
@@ -7655,7 +7946,7 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   const [matchSize, setMatchSize] = useState<2 | 3 | 4>(4);
 
   const [tournamentFormat, setTournamentFormat] =
-    useState<"matchplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation">("matchplay");
+    useState<"matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation">("matchplay");
 
   const [templateTournamentId, setTemplateTournamentId] =
     useState<string>("");
@@ -8221,6 +8512,7 @@ if (joined)
       }}
     >
       <option value="matchplay">Matchplay (Standard)</option>
+      <option value="timeplay">Timeplay (Matchplay mit Zeit)</option>
       <option value="swiss">Swiss</option>
       <option value="round_robin">Round Robin (Beta)</option>
       <option value="rotation">Rotation (alle Spieler spielen jede Maschine)</option>
@@ -9802,20 +10094,174 @@ async function reloadAll() {
     const rotFinalCountdownRef = useRef<number | null>(null);
     const rotFinishedAnnouncedRef = useRef(false);   
 
-    function rotSpeak(text: string) {
-      if (typeof window === "undefined") return;
-      const synth = window.speechSynthesis;
-      if (!synth) return;
+    const rotEndSoundPlayedRef = useRef(false);
+    const rotEndSoundRef = useRef<HTMLAudioElement | null>(null);
 
-      try {
-        synth.cancel(); // verhindert Overlap
-        const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = "de-DE";
-        synth.speak(utter);
-      } catch {
-        // ignore
-      }
+
+
+// 🎵 Rotation Background Music (MP3 loop)
+// Datei: /public/sounds/rotation-loop.mp3
+const rotMusicRef = useRef<HTMLAudioElement | null>(null);
+const ROT_MUSIC_VOL = 0.25;      // normale Lautstärke (eher leise)
+const ROT_MUSIC_VOL_PLAY = 0.25;  // während Play
+const ROT_MUSIC_DUCK = 0.10;     // während Sprache (noch leiser)
+
+function rotMusicEnsure() {
+  if (typeof window === "undefined") return null;
+  if (!rotMusicRef.current) {
+    const a = new Audio("/sounds/timer.mp3");
+    a.loop = true;
+    a.preload = "auto";
+    a.volume = ROT_MUSIC_VOL;
+    rotMusicRef.current = a;
+  }
+  return rotMusicRef.current;
+}
+
+function rotMusicPlay() {
+  const a = rotMusicEnsure();
+  if (!a) return;
+  try {
+    //a.volume = ROT_MUSIC_VOL;
+    if (a.paused) a.play().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+function rotMusicStop() {
+  const a = rotMusicRef.current;
+  if (!a) return;
+  try {
+    a.pause();
+    a.currentTime = 0;
+    a.volume = ROT_MUSIC_VOL;
+  } catch {
+    /* ignore */
+  }
+}
+
+function rotMusicDuck() {
+  const a = rotMusicRef.current;
+  if (!a) return;
+  try {
+    a.volume = ROT_MUSIC_DUCK;
+  } catch {}
+}
+
+function rotMusicUnduck() {
+  const a = rotMusicRef.current;
+  if (!a) return;
+  try {
+    a.volume = ROT_MUSIC_VOL;
+  } catch {}
+}
+function rotMusicUnduckPlay() {
+  const a = rotMusicRef.current;
+  if (!a) return;
+  try {
+    a.volume = ROT_MUSIC_VOL_PLAY;
+  } catch {}
+}
+
+function rotPlayEndSound() {
+  if (typeof window === "undefined") return;
+
+  try {
+    if (!rotEndSoundRef.current) {
+      const a = new Audio("/sounds/end.mp3");
+      a.preload = "auto";
+
+      // 🔊 HIER Lautstärke einstellen
+      a.volume = 0.9; // z.B. 90%
+
+      rotEndSoundRef.current = a;
     }
+
+    rotEndSoundRef.current.currentTime = 0;
+    rotEndSoundRef.current.play().catch(() => {});
+  } catch {}
+}
+
+
+
+function rotSpeak(text: string) {
+  if (typeof window === "undefined") return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+
+  try {
+    // 🎧 Musik während Sprache leiser
+    rotMusicDuck();
+
+    synth.cancel(); // verhindert Overlap
+
+    const utter = new SpeechSynthesisUtterance(text);
+    //utter.lang = "de-DE";
+
+    utter.lang = "en-US"; // Vicki ist Englisch
+
+    const voices = synth.getVoices();
+
+    const vicki =
+      voices.find(v => v.name === "Vicki") ||
+      voices.find(v => v.name.includes("Vicki")) ||
+      null;
+
+    if (vicki) {
+      utter.voice = vicki;
+    }
+
+ 
+
+    let restore = () => rotMusicUnduck();
+
+    if (text === "Los gehts" || text === "Achtung, nur noch eine Minute." || text === "Halbzeit. Die Hälfte der Zeit ist um.") {
+      restore = () => rotMusicUnduckPlay();
+    }
+
+    //const restore = () => rotMusicUnduck();
+    utter.onend = restore;
+    utter.onerror = restore;
+
+    // Fallback: falls cancel()/Safari onend nicht feuert
+    window.setTimeout(restore, 1200);
+
+    synth.speak(utter);
+  } catch {
+    rotMusicUnduck();
+  }
+}
+
+
+function elimSpeak(text: string) {
+  if (typeof window === "undefined") return;
+
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+
+  try {
+    // NICHT canceln, sonst killst du ggf. andere Ansagen
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-US";
+
+    const voices = synth.getVoices();
+    const vicki =
+      voices.find((v) => v.name === "Vicki") ||
+      voices.find((v) => (v.name || "").toLowerCase().includes("vicki")) ||
+      null;
+
+    const enFallback =
+      voices.find((v) => (v.lang || "").toLowerCase().startsWith("en")) || null;
+
+    utter.voice = vicki ?? enFallback ?? null;
+
+    synth.speak(utter);
+  } catch {
+    // ignore
+  }
+}
+
 
 
   const rotRunning =
@@ -9823,7 +10269,24 @@ async function reloadAll() {
     Number.isFinite(rotTimer.endAt) &&
     rotTimer.endAt > Date.now();
 
-  const rotPaused =
+  const rotPaused = !rotRunning && Number.isFinite(rotTimer?.remainingMs);
+
+  useEffect(() => {
+  if (!isRotationFormat) {
+    rotMusicStop();
+    return;
+  }
+
+  const prestartActive =
+    typeof rotPrestartEndAt === "number" && rotPrestartEndAt > Date.now();
+
+  const shouldPlay = (rotRunning || prestartActive) && !rotPaused;
+
+  if (shouldPlay) rotMusicPlay();
+  else rotMusicStop();
+}, [isRotationFormat, rotRunning, rotPaused, rotPrestartEndAt]);
+
+
     !rotRunning &&
     typeof rotTimer?.remainingMs === "number" &&
     Number.isFinite(rotTimer.remainingMs) &&
@@ -9869,13 +10332,13 @@ useEffect(() => {
   // 🟠 Halbzeit (einmal)
   if (!rotHalfAnnouncedRef.current && leftMs <= totalMs / 2) {
     rotHalfAnnouncedRef.current = true;
-    rotSpeak("Halbzeit. Die Hälfte der Zeit ist um.");
+    rotSpeak("Hurry up and try harder, take risks or stay pussies forever.");
   }
 
   // 🔴 Noch 1 Minute (einmal)
   if (!rotOneMinuteAnnouncedRef.current && leftMs <= 60_000) {
     rotOneMinuteAnnouncedRef.current = true;
-    rotSpeak("Achtung. Es läuft nur noch eine Minute.");
+    rotSpeak("Attention, only one minute left.");
   }
 
   // 🔊 Letzte 10 Sekunden runterzählen
@@ -9886,13 +10349,20 @@ useEffect(() => {
     }
   }
 
-  // 🛑 Zeit abgelaufen (einmal)
-  if (secondsLeft <= 1 && !rotFinishedAnnouncedRef.current) {
-    rotFinishedAnnouncedRef.current = true;
-    rotSpeak(
-      "Die Zeit ist abgelaufen! Sofort mit dem Flippern aufhören und die Highscores eintragen! Vielen Dank!"
-    );
-  }
+// 🔔 End-Sound bei 1 Sekunde (einmal)
+if (secondsLeft <2 && secondsLeft > 0) {
+  rotEndSoundPlayedRef.current = true;
+  rotPlayEndSound();
+}
+
+// 🛑 Zeit abgelaufen (einmal) – nach dem Sound
+if (secondsLeft === 1 && !rotFinishedAnnouncedRef.current) {
+  rotFinishedAnnouncedRef.current = true;
+  rotSpeak(
+    "Time's up! Stop playing pinball immediately and enter your high scores! Thank you!"
+  );
+}
+
 }, [
   isRotationFormat,
   rotRunning,
@@ -9913,21 +10383,27 @@ useEffect(() => {
   // bei 10s: Ready-Ansage (einmal)
   if (secondsLeft <= 10 && !rotPrestartReadySpokenRef.current) {
     rotPrestartReadySpokenRef.current = true;
-    rotSpeak("Macht euch bereit, es geht in wenigen Sekunden los.");
+    rotSpeak("Get ready, it starts in a few seconds!");
   }
 
   // bei 3,2,1: runterzählen (jeweils einmal)
-  if (secondsLeft <= 3 && secondsLeft > 0) {
+  if (secondsLeft <= 5 && secondsLeft > 0) {
     if (rotPrestartLastSpokenRef.current !== secondsLeft) {
       rotPrestartLastSpokenRef.current = secondsLeft;
       rotSpeak(String(secondsLeft));
     }
   }
 
+    if (secondsLeft === 0) {
+      rotEndSoundPlayedRef.current = true;
+      rotPlayEndSound();
+  }
+
+
   // bei 0: Let's flip + Haupttimer starten (einmal)
   if (secondsLeft <= 0 && !rotLetsFlipSpokenRef.current) {
     rotLetsFlipSpokenRef.current = true;
-    rotSpeak("Los gehts");
+    rotSpeak("Let's go and have fun!");
 
     if (rotPendingDurationSec == null) {
       // Sicherheitsgurt – sollte eigentlich nie passieren
@@ -9954,6 +10430,8 @@ function rotStartMainTimer(durationSec: number) {
   rotFinalCountdownRef.current = null;
   rotFinishedAnnouncedRef.current = false;
 
+  rotMusicPlay();
+
   setRotTimer({
     endAt: Date.now() + durationSec * 1000,
     remainingMs: null,
@@ -9964,6 +10442,8 @@ function rotStartMainTimer(durationSec: number) {
 
 
 function rotStartGlobal(minutes = 10) {
+  // iOS: Audio nur zuverlässig nach User-Click startbar
+  rotMusicPlay();
   const dur = Math.max(1, Math.floor(minutes)) * 60;
 
   // Prestart-Flags reset
@@ -9972,6 +10452,8 @@ function rotStartGlobal(minutes = 10) {
   rotPrestartLastSpokenRef.current = null;
   rotPrestartReadySpokenRef.current = false;
   rotLetsFlipSpokenRef.current = false;
+  rotEndSoundPlayedRef.current = false;
+  rotEndSoundRef.current = null;
 
   // Haupttimer erstmal NICHT starten – nur merken
   setRotPendingDurationSec(dur);
@@ -9996,7 +10478,9 @@ function rotStartGlobal(minutes = 10) {
         endAt: null,
         remainingMs: remaining,
         durationSec: prev?.durationSec ?? 600,
+        
       }));
+      rotMusicStop();
       return;
     }
 
@@ -10007,16 +10491,21 @@ function rotStartGlobal(minutes = 10) {
         endAt: Date.now() + remaining,
         remainingMs: null,
         durationSec: prev?.durationSec ?? 600,
+        
       }));
+      rotMusicPlay();
     }
   }
 
   function rotResetGlobal() {
+    rotMusicStop();
 setRotPrestartEndAt(null);
 setRotPendingDurationSec(null);
 rotPrestartLastSpokenRef.current = null;
 rotPrestartReadySpokenRef.current = false;
 rotLetsFlipSpokenRef.current = false;
+rotEndSoundPlayedRef.current = false;
+rotEndSoundRef.current = null;
 
     setRotTimer((prev) => ({
       endAt: null,
@@ -10117,6 +10606,11 @@ const machinesInfoById = useMemo(
   [data?.machines]
 );
 
+const tasksById = useMemo(() => {
+  const arr = ((data as any)?.tasks ?? []) as any[];
+  return Object.fromEntries(arr.map((x) => [String(x.id), x]));
+}, [data]);
+
   const playersById = useMemo(
     () =>
       Object.fromEntries(
@@ -10154,6 +10648,8 @@ const machinesInfoById = useMemo(
       ? "DYP Round Robin"
       : (typeof data === "undefined" ? undefined : data?.tournament?.format) === "rotation"
       ? "Round the pinball"
+      : (typeof data === "undefined" ? undefined : data?.tournament?.format) === "timeplay"
+      ? "Time-Play"
       : (typeof data === "elimination" ? undefined : data?.tournament?.format) === "elimination"
       ? "Crazy Elimination"
       : "Matchplay";
@@ -10849,6 +11345,7 @@ const machinesInfoById = useMemo(
       matchPlayers={matchPlayers}
       machinesInfoById={machinesInfoById}
       playersById={playersById}
+      tasksById={tasksById}   // ✅ HINZUFÜGEN
       onSaved={reloadAll}
       locked={locked}
       tournament={(data as any)?.tournament}
@@ -10892,13 +11389,14 @@ const machinesInfoById = useMemo(
   })()
 ) : (
   <CurrentRoundSticky
-    code={code}
-    tournament={(data as any)?.tournament}
-    rounds={rounds}
-    matches={matches}
-    matchPlayers={matchPlayers}
-    playersById={playersById}
-    machinesInfoById={machinesInfoById}
+  code={code}
+  tournament={(data as any)?.tournament}
+  rounds={rounds}
+  matches={matches}
+  matchPlayers={matchPlayers}
+  playersById={playersById}
+  machinesInfoById={machinesInfoById}
+  tasksById={tasksById}
   />
 )}
 
