@@ -10096,7 +10096,9 @@ async function reloadAll() {
 
     const rotEndSoundPlayedRef = useRef(false);
     const rotEndSoundRef = useRef<HTMLAudioElement | null>(null);
-
+    // --- Rotation Speech (iOS safe) ---
+    const rotVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
+    const rotSpeechUnlockedRef = useRef(false);
 
 
 // 🎵 Rotation Background Music (MP3 loop)
@@ -10183,6 +10185,80 @@ function rotPlayEndSound() {
   } catch {}
 }
 
+  // iOS/Safari: voices sind beim ersten getVoices() oft leer
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+
+    const load = () => {
+      rotVoicesRef.current = synth.getVoices?.() ?? [];
+    };
+
+    load();
+    synth.onvoiceschanged = load;
+
+    return () => {
+      // cleanup (nur wenn wir es gesetzt haben)
+      if (synth.onvoiceschanged === load) synth.onvoiceschanged = null;
+    };
+  }, []);
+
+    function rotPickVoice(preferredLangs: string[] = ["en-US", "de-DE"]) {
+    const voices = rotVoicesRef.current ?? [];
+
+    // Windows: Vicki/Vicky (nur wenn vorhanden)
+    const vicky =
+      voices.find((v) => /vicki|vicky/i.test(v.name || "")) ||
+      voices.find((v) => /vicki|vicky/i.test(v.voiceURI || "")) ||
+      null;
+
+    if (vicky) return vicky;
+
+    // iOS: bevorzugte Sprache suchen
+    for (const lang of preferredLangs) {
+      const exact = voices.find((v) => v.lang === lang);
+      if (exact) return exact;
+
+      const prefix = voices.find((v) =>
+        (v.lang || "").toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+      );
+      if (prefix) return prefix;
+    }
+
+    return voices[0] ?? null;
+  }
+
+  // iOS: Speech oft erst nach einem Speak im User-Click zuverlässig
+  function rotUnlockSpeechOnce() {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    if (rotSpeechUnlockedRef.current) return;
+
+    try {
+      synth.cancel();
+
+      const u = new SpeechSynthesisUtterance(".");
+      u.volume = 0; // stumm
+      u.rate = 1;
+      u.pitch = 1;
+
+      const v = rotPickVoice(["en-US", "de-DE"]);
+      if (v) {
+        u.voice = v;
+        u.lang = v.lang || "en-US";
+      } else {
+        u.lang = "en-US";
+      }
+
+      synth.speak(u);
+      rotSpeechUnlockedRef.current = true;
+    } catch {
+      // ignore
+    }
+  }
+
 
 
 function rotSpeak(text: string) {
@@ -10191,40 +10267,48 @@ function rotSpeak(text: string) {
   if (!synth) return;
 
   try {
+    // 🔹 iOS Fix: Voices ggf. einmal explizit anstoßen
+    if ((rotVoicesRef.current?.length ?? 0) === 0) {
+      synth.getVoices();
+    }
+
+    // 🔹 iOS Fix: einmal “unlock” (wenn noch nicht passiert)
+    if (!rotSpeechUnlockedRef.current) {
+      rotUnlockSpeechOnce();
+    }
+
     // 🎧 Musik während Sprache leiser
     rotMusicDuck();
 
-    synth.cancel(); // verhindert Overlap
+    // verhindert Overlap / “stuck queue”
+    synth.cancel();
 
+    // nur EINMAL anlegen
     const utter = new SpeechSynthesisUtterance(text);
-    //utter.lang = "de-DE";
 
-    utter.lang = "en-US"; // Vicki ist Englisch
-
-    const voices = synth.getVoices();
-
-    const vicki =
-      voices.find(v => v.name === "Vicki") ||
-      voices.find(v => v.name.includes("Vicki")) ||
-      null;
-
-    if (vicki) {
-      utter.voice = vicki;
+    // Voice wählen: Vicky auf Windows, sonst iOS Stimme (en/de)
+    const v = rotPickVoice(["en-US", "de-DE"]);
+    if (v) {
+      utter.voice = v;
+      utter.lang = v.lang || "en-US";
+    } else {
+      utter.lang = "en-US";
     }
-
- 
 
     let restore = () => rotMusicUnduck();
 
-    if (text === "Los gehts" || text === "Achtung, nur noch eine Minute." || text === "Halbzeit. Die Hälfte der Zeit ist um.") {
+    if (
+      text === "Los gehts" ||
+      text === "Achtung, nur noch eine Minute." ||
+      text === "Halbzeit. Die Hälfte der Zeit ist um."
+    ) {
       restore = () => rotMusicUnduckPlay();
     }
 
-    //const restore = () => rotMusicUnduck();
     utter.onend = restore;
     utter.onerror = restore;
 
-    // Fallback: falls cancel()/Safari onend nicht feuert
+    // Fallback: falls onend nicht feuert
     window.setTimeout(restore, 1200);
 
     synth.speak(utter);
@@ -10232,6 +10316,7 @@ function rotSpeak(text: string) {
     rotMusicUnduck();
   }
 }
+
 
 
 function elimSpeak(text: string) {
@@ -10442,6 +10527,7 @@ function rotStartMainTimer(durationSec: number) {
 
 
 function rotStartGlobal(minutes = 10) {
+  rotUnlockSpeechOnce(); // <-- iPad Speech unlock im Button-Click
   // iOS: Audio nur zuverlässig nach User-Click startbar
   rotMusicPlay();
   const dur = Math.max(1, Math.floor(minutes)) * 60;
