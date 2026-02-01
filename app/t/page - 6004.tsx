@@ -10095,7 +10095,6 @@ async function reloadAll() {
     const rotFinishedAnnouncedRef = useRef(false);   
 
     const rotEndSoundPlayedRef = useRef(false);
-    const rotPendingEndSoundRef = useRef(false);
     const rotEndSoundRef = useRef<HTMLAudioElement | null>(null);
     const rotEndTimeoutRef = useRef<number | null>(null);
     // --- Rotation Speech (iOS safe) ---
@@ -10168,31 +10167,25 @@ function rotMusicUnduck() {
 //  } catch {}
 //}
 
-async function rotPlayEndSound(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-
-  // iPad: wenn Seite "hidden" ist -> später erneut versuchen
-  if (document?.hidden) return false;
+function rotPlayEndSound() {
+  if (typeof window === "undefined") return;
 
   try {
+    // falls aus irgendeinem Grund noch nicht vorbereitet:
     if (!rotEndSoundRef.current) {
-      rotPrepareEndSound(); // sollte idealerweise im Start-Tap schon passiert sein
+      rotPrepareEndSound(); // kann im Timer trotzdem blocken, aber Start-Click sollte es setzen
     }
 
     const a = rotEndSoundRef.current;
-    if (!a) return false;
+    if (!a) return;
 
     a.volume = 0.9;
     a.currentTime = 0;
-
-    await a.play();
-    return true;
-  } catch (err) {
-    console.log("EndSound play() blocked:", (err as any)?.name, (err as any)?.message, err);
-    return false;
-  }
+    a.play().catch((err) => {
+      console.log("EndSound play() blocked:", err);
+    });
+  } catch {}
 }
-
 
 
 function rotPrepareEndSound() {
@@ -10411,18 +10404,12 @@ useEffect(() => {
     rotEndTimeoutRef.current = null;
   }
 
-  const fire = async () => {
+  const fire = () => {
     // Endsound (einmal)
     if (!rotEndSoundPlayedRef.current) {
-      const ok = await rotPlayEndSound();
-      if (ok) {
-        rotEndSoundPlayedRef.current = true;
-      } else {
-        // iPad: Sound später erneut versuchen (z.B. wenn User zurückkommt)
-        rotPendingEndSoundRef.current = true;
-      }
+      rotEndSoundPlayedRef.current = true;
+      rotPlayEndSound();
     }
-
 
     // Time's up (einmal)
     if (!rotFinishedAnnouncedRef.current) {
@@ -10507,26 +10494,6 @@ useEffect(() => {
     const s = total % 60;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
-
-  useEffect(() => {
-  if (typeof window === "undefined") return;
-
-  const onVis = async () => {
-    if (document.hidden) return;
-
-    if (rotPendingEndSoundRef.current && !rotEndSoundPlayedRef.current) {
-      const ok = await rotPlayEndSound();
-      if (ok) {
-        rotEndSoundPlayedRef.current = true;
-        rotPendingEndSoundRef.current = false;
-      }
-    }
-  };
-
-  document.addEventListener("visibilitychange", onVis);
-  return () => document.removeEventListener("visibilitychange", onVis);
-}, []);
-
 
 useEffect(() => {
   if (!isRotationFormat) return;
