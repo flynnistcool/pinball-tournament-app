@@ -7832,12 +7832,22 @@ return (
       className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 w--[115px] max-w-[115px]  text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
       disabled={locked}
       onChange={(e) => {
+
+
         const raw = e.target.value;
         const cleaned = raw.replace(/[^0-9]/g, "");
         const key = k(mp.match_id, mp.player_id);
         setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
       }}
       onBlur={async () => {
+
+try {
+  elimUnlockSpeechOnce();
+  elimSpeak("yeeeeees");
+} catch (e) {
+  console.log("DEBUG: testspeech failed", e);
+}
+
         setScoreFocusKey(null);
         const key = k(mp.match_id, mp.player_id);
         const raw = (
