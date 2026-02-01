@@ -10382,55 +10382,69 @@ function rotMusicUnduck() {
 //}
 
 async function rotPlayEndSound(): Promise<boolean> {
-  const a = rotMusicEnsure();
-  if (!a) return false;
 
-  const wasPlaying = !a.paused;
+
+
+
+  if (typeof window === "undefined") return false;
+
+  // iPad: wenn Seite "hidden" ist -> später erneut versuchen
+  if (document?.hidden) return false;
 
   try {
-    // Musik stoppen
-    a.pause();
-    a.loop = false;
+if (!rotEndSoundRef.current) return false;
+
+    const a = rotEndSoundRef.current;
+    if (!a) return false;
+
+    a.volume = 0.9;
     a.currentTime = 0;
 
-    // Endsound laden
-    a.src = "/sounds/end.mp3";
-    a.muted = false;
-    a.volume = 1;
-    a.load();
-
-    // Endsound spielen
     await a.play();
-
-    // Danach wieder Musik
-    a.onended = () => {
-      a.onended = null;
-      a.src = "/sounds/timer.mp3";
-      a.loop = true;
-      a.currentTime = 0;
-      if (wasPlaying) {
-        a.play().catch(() => {});
-      }
-    };
-
     return true;
-  } catch (e) {
-    console.log("EndSound failed", e);
+  } catch (err) {
+    console.log("EndSound play() blocked:", (err as any)?.name, (err as any)?.message, err);
     return false;
   }
 }
 
 
 
-
 function rotPrepareEndSound(): Promise<boolean> {
-  // On iOS Safari, playing 2 separate <audio> elements in parallel is unreliable.
-  // We use the *same* audio element as the loop music for the end sound by swapping `src`.
-  // If the music can play, the end sound can play too.
+  if (typeof window === "undefined") return Promise.resolve(false);
+
+  if (!rotEndSoundRef.current) {
+    const a = new Audio("/sounds/end.mp3");
+    a.preload = "auto";
+    (a as any).playsInline = true;
+    a.volume = 0.9;
+    rotEndSoundRef.current = a;
+  }
+
+  const a = rotEndSoundRef.current!;
   try {
-    rotMusicEnsure();
-    return Promise.resolve(true);
-  } catch {
+    a.pause();
+    a.currentTime = 0;
+    a.muted = true;
+
+    // play() wird DIREKT im Tap gestartet -> iOS-safe
+    return a.play()
+      .then(() => {
+        a.pause();
+        a.currentTime = 0;
+        a.muted = false;
+        a.volume = 0.9;
+        console.log("EndSound unlocked OK");
+        return true;
+      })
+      .catch((err) => {
+        a.muted = false;
+        console.log("EndSound unlock failed:", err?.name, err?.message, err);
+        return false;
+      });
+  } catch (err) {
+    a.muted = false;
+    console.log("EndSound unlock failed (sync):", err);
     return Promise.resolve(false);
   }
 }
