@@ -10105,7 +10105,7 @@ async function reloadAll() {
 // Datei: /public/sounds/rotation-loop.mp3
 const rotMusicRef = useRef<HTMLAudioElement | null>(null);
 const ROT_MUSIC_VOL = 0.25;      // normale Lautstärke (eher leise)
-const ROT_MUSIC_VOL_PLAY = 0.25;  // während Play
+//const ROT_MUSIC_VOL_PLAY = 0.25;  // während Play
 const ROT_MUSIC_DUCK = 0.10;     // während Sprache (noch leiser)
 
 function rotMusicEnsure() {
@@ -10158,32 +10158,75 @@ function rotMusicUnduck() {
     a.volume = ROT_MUSIC_VOL;
   } catch {}
 }
-function rotMusicUnduckPlay() {
-  const a = rotMusicRef.current;
-  if (!a) return;
-  try {
-    a.volume = ROT_MUSIC_VOL_PLAY;
-  } catch {}
-}
+//function rotMusicUnduckPlay() {
+//  const a = rotMusicRef.current;
+//  if (!a) return;
+//  try {
+//    a.volume = ROT_MUSIC_VOL_PLAY;
+//  } catch {}
+//}
 
 function rotPlayEndSound() {
   if (typeof window === "undefined") return;
 
   try {
+    // falls aus irgendeinem Grund noch nicht vorbereitet:
     if (!rotEndSoundRef.current) {
-      const a = new Audio("/sounds/end.mp3");
-      a.preload = "auto";
-
-      // 🔊 HIER Lautstärke einstellen
-      a.volume = 0.9; // z.B. 90%
-
-      rotEndSoundRef.current = a;
+      rotPrepareEndSound(); // kann im Timer trotzdem blocken, aber Start-Click sollte es setzen
     }
 
-    rotEndSoundRef.current.currentTime = 0;
-    rotEndSoundRef.current.play().catch(() => {});
+    const a = rotEndSoundRef.current;
+    if (!a) return;
+
+    a.volume = 0.9;
+    a.currentTime = 0;
+    a.play().catch((err) => {
+      console.log("EndSound play() blocked:", err);
+    });
   } catch {}
 }
+
+
+function rotPrepareEndSound() {
+  if (typeof window === "undefined") return;
+
+  // Audio-Objekt einmalig erstellen (im Idealfall im Button-Click)
+  if (!rotEndSoundRef.current) {
+    const a = new Audio("/sounds/end.mp3");
+    a.preload = "auto";
+    a.volume = 0.9;
+    rotEndSoundRef.current = a;
+  }
+
+  // iOS "unlock": einmal stumm abspielen + sofort pausieren (nur wenn möglich)
+  const a = rotEndSoundRef.current;
+  try {
+    a.volume = 0;
+    a.currentTime = 0;
+
+    const p = a.play();
+    if (p && typeof (p as any).then === "function") {
+      (p as Promise<void>)
+        .then(() => {
+          a.pause();
+          a.currentTime = 0;
+          a.volume = 0.9;
+        })
+        .catch(() => {
+          // falls iOS trotzdem blockt: Volume zurücksetzen
+          a.volume = 0.9;
+        });
+    } else {
+      // sehr selten: play() gibt kein Promise zurück
+      a.pause();
+      a.currentTime = 0;
+      a.volume = 0.9;
+    }
+  } catch {
+    a.volume = 0.9;
+  }
+}
+
 
   // iOS/Safari: voices sind beim ersten getVoices() oft leer
   useEffect(() => {
@@ -10297,13 +10340,13 @@ function rotSpeak(text: string) {
 
     let restore = () => rotMusicUnduck();
 
-    if (
-      text === "Los gehts" ||
-      text === "Achtung, nur noch eine Minute." ||
-      text === "Halbzeit. Die Hälfte der Zeit ist um."
-    ) {
-      restore = () => rotMusicUnduckPlay();
-    }
+    //if (
+    //  text === "Los gehts" ||
+    //  text === "Achtung, nur noch eine Minute." ||
+    //  text === "Halbzeit. Die Hälfte der Zeit ist um."
+    //) {
+    //  restore = () => rotMusicUnduckPlay();
+   // }
 
     utter.onend = restore;
     utter.onerror = restore;
@@ -10435,7 +10478,7 @@ useEffect(() => {
   }
 
 // 🔔 End-Sound bei 1 Sekunde (einmal)
-if (secondsLeft <2 && secondsLeft > 0) {
+if (secondsLeft < 2 && secondsLeft > 0 && !rotEndSoundPlayedRef.current) {
   rotEndSoundPlayedRef.current = true;
   rotPlayEndSound();
 }
@@ -10479,9 +10522,9 @@ useEffect(() => {
     }
   }
 
-    if (secondsLeft === 0) {
-      rotEndSoundPlayedRef.current = true;
-      rotPlayEndSound();
+  if (secondsLeft === 0 && !rotEndSoundPlayedRef.current) {
+    rotEndSoundPlayedRef.current = true;
+    rotPlayEndSound();
   }
 
 
@@ -10529,6 +10572,7 @@ function rotStartMainTimer(durationSec: number) {
 function rotStartGlobal(minutes = 10) {
   rotUnlockSpeechOnce(); // <-- iPad Speech unlock im Button-Click
   // iOS: Audio nur zuverlässig nach User-Click startbar
+  rotPrepareEndSound(); // <-- Endsound im Button-Click vorbereiten (iOS-safe)
   rotMusicPlay();
   const dur = Math.max(1, Math.floor(minutes)) * 60;
 
@@ -10539,7 +10583,7 @@ function rotStartGlobal(minutes = 10) {
   rotPrestartReadySpokenRef.current = false;
   rotLetsFlipSpokenRef.current = false;
   rotEndSoundPlayedRef.current = false;
-  rotEndSoundRef.current = null;
+  rotEndSoundRef.current = false;
 
   // Haupttimer erstmal NICHT starten – nur merken
   setRotPendingDurationSec(dur);
