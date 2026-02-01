@@ -10382,44 +10382,79 @@ function rotMusicUnduck() {
 //}
 
 async function rotPlayEndSound(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  // If page is hidden, iOS will often ignore audio; let the caller retry via pending logic.
+  if (document?.hidden) return false;
+
   const a = rotMusicEnsure();
   if (!a) return false;
 
+  // Remember current music state so we can restore it afterwards
   const wasPlaying = !a.paused;
+  const prevTime = (() => {
+    try { return a.currentTime; } catch { return 0; }
+  })();
+  const prevVol = (() => {
+    try { return a.volume; } catch { return ROT_MUSIC_VOL; }
+  })();
+  const prevLoop = !!a.loop;
+
+  // Build absolute URLs (a.src becomes absolute once set)
+  const timerSrcAbs = a.src || new URL("/sounds/timer.mp3", window.location.href).href;
+  const endSrcAbs = new URL("/sounds/end.mp3", window.location.href).href;
 
   try {
-    // Musik stoppen
-    a.pause();
-    a.loop = false;
-    a.currentTime = 0;
+    // Switch to end sound on the SAME audio element (iOS-safe)
+    try { a.pause(); } catch {}
+    try { a.loop = false; } catch {}
+    try { a.muted = false; } catch {}
+    try { a.volume = 0.9; } catch {}
+    try { a.currentTime = 0; } catch {}
 
-    // Endsound laden
-    a.src = "/sounds/end.mp3";
-    a.muted = false;
-    a.volume = 1;
-    a.load();
+    a.src = endSrcAbs;
+    try { a.load(); } catch {}
 
-    // Endsound spielen
     await a.play();
 
-    // Danach wieder Musik
-    a.onended = () => {
-      a.onended = null;
-      a.src = "/sounds/timer.mp3";
-      a.loop = true;
-      a.currentTime = 0;
-      if (wasPlaying) {
-        a.play().catch(() => {});
-      }
-    };
+    // Wait for the end sound to finish
+    await new Promise<void>((resolve) => {
+      a.addEventListener("ended", () => resolve(), { once: true });
+    });
+
+    // Restore timer music
+    try { a.pause(); } catch {}
+    a.src = timerSrcAbs;
+    try { a.loop = true; } catch {}
+    try { a.load(); } catch {}
+    try { a.currentTime = prevTime; } catch {}
+    try { a.volume = prevVol; } catch {}
+    try { a.muted = false; } catch {}
+
+    if (wasPlaying) {
+      a.play().catch(() => {});
+    } else {
+      // keep paused if it was paused before
+      try { a.pause(); } catch {}
+    }
 
     return true;
-  } catch (e) {
-    console.log("EndSound failed", e);
+  } catch (err) {
+    console.log("EndSound play() blocked:", (err as any)?.name, (err as any)?.message, err);
+
+    // Best-effort restore music
+    try { a.pause(); } catch {}
+    try { a.src = timerSrcAbs; } catch {}
+    try { a.loop = prevLoop; } catch {}
+    try { a.load(); } catch {}
+    try { a.currentTime = prevTime; } catch {}
+    try { a.volume = prevVol; } catch {}
+    try { a.muted = false; } catch {}
+    if (wasPlaying) {
+      a.play().catch(() => {});
+    }
     return false;
   }
 }
-
 
 
 
