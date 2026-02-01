@@ -10307,33 +10307,6 @@ function rotPrepareMusic() {
 }
 
 
-function rotPrepareMusicStartInTap() {
-  const a = rotMusicEnsure();
-  if (!a) return;
-
-  try {
-    // iOS: nur EIN play() im Tap, und laufen lassen
-    a.currentTime = 0;
-    a.volume = ROT_MUSIC_VOL;
-    a.muted = true;
-
-    a.play()
-      .then(() => {
-        a.muted = false;
-        console.log("Music started (tap) OK");
-      })
-      .catch((err) => {
-        a.muted = false;
-        console.log("Music start failed:", err?.name, err?.message, err);
-      });
-  } catch (err) {
-    try { a.muted = false; } catch {}
-    console.log("Music start failed (sync):", err);
-  }
-}
-
-
-
 
 function rotMusicPlay() {
   const a = rotMusicEnsure();
@@ -10406,8 +10379,8 @@ if (!rotEndSoundRef.current) return false;
 
 
 
-function rotPrepareEndSound(): Promise<boolean> {
-  if (typeof window === "undefined") return Promise.resolve(false);
+function rotPrepareEndSound() {
+  if (typeof window === "undefined") return;
 
   if (!rotEndSoundRef.current) {
     const a = new Audio("/sounds/end.mp3");
@@ -10423,28 +10396,23 @@ function rotPrepareEndSound(): Promise<boolean> {
     a.currentTime = 0;
     a.muted = true;
 
-    // play() wird DIREKT im Tap gestartet -> iOS-safe
-    return a.play()
+    a.play()
       .then(() => {
         a.pause();
         a.currentTime = 0;
         a.muted = false;
         a.volume = 0.9;
         console.log("EndSound unlocked OK");
-        return true;
       })
       .catch((err) => {
         a.muted = false;
         console.log("EndSound unlock failed:", err?.name, err?.message, err);
-        return false;
       });
   } catch (err) {
     a.muted = false;
     console.log("EndSound unlock failed (sync):", err);
-    return Promise.resolve(false);
   }
 }
-
 
 
 
@@ -10802,8 +10770,18 @@ useEffect(() => {
 
 
   // 🔔 Endsound: sobald <= 1 Sekunde übrig (auch wenn der Tick spät kommt)
+  if (!rotEndSoundPlayedRef.current && leftMs <= 1000) {
+    rotEndSoundPlayedRef.current = true;
+    rotPlayEndSound();
+  }
 
-  // ✅ Ende-Sound + 'Time's up' werden über den rotEndTimeoutRef-Effect gehandhabt (iPad-sicher).
+// 🛑 Zeit abgelaufen (einmal) – nach dem Sound
+if (secondsLeft === 1 && !rotFinishedAnnouncedRef.current) {
+  rotFinishedAnnouncedRef.current = true;
+  rotSpeak(
+    "Time's up! Stop playing pinball immediately and enter your high scores! Thank you!"
+  );
+}
 
 }, [
   isRotationFormat,
@@ -10837,8 +10815,8 @@ useEffect(() => {
   }
 
   // 🔔 Endsound: sobald <= 1 Sekunde übrig (auch wenn der Tick spät kommt)
-  // 🔔 Prestart-Endsound (kein played-Flag setzen; das Flag ist fürs echte Turnier-Ende)
-  if (leftMs === 0) {
+  if (!rotEndSoundPlayedRef.current && leftMs === 0) {
+    rotEndSoundPlayedRef.current = true;
     rotPlayEndSound();
   }
 
@@ -10890,11 +10868,11 @@ function rotStartMainTimer(durationSec: number) {
 function rotStartGlobal(minutes = 10) {
   rotUnlockSpeechOnce();
 
-  // iOS: Endsound zuerst unlocken, DANACH Musik starten (nicht parallel)
-  rotPrepareEndSound().then(() => {
-    rotPrepareMusicStartInTap();
-  });
+  // iOS: unlocks im Tap (ohne await!)
+  rotPrepareEndSound();
+  rotPrepareMusic();
 
+  rotMusicPlay();
 
   const dur = Math.max(1, Math.floor(minutes)) * 60;
 
