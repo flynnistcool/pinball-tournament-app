@@ -10678,7 +10678,7 @@ function rotStartMainTimer(durationSec: number) {
 
 
 
-function rotStartGlobal(minutes = 10) {
+async function rotStartGlobal(minutes = 10) {
   rotUnlockSpeechOnce(); // <-- iPad Speech unlock im Button-Click
   // iOS: Audio nur zuverlässig nach User-Click startbar
   rotPrepareEndSound(); // <-- Endsound im Button-Click vorbereiten (iOS-safe)
