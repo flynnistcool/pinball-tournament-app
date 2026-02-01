@@ -6189,8 +6189,7 @@ function elimUnlockSpeechOnce() {
     u.onend = () => {
       elimSpeechUnlockedRef.current = true;
     };
-    
-    synth.cancel();
+
     synth.speak(u);
 
     // falls onend nicht feuert, trotzdem "best effort" markieren
@@ -6216,13 +6215,13 @@ function elimSpeak(text: string) {
 
     // iOS/Safari: voices initialisieren
     //const voices = synth.getVoices?.() ?? [];
-    const voices = synth.getVoices?.() ?? [];
-    synth.cancel();
+    synth.getVoices?.();
+
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = "en-US";
 
     // Stimmen laden (wichtig v.a. Safari/iOS)
-  
+    const voices = synth.getVoices?.() ?? [];
 
     // "Vicki" bevorzugen, sonst irgendeine englische Stimme
     const vicki =
