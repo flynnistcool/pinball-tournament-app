@@ -7924,7 +7924,7 @@ return (
                               // 🔎 DEBUG iOS Speech: muss DIREKT im Click hörbar sein
 try {
   elimUnlockSpeechOnce();
-  elimSpeak("Test speech. If you hear this, iOS speech works.");
+  //elimSpeak("Test speech. If you hear this, iOS speech works.");
 } catch (e) {
   console.log("DEBUG: testspeech failed", e);
 }
