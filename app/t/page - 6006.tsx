@@ -4655,7 +4655,7 @@ function RotationGlobalTimerSticky({
   durationSec: number;
   running: boolean;
   paused: boolean;
-  onStart: (minutes: number) => void | Promise<void>;
+  onStart: (minutes: number) => void;
   onPauseToggle: () => void;
   onReset: () => void;
 }) {
@@ -4741,9 +4741,7 @@ function RotationGlobalTimerSticky({
               variant="secondary"
               className="h-9 px-3 text-sm w-full"
               disabled={locked || running}
-              onClick={async () => {
-                await onStart(minutes);
-              }}
+              onClick={() => onStart(minutes)}
             >
               Start
             </Button>
@@ -10124,29 +10122,6 @@ function rotMusicEnsure() {
   return rotMusicRef.current;
 }
 
-async function rotPrepareMusic(): Promise<boolean> {
-  const a = rotMusicEnsure();
-  if (!a) return false;
-
-  try {
-    a.pause();
-    a.currentTime = 0;
-
-    a.muted = true;
-    await a.play();
-    a.pause();
-    a.currentTime = 0;
-    a.muted = false;
-
-    return true;
-  } catch (err) {
-    console.log("Music unlock failed:", (err as any)?.name, (err as any)?.message, err);
-    try { a.muted = false; } catch {}
-    return false;
-  }
-}
-
-
 function rotMusicPlay() {
   const a = rotMusicEnsure();
   if (!a) return;
@@ -10220,43 +10195,45 @@ async function rotPlayEndSound(): Promise<boolean> {
 
 
 
-async function rotPrepareEndSound(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
+function rotPrepareEndSound() {
+  if (typeof window === "undefined") return;
 
-  try {
-    if (!rotEndSoundRef.current) {
-      const a = new Audio("/sounds/end.mp3");
-      a.preload = "auto";
-      (a as any).playsInline = true; // iOS helpful
-      a.volume = 0.9;
-      rotEndSoundRef.current = a;
-    }
-
-    const a = rotEndSoundRef.current!;
-    a.pause();
-    a.currentTime = 0;
-
-    // iOS unlock: muted play -> pause
-    a.muted = true;
-    await a.play();
-    a.pause();
-    a.currentTime = 0;
-    a.muted = false;
+  // Audio-Objekt einmalig erstellen (im Idealfall im Button-Click)
+  if (!rotEndSoundRef.current) {
+    const a = new Audio("/sounds/end.mp3");
+    a.preload = "auto";
     a.volume = 0.9;
+    rotEndSoundRef.current = a;
+  }
 
-    return true;
-  } catch (err) {
-    console.log("EndSound unlock failed:", (err as any)?.name, (err as any)?.message, err);
-    // restore sane state
-    const a = rotEndSoundRef.current;
-    if (a) {
-      a.muted = false;
+  // iOS "unlock": einmal stumm abspielen + sofort pausieren (nur wenn möglich)
+  const a = rotEndSoundRef.current;
+  try {
+    a.volume = 0;
+    a.currentTime = 0;
+
+    const p = a.play();
+    if (p && typeof (p as any).then === "function") {
+      (p as Promise<void>)
+        .then(() => {
+          a.pause();
+          a.currentTime = 0;
+          a.volume = 0.9;
+        })
+        .catch(() => {
+          // falls iOS trotzdem blockt: Volume zurücksetzen
+          a.volume = 0.9;
+        });
+    } else {
+      // sehr selten: play() gibt kein Promise zurück
+      a.pause();
+      a.currentTime = 0;
       a.volume = 0.9;
     }
-    return false;
+  } catch {
+    a.volume = 0.9;
   }
 }
-
 
 
   // iOS/Safari: voices sind beim ersten getVoices() oft leer
@@ -10682,11 +10659,6 @@ function rotStartGlobal(minutes = 10) {
   rotUnlockSpeechOnce(); // <-- iPad Speech unlock im Button-Click
   // iOS: Audio nur zuverlässig nach User-Click startbar
   rotPrepareEndSound(); // <-- Endsound im Button-Click vorbereiten (iOS-safe)
-
-  // ✅ iOS: plays NACHEINANDER im Tap, nicht parallel
-  await rotPrepareEndSound();
-  await rotPrepareMusic();
-
   rotMusicPlay();
   const dur = Math.max(1, Math.floor(minutes)) * 60;
 
