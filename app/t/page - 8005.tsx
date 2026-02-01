@@ -7921,13 +7921,6 @@ return (
                             disabled={locked}
                             title="Trägt automatisch Cutoff + 1 ein"
                             onClick={async () => {
-                              // 🔎 DEBUG iOS Speech: muss DIREKT im Click hörbar sein
-try {
-  elimUnlockSpeechOnce();
-  elimSpeak("Test speech. If you hear this, iOS speech works.");
-} catch (e) {
-  console.log("DEBUG: testspeech failed", e);
-}
                               if (locked) return;
 
                               const cutoff = Number(lowestScoreInRound);
