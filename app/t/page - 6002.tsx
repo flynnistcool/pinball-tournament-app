@@ -10608,9 +10608,6 @@ function rotStartMainTimer(durationSec: number) {
   rotFinalCountdownRef.current = null;
   rotFinishedAnnouncedRef.current = false;
 
-  // ✅ WICHTIG: Prestart-Sound hat das Flag schon gesetzt – für das echte Ende neu freigeben
-  rotEndSoundPlayedRef.current = false;
-
   rotMusicPlay();
 
   setRotTimer({
@@ -10636,12 +10633,7 @@ function rotStartGlobal(minutes = 10) {
   rotPrestartReadySpokenRef.current = false;
   rotLetsFlipSpokenRef.current = false;
   rotEndSoundPlayedRef.current = false;
-
-  if (rotEndTimeoutRef.current != null) {
-  window.clearTimeout(rotEndTimeoutRef.current);
-  rotEndTimeoutRef.current = null;
-}
-
+  rotEndSoundRef.current = null;  
 
   // Haupttimer erstmal NICHT starten – nur merken
   setRotPendingDurationSec(dur);
@@ -10694,11 +10686,6 @@ rotPrestartReadySpokenRef.current = false;
 rotLetsFlipSpokenRef.current = false;
 rotEndSoundPlayedRef.current = false;
 rotEndSoundRef.current = null;
-
-if (rotEndTimeoutRef.current != null) {
-  window.clearTimeout(rotEndTimeoutRef.current);
-  rotEndTimeoutRef.current = null;
-}
 
     setRotTimer((prev) => ({
       endAt: null,

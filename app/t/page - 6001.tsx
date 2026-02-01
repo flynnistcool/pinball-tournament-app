@@ -10096,7 +10096,6 @@ async function reloadAll() {
 
     const rotEndSoundPlayedRef = useRef(false);
     const rotEndSoundRef = useRef<HTMLAudioElement | null>(null);
-    const rotEndTimeoutRef = useRef<number | null>(null);
     // --- Rotation Speech (iOS safe) ---
     const rotVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
     const rotSpeechUnlockedRef = useRef(false);
@@ -10392,53 +10391,6 @@ function elimSpeak(text: string) {
 }
 
 
-useEffect(() => {
-  if (!isRotationFormat) return;
-
-  const endAt = rotTimer?.endAt;
-  if (typeof endAt !== "number" || !Number.isFinite(endAt)) return;
-
-  // alten Timeout weg
-  if (rotEndTimeoutRef.current != null) {
-    window.clearTimeout(rotEndTimeoutRef.current);
-    rotEndTimeoutRef.current = null;
-  }
-
-  const fire = () => {
-    // Endsound (einmal)
-    if (!rotEndSoundPlayedRef.current) {
-      rotEndSoundPlayedRef.current = true;
-      rotPlayEndSound();
-    }
-
-    // Time's up (einmal)
-    if (!rotFinishedAnnouncedRef.current) {
-      rotFinishedAnnouncedRef.current = true;
-      rotSpeak(
-        "Time's up! Stop playing pinball immediately and enter your high scores! Thank you!"
-      );
-    }
-  };
-
-  const delay = endAt - Date.now();
-
-  // wenn schon vorbei (oder Tab war asleep): sofort feuern
-  if (delay <= 0) {
-    fire();
-    return;
-  }
-
-  rotEndTimeoutRef.current = window.setTimeout(fire, delay);
-
-  return () => {
-    if (rotEndTimeoutRef.current != null) {
-      window.clearTimeout(rotEndTimeoutRef.current);
-      rotEndTimeoutRef.current = null;
-    }
-  };
-}, [isRotationFormat, rotTimer?.endAt]);
-
-
 
   const rotRunning =
     typeof rotTimer?.endAt === "number" &&
@@ -10608,9 +10560,6 @@ function rotStartMainTimer(durationSec: number) {
   rotFinalCountdownRef.current = null;
   rotFinishedAnnouncedRef.current = false;
 
-  // ✅ WICHTIG: Prestart-Sound hat das Flag schon gesetzt – für das echte Ende neu freigeben
-  rotEndSoundPlayedRef.current = false;
-
   rotMusicPlay();
 
   setRotTimer({
@@ -10636,12 +10585,7 @@ function rotStartGlobal(minutes = 10) {
   rotPrestartReadySpokenRef.current = false;
   rotLetsFlipSpokenRef.current = false;
   rotEndSoundPlayedRef.current = false;
-
-  if (rotEndTimeoutRef.current != null) {
-  window.clearTimeout(rotEndTimeoutRef.current);
-  rotEndTimeoutRef.current = null;
-}
-
+  rotEndSoundRef.current = null;  
 
   // Haupttimer erstmal NICHT starten – nur merken
   setRotPendingDurationSec(dur);
@@ -10694,11 +10638,6 @@ rotPrestartReadySpokenRef.current = false;
 rotLetsFlipSpokenRef.current = false;
 rotEndSoundPlayedRef.current = false;
 rotEndSoundRef.current = null;
-
-if (rotEndTimeoutRef.current != null) {
-  window.clearTimeout(rotEndTimeoutRef.current);
-  rotEndTimeoutRef.current = null;
-}
 
     setRotTimer((prev) => ({
       endAt: null,

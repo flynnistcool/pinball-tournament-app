@@ -10608,9 +10608,6 @@ function rotStartMainTimer(durationSec: number) {
   rotFinalCountdownRef.current = null;
   rotFinishedAnnouncedRef.current = false;
 
-  // ✅ WICHTIG: Prestart-Sound hat das Flag schon gesetzt – für das echte Ende neu freigeben
-  rotEndSoundPlayedRef.current = false;
-
   rotMusicPlay();
 
   setRotTimer({
