@@ -5407,7 +5407,6 @@ function RoundMatchesCard({
   // Finished-Runden können optional manuell aufgeklappt werden.
   const [openFinishedRoundIds, setOpenFinishedRoundIds] = useState<Set<string>>(() => new Set());
   const lastRoundCountRef = useRef<number>(0);
-  const elimSpeechUnlockedRef = useRef(false);
 
   const roundsPerCycle = useMemo(() => calcRoundsPerCycle(tournament, playersCount), [
     tournament,
@@ -5437,24 +5436,6 @@ function RoundMatchesCard({
   const isRotationFormat = String(tournament?.format ?? "") === "rotation";
 
   const isTimeplayFormat = String(tournament?.format ?? "") === "timeplay";
-
-    useEffect(() => {
-    if (!isEliminationFormat) return;
-    if (typeof window === "undefined") return;
-
-    const handler = () => {
-      elimUnlockSpeechOnce();
-    };
-
-    window.addEventListener("pointerdown", handler, { once: true });
-    window.addEventListener("touchstart", handler, { once: true });
-
-    return () => {
-      window.removeEventListener("pointerdown", handler as any);
-      window.removeEventListener("touchstart", handler as any);
-    };
-  }, [isEliminationFormat]);
-
 
 
   // ================================
@@ -6168,44 +6149,12 @@ setTWinrateByPlayerId(map);
     }
   }
 
-  function elimUnlockSpeechOnce() {
-  if (elimSpeechUnlockedRef.current) return;
-  if (typeof window === "undefined") return;
-  if (!("speechSynthesis" in window)) return;
-
-  try {
-    const synth = window.speechSynthesis;
-
-    // iOS/Safari: voices einmal anstoßen
-    synth.getVoices?.();
-
-    // "stummer" Unlock
-    const u = new SpeechSynthesisUtterance(".");
-    u.volume = 0;
-    u.rate = 1;
-    u.pitch = 1;
-
-    synth.speak(u);
-    elimSpeechUnlockedRef.current = true;
-  } catch (e) {
-    console.warn("elimUnlockSpeechOnce failed", e);
-  }
-}
-
-
 function elimSpeak(text: string) {
   try {
     if (typeof window === "undefined") return;
 
     const synth = window.speechSynthesis;
     if (!synth) return;
-
-    // iOS: erst nach User-Geste zuverlässig hörbar
-    elimUnlockSpeechOnce();
-
-    // iOS/Safari: voices initialisieren
-    //const voices = synth.getVoices?.() ?? [];
-    synth.getVoices?.();
 
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = "en-US";
@@ -10310,7 +10259,6 @@ const rotTimerAutoOpenedRef = useRef(false);
     // --- Rotation Speech (iOS safe) ---
     const rotVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
     const rotSpeechUnlockedRef = useRef(false);
-    const elimSpeechUnlockedRef = useRef(false);
 
 
 // 🎵 Rotation Background Music (MP3 loop)
@@ -10578,28 +10526,6 @@ function rotPrepareEndSound(): Promise<boolean> {
       // ignore
     }
   }
-
-  function elimUnlockSpeechOnce() {
-    if (elimSpeechUnlockedRef.current) return;
-    if (typeof window === "undefined") return;
-    if (!("speechSynthesis" in window)) return;
-
-    try {
-      const u = new SpeechSynthesisUtterance(".");
-      u.volume = 0;   // unhörbar
-      u.rate = 1;
-      u.pitch = 1;
-
-      // iOS: voices müssen oft einmal angefragt werden
-      window.speechSynthesis.getVoices();
-      window.speechSynthesis.speak(u);
-
-      elimSpeechUnlockedRef.current = true;
-    } catch (e) {
-      console.warn("elimUnlockSpeechOnce failed", e);
-    }
-  }
-
 
 
 

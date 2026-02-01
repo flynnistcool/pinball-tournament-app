@@ -6200,14 +6200,20 @@ function elimSpeak(text: string) {
     const synth = window.speechSynthesis;
     if (!synth) return;
 
-    // iOS: erst nach User-Geste zuverlässig hörbar
+
+
+  
+    
+    
+    
+    const utter = new SpeechSynthesisUtterance(text);
+
+        // iOS: erst nach User-Geste sicher hörbar
     elimUnlockSpeechOnce();
 
     // iOS/Safari: voices initialisieren
-    //const voices = synth.getVoices?.() ?? [];
-    synth.getVoices?.();
-
-    const utter = new SpeechSynthesisUtterance(text);
+    synth.getVoices?.();  
+    
     utter.lang = "en-US";
 
     // Stimmen laden (wichtig v.a. Safari/iOS)
@@ -10580,25 +10586,25 @@ function rotPrepareEndSound(): Promise<boolean> {
   }
 
   function elimUnlockSpeechOnce() {
-    if (elimSpeechUnlockedRef.current) return;
-    if (typeof window === "undefined") return;
-    if (!("speechSynthesis" in window)) return;
+  if (elimSpeechUnlockedRef.current) return;
+  if (typeof window === "undefined") return;
+  if (!("speechSynthesis" in window)) return;
 
-    try {
-      const u = new SpeechSynthesisUtterance(".");
-      u.volume = 0;   // unhörbar
-      u.rate = 1;
-      u.pitch = 1;
+  try {
+    const u = new SpeechSynthesisUtterance(".");
+    u.volume = 0;   // unhörbar
+    u.rate = 1;
+    u.pitch = 1;
 
-      // iOS: voices müssen oft einmal angefragt werden
-      window.speechSynthesis.getVoices();
-      window.speechSynthesis.speak(u);
+    // iOS: voices müssen oft einmal angefragt werden
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.speak(u);
 
-      elimSpeechUnlockedRef.current = true;
-    } catch (e) {
-      console.warn("elimUnlockSpeechOnce failed", e);
-    }
+    elimSpeechUnlockedRef.current = true;
+  } catch (e) {
+    console.warn("elimUnlockSpeechOnce failed", e);
   }
+}
 
 
 
