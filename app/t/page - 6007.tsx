@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef, useCallback, Fragment } from "react";
-import { createPortal } from "react-dom";
 import {
   DndContext,
   PointerSensor,
@@ -10078,10 +10077,6 @@ async function reloadAll() {
   });
   const [_rotTimerTick, setRotTimerTick] = useState(0);
 
-  // Rotation Timer "Fullscreen" Anzeige (Overlay via Portal)
-const [rotTimerFullscreen, setRotTimerFullscreen] = useState(false);
-const rotTimerAutoOpenedRef = useRef(false);
-
   // --- Prestart (15s) ---
   const [rotPrestartEndAt, setRotPrestartEndAt] = useState<number | null>(null);
   const [rotPendingDurationSec, setRotPendingDurationSec] = useState<number | null>(null);
@@ -10129,32 +10124,27 @@ function rotMusicEnsure() {
   return rotMusicRef.current;
 }
 
-function rotPrepareMusic() {
+async function rotPrepareMusic(): Promise<boolean> {
   const a = rotMusicEnsure();
-  if (!a) return;
+  if (!a) return false;
 
   try {
     a.pause();
     a.currentTime = 0;
-    a.muted = true;
 
-    a.play()
-      .then(() => {
-        a.pause();
-        a.currentTime = 0;
-        a.muted = false;
-        console.log("Music unlocked OK");
-      })
-      .catch((err) => {
-        a.muted = false;
-        console.log("Music unlock failed:", err?.name, err?.message, err);
-      });
+    a.muted = true;
+    await a.play();
+    a.pause();
+    a.currentTime = 0;
+    a.muted = false;
+
+    return true;
   } catch (err) {
+    console.log("Music unlock failed:", (err as any)?.name, (err as any)?.message, err);
     try { a.muted = false; } catch {}
-    console.log("Music unlock failed (sync):", err);
+    return false;
   }
 }
-
 
 
 function rotMusicPlay() {
@@ -10210,7 +10200,9 @@ async function rotPlayEndSound(): Promise<boolean> {
   if (document?.hidden) return false;
 
   try {
-if (!rotEndSoundRef.current) return false;
+    if (!rotEndSoundRef.current) {
+      rotPrepareEndSound(); // sollte idealerweise im Start-Tap schon passiert sein
+    }
 
     const a = rotEndSoundRef.current;
     if (!a) return false;
@@ -10228,41 +10220,42 @@ if (!rotEndSoundRef.current) return false;
 
 
 
-function rotPrepareEndSound() {
-  if (typeof window === "undefined") return;
+async function rotPrepareEndSound(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
 
-  if (!rotEndSoundRef.current) {
-    const a = new Audio("/sounds/end.mp3");
-    a.preload = "auto";
-    (a as any).playsInline = true;
-    a.volume = 0.9;
-    rotEndSoundRef.current = a;
-  }
-
-  const a = rotEndSoundRef.current!;
   try {
+    if (!rotEndSoundRef.current) {
+      const a = new Audio("/sounds/end.mp3");
+      a.preload = "auto";
+      (a as any).playsInline = true; // iOS helpful
+      a.volume = 0.9;
+      rotEndSoundRef.current = a;
+    }
+
+    const a = rotEndSoundRef.current!;
     a.pause();
     a.currentTime = 0;
-    a.muted = true;
 
-    a.play()
-      .then(() => {
-        a.pause();
-        a.currentTime = 0;
-        a.muted = false;
-        a.volume = 0.9;
-        console.log("EndSound unlocked OK");
-      })
-      .catch((err) => {
-        a.muted = false;
-        console.log("EndSound unlock failed:", err?.name, err?.message, err);
-      });
-  } catch (err) {
+    // iOS unlock: muted play -> pause
+    a.muted = true;
+    await a.play();
+    a.pause();
+    a.currentTime = 0;
     a.muted = false;
-    console.log("EndSound unlock failed (sync):", err);
+    a.volume = 0.9;
+
+    return true;
+  } catch (err) {
+    console.log("EndSound unlock failed:", (err as any)?.name, (err as any)?.message, err);
+    // restore sane state
+    const a = rotEndSoundRef.current;
+    if (a) {
+      a.muted = false;
+      a.volume = 0.9;
+    }
+    return false;
   }
 }
-
 
 
 
@@ -10557,35 +10550,6 @@ useEffect(() => {
   return () => document.removeEventListener("visibilitychange", onVis);
 }, []);
 
-// Auto-Open (einmal pro Run) + Auto-Close
-// - zeigt das Overlay automatisch beim Start (Prestart / Running / Paused)
-// - wenn der User es schließt, bleibt es bis zum nächsten Start zu
-useEffect(() => {
-  if (!isRotationFormat) {
-    rotTimerAutoOpenedRef.current = false;
-    setRotTimerFullscreen(false);
-    return;
-  }
-
-  const prestartActive =
-    typeof rotPrestartEndAt === "number" && rotPrestartEndAt > Date.now();
-
-  const active = prestartActive || rotRunning || rotPaused;
-
-  // Auto-open nur einmal pro aktivem Run
-  if (active && !rotTimerAutoOpenedRef.current) {
-    rotTimerAutoOpenedRef.current = true;
-    setRotTimerFullscreen(true);
-  }
-
-  // Wenn alles inaktiv ist: Auto-Flag reset + Overlay schließen
-  if (!active) {
-    rotTimerAutoOpenedRef.current = false;
-    setRotTimerFullscreen(false);
-  }
-}, [isRotationFormat, rotRunning, rotPaused, rotPrestartEndAt]);
-
-
 
 useEffect(() => {
   if (!isRotationFormat) return;
@@ -10714,15 +10678,16 @@ function rotStartMainTimer(durationSec: number) {
 
 
 
-function rotStartGlobal(minutes = 10) {
-  rotUnlockSpeechOnce();
+async function rotStartGlobal(minutes = 10) {
+  rotUnlockSpeechOnce(); // <-- iPad Speech unlock im Button-Click
+  // iOS: Audio nur zuverlässig nach User-Click startbar
+  rotPrepareEndSound(); // <-- Endsound im Button-Click vorbereiten (iOS-safe)
 
-  // iOS: unlocks im Tap (ohne await!)
-  rotPrepareEndSound();
-  rotPrepareMusic();
+  // ✅ iOS: plays NACHEINANDER im Tap, nicht parallel
+  await rotPrepareEndSound();
+  await rotPrepareMusic();
 
   rotMusicPlay();
-
   const dur = Math.max(1, Math.floor(minutes)) * 60;
 
   // Prestart-Flags reset
