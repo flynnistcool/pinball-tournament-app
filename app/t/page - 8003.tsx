@@ -6168,7 +6168,7 @@ setTWinrateByPlayerId(map);
     }
   }
 
-function elimUnlockSpeechOnce() {
+  function elimUnlockSpeechOnce() {
   if (elimSpeechUnlockedRef.current) return;
   if (typeof window === "undefined") return;
   if (!("speechSynthesis" in window)) return;
@@ -6176,31 +6176,21 @@ function elimUnlockSpeechOnce() {
   try {
     const synth = window.speechSynthesis;
 
-    // iOS/Safari: einmal voices anstoßen
+    // iOS/Safari: voices einmal anstoßen
     synth.getVoices?.();
 
-    // iOS: "voll stumm" (volume=0) zählt teils nicht als Unlock.
-    // Daher minimal hörbar (aber extrem leise).
-    const u = new SpeechSynthesisUtterance(" ");
-    u.volume = 0.09;
+    // "stummer" Unlock
+    const u = new SpeechSynthesisUtterance(".");
+    u.volume = 0;
     u.rate = 1;
     u.pitch = 1;
 
-    u.onend = () => {
-      elimSpeechUnlockedRef.current = true;
-    };
-
     synth.speak(u);
-
-    // falls onend nicht feuert, trotzdem "best effort" markieren
-    setTimeout(() => {
-      elimSpeechUnlockedRef.current = true;
-    }, 250);
+    elimSpeechUnlockedRef.current = true;
   } catch (e) {
     console.warn("elimUnlockSpeechOnce failed", e);
   }
 }
-
 
 
 function elimSpeak(text: string) {
@@ -6252,10 +6242,6 @@ function elimSpeak(text: string) {
       const n = Number(s);
       if (!Number.isFinite(n)) return s;
       return scoreFmt.format(n);
-    }
-
-    if (isEliminationFormat) {
-      elimUnlockSpeechOnce();
     }
 
     try {
