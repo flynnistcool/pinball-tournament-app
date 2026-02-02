@@ -65,7 +65,7 @@ async function handle(codeRaw: string) {
     const { data: tasks } = taskIds.length
       ? await sb
           .from("machine_tasks")
-          .select("id, title, description")
+          .select("id, title, description, difficulty")
           .in("id", taskIds)
       : { data: [] as any[] };
 

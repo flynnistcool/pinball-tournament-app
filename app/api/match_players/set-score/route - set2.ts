@@ -179,132 +179,116 @@ export async function POST(req: Request) {
           .map((x) => x.player_id);
       }
 
-      // 🔊 Speak-Trigger: sobald nach >=2 Scores klar ist, WER neu "safe" ist (nicht zwingend der Scorer)
-      if (scored.length >= 2 && safePlayerIds.length > 0) {
-        // ✅ Prüfen: wer ist bereits in der nächsten Runde?
-        let isFirstInNextRound = false;
-        let existingNextIds = new Set<string>();
-        let nextMpsCache: any[] = [];
+      // 🔊 Speak-Trigger: sobald nach >=2 Scores klar ist, dass dieser Spieler NICHT letzter ist
+// (also "safe" / nächste Runde – wie ihr es im UI schon macht)
+if (scored.length >= 2 && safePlayerIds.length > 0) {
+  // Player-Name holen (für Speak)
+  const { data: p } = await sb
+    .from("players")
+    .select("name")
+    .eq("id", playerId)
+    .eq("tournament_id", (t as any).id)
+    .maybeSingle();
 
-        try {
-          const nextRoundNumber = roundNumber + 1;
+  const playerName = String((p as any)?.name ?? "").trim() || "Player";
 
-          // nächste Runde finden
-          const { data: nextR } = await sb
-            .from("rounds")
-            .select("id")
-            .eq("tournament_id", (t as any).id)
-            .eq("number", nextRoundNumber)
-            .maybeSingle();
 
-          if (nextR?.id) {
-            // erstes Match der nächsten Runde finden (bei dir: genau 1 Match pro Runde)
-            const { data: nextM } = await sb
-              .from("matches")
-              .select("id")
-              .eq("round_id", (nextR as any).id)
-              .order("created_at", { ascending: true })
-              .limit(1)
-              .maybeSingle();
+  // ✅ Prüfen: ist der Spieler der ERSTE in der nächsten Runde?
+let isFirstInNextRound = false;
+let existingNextIds = new Set<string>();
 
-            if (nextM?.id) {
-              const { data: nextMps } = await sb
-                .from("match_players")
-                .select("player_id")
-                .eq("match_id", (nextM as any).id);
+try {
+  const nextRoundNumber = roundNumber + 1;
 
-              nextMpsCache = (nextMps ?? []) as any[];
-              existingNextIds = new Set(nextMpsCache.map((x: any) => String(x.player_id)));
-            }
-          }
-        } catch {
-          // best effort – wenn Check scheitert, bleiben Sets leer
-        }
+  // nächste Runde finden
+  const { data: nextR } = await sb
+    .from("rounds")
+    .select("id")
+    .eq("tournament_id", (t as any).id)
+    .eq("number", nextRoundNumber)
+    .maybeSingle();
 
-        // 🔹 Ziel = safe, aber vorher NICHT in der nächsten Runde
-        const candidateIds = safePlayerIds.filter((id) => !existingNextIds.has(String(id)));
-        if (candidateIds.length === 0) {
-          // niemand neu weiter -> keine Ansage
-        } else {
-          // deterministisch: höchster Score unter den Kandidaten (bei tie -> player_id)
-          const targetId = candidateIds
-            .map((id) => ({
-              id: String(id),
-              score: Number(scored.find((s) => String(s.player_id) === String(id))?.score ?? -Infinity),
-            }))
-            .sort((a, b) => (b.score - a.score) || String(a.id).localeCompare(String(b.id)))[0].id;
+  if (nextR?.id) {
+    // erstes Match der nächsten Runde finden (bei dir: genau 1 Match pro Runde)
+    const { data: nextM } = await sb
+      .from("matches")
+      .select("id")
+      .eq("round_id", (nextR as any).id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-          newlyAdvancedPlayerId = targetId;
+    if (nextM?.id) {
+      // wer ist bereits in der nächsten Runde?
+      const { data: nextMps } = await sb
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", (nextM as any).id);
 
-          // "first in next round" für GENAU dieses Ziel bestimmen
-          const othersAlreadyThere = nextMpsCache.some((x: any) => String(x.player_id) !== String(targetId));
-          isFirstInNextRound = !othersAlreadyThere;
+      const othersAlreadyThere =
+        (nextMps ?? []).some((x: any) => String(x.player_id) !== String(playerId));
 
-          // Player-Name holen (für Speak) – für targetId, nicht für scorer
-// Name des Advancers (= targetId)
-const { data: pAdv } = await sb
-  .from("players")
-  .select("name")
-  .eq("id", targetId)
-  .eq("tournament_id", (t as any).id)
-  .maybeSingle();
+      // wenn NOCH NIEMAND (außer evtl. er selbst) drin ist => er ist "der erste"
+      isFirstInNextRound = !othersAlreadyThere;
+    } else {
+      // noch kein Match in nächster Runde => er wäre der erste
+      isFirstInNextRound = true;
+    }
+  } else {
+    // nächste Runde existiert noch nicht => er wäre der erste
+    isFirstInNextRound = true;
+  }
+} catch {
+  // wenn DB-Check mal scheitert: lieber neutral bleiben
+  isFirstInNextRound = false;
+}
 
-const advancerName = String((pAdv as any)?.name ?? "").trim() || "Player";
 
-// Name des Scorers (= playerId), nur für den "Loser-Text"
-const { data: pScorer } = await sb
-  .from("players")
-  .select("name")
-  .eq("id", playerId)
-  .eq("tournament_id", (t as any).id)
-  .maybeSingle();
-
-const scorerName = String((pScorer as any)?.name ?? "").trim() || "Player";
-
-speakPlayerId = targetId;
-
-// Speech-Zielspieler (das ist der, der weiterkommt)
-let speechPlayerName = advancerName;
-
-const scorerAdvanced =
-  newlyAdvancedPlayerId &&
-  String(newlyAdvancedPlayerId) === String(playerId);
-
-  
+speakPlayerId = playerId;
 
 
 
-          if (isFinalWin) {
-            // 🏆 Text C
-            speakText = `Wow, what a performance! ${speechPlayerName}! You played brilliantly, your pinball skills are exceptional! Let yourself be celebrated! ${speechPlayerName}, you won the tournament!
+// 🔹 Speech-Zielspieler auf den neu Weitergekommenen umlenken
+let speechPlayerName = playerName; // default: der bisherige Name
+
+if (newlyAdvancedPlayerId) {
+  speakPlayerId = newlyAdvancedPlayerId;
+
+  const { data: advP } = await sb
+    .from("players")
+    .select("name")
+    .eq("id", newlyAdvancedPlayerId)
+    .eq("tournament_id", (t as any).id)
+    .maybeSingle();
+
+  speechPlayerName = String((advP as any)?.name ?? speechPlayerName);
+}
+
+
+
+  if (isFinalWin) {
+    // 🏆 Text C
+    speakText = `Wow, what a performance! ${speechPlayerName}! You played brilliantly, your pinball skills are exceptional! Let yourself be celebrated! ${playerName}, you won the tournament!
 `;
 
-          } else if (!scorerAdvanced && newlyAdvancedPlayerId) {
-            // 🔴 Neuer Fall: Scorer ist raus, jemand anderes kommt weiter
-            speakText =
-              `${scorerName}, that was close. ` +
-              `Next time you'll get a higher score. ` +
-              `${speechPlayerName}. ` +
-              `You're in the next round. ` +
-              `Try to beat the cutoff score on the next round's pinball machine to stay in the game.`;
+  } else {
 
-          } else {
-            if (isFirstInNextRound) {
-              // ✅ Text A: er ist der erste in der neuen Runde
-              speakText =
-                `Great play! ${speechPlayerName}. ` +
-                `You're the firt player in the next round. ` +
-                `Go to the next round's pinball machine and set your score.`;
-            } else {
-              // ✅ Text B: es ist schon jemand in der neuen Runde
-              speakText =
-                `Very well played! ${speechPlayerName}. ` +
-                `You're in the next round. ` +
-                `Try to beat the cutoff score on the next round's pinball machine to stay in the game.`;
-            }
-          }
-        }
-      }
+    if (isFirstInNextRound) {
+      // ✅ Text A: er ist der erste in der neuen Runde
+      speakText =
+        `Great play! ${speechPlayerName}. ` +
+        `You're the firt player in the next round. ` +
+        `Go to the next round's pinball machine and set your score.`;
+    } else {
+      // ✅ Text B: es ist schon jemand in der neuen Runde
+      speakText =
+        `Very well played! ${speechPlayerName}. ` +
+        `You're in the next round. ` +
+        `Try to beat the cutoff score on the next round's pinball machine to stay in the game.`;
+
+    }
+  }
+}
 
 
 

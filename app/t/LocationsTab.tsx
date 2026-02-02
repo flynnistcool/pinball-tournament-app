@@ -49,6 +49,25 @@ export default function LocationsTab() {
   const [machines, setMachines] = useState<LocationMachine[]>([]);
   const [machineNewName, setMachineNewName] = useState("");
 
+
+// Machine Tasks UI
+type TaskDifficulty = "easy" | "medium" | "hard";
+type MachineTask = {
+  id: string;
+  title: string;
+  description: string | null;
+  active: boolean;
+  difficulty: TaskDifficulty;
+  created_at?: string;
+};
+
+const [taskMachine, setTaskMachine] = useState<LocationMachine | null>(null);
+const [tasksBusy, setTasksBusy] = useState(false);
+const [tasks, setTasks] = useState<MachineTask[]>([]);
+const [taskTitle, setTaskTitle] = useState("");
+const [taskDesc, setTaskDesc] = useState("");
+const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy");
+
   const openLocation = useMemo(
     () => locations.find((l) => l.id === openLocationId) ?? null,
     [locations, openLocationId]
@@ -102,6 +121,7 @@ export default function LocationsTab() {
         body: JSON.stringify({
           locationId,
           machines: nextMachines.map((m, idx) => ({
+            id: m.id ?? null,
             name: m.name,
             active: m.active !== false,
             sort_order: typeof m.sort_order === "number" ? m.sort_order : idx,
@@ -121,6 +141,116 @@ export default function LocationsTab() {
       setMachinesBusy(false);
     }
   }
+
+  async function loadTasks(locationMachineId: string) {
+    setTasksBusy(true);
+    try {
+      const res = await fetch(
+        `/api/machine-tasks/list?locationMachineId=${encodeURIComponent(locationMachineId)}&t=${Date.now()}`,
+        { cache: "no-store" }
+      );
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error ?? "Tasks laden fehlgeschlagen");
+        setTasks([]);
+        return;
+      }
+      setTasks((j.tasks ?? []) as MachineTask[]);
+    } finally {
+      setTasksBusy(false);
+    }
+  }
+
+  async function openTasksForMachine(m: LocationMachine) {
+    if (!m?.id) {
+      alert("Erst speichern, dann Tasks anlegen.");
+      return;
+    }
+    setTaskMachine(m);
+    setTaskTitle("");
+    setTaskDesc("");
+    setNewTaskDifficulty("easy");
+    await loadTasks(String(m.id));
+  }
+
+  async function createTask() {
+    if (!taskMachine?.id) return;
+    const title = taskTitle.trim();
+    if (!title) return;
+
+    setTasksBusy(true);
+    try {
+      const res = await fetch("/api/machine-tasks/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locationMachineId: taskMachine.id,
+          title,
+          description: taskDesc.trim() || null,
+          active: true,
+          difficulty: newTaskDifficulty,
+        }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error ?? "Task anlegen fehlgeschlagen");
+        return;
+      }
+
+      setTaskTitle("");
+      setTaskDesc("");
+      setNewTaskDifficulty("easy");
+      await loadTasks(String(taskMachine.id));
+    } finally {
+      setTasksBusy(false);
+    }
+  }
+
+  async function updateTask(id: string, patch: Partial<MachineTask>) {
+    setTasksBusy(true);
+    try {
+      const res = await fetch("/api/machine-tasks/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...patch }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error ?? "Task speichern fehlgeschlagen");
+        return;
+      }
+
+      if (taskMachine?.id) await loadTasks(String(taskMachine.id));
+    } finally {
+      setTasksBusy(false);
+    }
+  }
+
+  async function deleteTask(id: string) {
+    if (!confirm("Task wirklich löschen?")) return;
+
+    setTasksBusy(true);
+    try {
+      const res = await fetch("/api/machine-tasks/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error ?? "Task löschen fehlgeschlagen");
+        return;
+      }
+
+      if (taskMachine?.id) await loadTasks(String(taskMachine.id));
+    } finally {
+      setTasksBusy(false);
+    }
+  }
+
 
   async function deleteLocation(id: string, name: string) {
     if (!confirm(`Location "${name}" wirklich löschen?`)) return;
@@ -416,6 +546,14 @@ export default function LocationsTab() {
 
                       <Button
                         variant="secondary"
+                        disabled={machinesBusy || !m.id}
+                        onClick={() => openTasksForMachine(m)}
+                      >
+                        Tasks
+                      </Button>
+
+                      <Button
+                        variant="secondary"
                         disabled={machinesBusy}
                         onClick={async () => {
                           const next = machines.filter((_, i) => i !== idx);
@@ -445,6 +583,94 @@ export default function LocationsTab() {
                   Änderungen speichern
                 </Button>
               </div>
+{taskMachine ? (
+  <div className="mt-4 rounded-2xl border bg-white p-4">
+    <div className="flex items-center justify-between gap-2">
+      <div className="font-semibold">Tasks: {taskMachine.name}</div>
+      <Button variant="secondary" onClick={() => setTaskMachine(null)}>
+        Schließen
+      </Button>
+    </div>
+
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <Input
+        value={taskTitle}
+        onChange={(e) => setTaskTitle(e.target.value)}
+        placeholder="Task Titel"
+      />
+      <Input
+        value={taskDesc}
+        onChange={(e) => setTaskDesc(e.target.value)}
+        placeholder="Beschreibung (optional)"
+      />
+
+      <Select
+        value={newTaskDifficulty}
+        onChange={(e) => setNewTaskDifficulty(e.target.value as any)}
+      >
+        <option value="easy">easy</option>
+        <option value="medium">medium</option>
+        <option value="hard">hard</option>
+      </Select>
+
+      <Button disabled={tasksBusy || !taskTitle.trim()} onClick={createTask}>
+        + Task
+      </Button>
+    </div>
+
+    <div className="mt-3 space-y-2">
+      {tasksBusy ? (
+        <div className="text-sm text-neutral-500">Lade Tasks...</div>
+      ) : null}
+
+      {tasks.map((t) => (
+        <div key={t.id} className="rounded-xl border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              defaultValue={t.title ?? ""}
+              onBlur={(e) => updateTask(t.id, { title: e.target.value } as any)}
+            />
+            <Input
+              defaultValue={t.description ?? ""}
+              onBlur={(e) =>
+                updateTask(t.id, { description: e.target.value } as any)
+              }
+              placeholder="Beschreibung"
+            />
+            <Select
+              value={(t.difficulty ?? "easy") as any}
+              onChange={(e) =>
+                updateTask(t.id, { difficulty: e.target.value } as any)
+              }
+            >
+              <option value="easy">easy</option>
+              <option value="medium">medium</option>
+              <option value="hard">hard</option>
+            </Select>
+
+            <Button
+              variant="secondary"
+              onClick={() => updateTask(t.id, { active: !t.active } as any)}
+            >
+              {t.active ? "Aktiv" : "Inaktiv"}
+            </Button>
+
+            <Button variant="secondary" onClick={() => deleteTask(t.id)}>
+              Löschen
+            </Button>
+          </div>
+        </div>
+      ))}
+
+      {!tasksBusy && tasks.length === 0 ? (
+        <div className="text-sm text-neutral-500">
+          Noch keine Tasks für diese Maschine.
+        </div>
+      ) : null}
+    </div>
+  </div>
+) : null}
+
             </div>
           </CardBody>
         </Card>

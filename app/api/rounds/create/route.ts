@@ -12,6 +12,9 @@ type PlayerRow = {
   profile_id?: string | null;
 };
 
+
+
+
 function pairKey(a: string, b: string) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
@@ -326,6 +329,37 @@ function pickMachine(
   return chosen?.m ?? pool[Math.floor(Math.random() * pool.length)];
 }
 
+async function pickRandomTaskForLocationMachine(
+  supabase: any,
+  locationId: string,
+  machineName: string,
+  taskDifficulties: string[]
+) {
+  // location_machine finden (location_id + name)
+  const { data: lm } = await supabase
+    .from("location_machines")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("name", machineName)
+    .eq("active", true)
+    .maybeSingle();
+
+  if (!lm?.id) return null;
+
+  // Tasks laden
+  const { data: tasks } = await supabase
+    .from("machine_tasks")
+    .select("id, title, difficulty")
+    .eq("location_machine_id", lm.id)
+    .eq("active", true)
+    .in("difficulty", taskDifficulties as any);
+
+  if (!tasks || tasks.length === 0) return null;
+
+  return tasks[Math.floor(Math.random() * tasks.length)] ?? null;
+}
+
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
 
@@ -343,6 +377,21 @@ export async function POST(req: Request) {
       : "random";
 
   const useElo = Boolean(body.useElo);
+
+  // ✅ Preview-Mode: UI will nur wissen, welche Maschinen "eligible" sind
+  const previewOnly = Boolean(body.previewOnly);
+
+  const allowedDiffs = ["easy", "medium", "hard"] as const;
+  type TaskDifficulty = (typeof allowedDiffs)[number];
+
+  const requestedDiffsRaw = Array.isArray(body.taskDifficulties) ? body.taskDifficulties : [];
+  const requestedDiffs = requestedDiffsRaw
+    .map((x: any) => String(x ?? "").trim().toLowerCase())
+    .filter((x: string) => (allowedDiffs as readonly string[]).includes(x)) as TaskDifficulty[];
+
+  // Wenn nix gewählt wurde: Default = alle
+  const taskDifficulties: TaskDifficulty[] = requestedDiffs.length ? requestedDiffs : (allowedDiffs as any);
+
 
   // ✅✅✅ NEU: optionales Format-Override (nur wenn du es mitsendest)
   // unterstützt body.format oder body.forceFormat
@@ -388,6 +437,8 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+
+  const locationId = String((t as any)?.location_id ?? "").trim();
 
   const tournamentFormat: "matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
     t.format === "swiss" ||
@@ -437,6 +488,78 @@ const groupSize = format === "rotation" ? groupSizeAny : groupSizeFixed;
   });
   const machines = (machinesRaw ?? []).filter((m: any) => m.active);
 
+  // ✅ Timeplay: Maschinen nur dann zulassen, wenn es an der Location aktive Tasks in den gewählten Difficulties gibt
+let machinesForThisRound = machines;
+
+if (String(format).toLowerCase() === "timeplay") {
+  //const locationId = String((t as any)?.location_id ?? "").trim();
+
+  // 1) Location-Machines für diese Location laden (Map name -> id)
+  const { data: lms } = await sb
+    .from("location_machines")
+    .select("id, name, active")
+    .eq("location_id", locationId)
+    .eq("active", true);
+
+  const lmByName = new Map<string, string>();
+  for (const lm of lms ?? []) {
+    const n = String((lm as any)?.name ?? "").trim();
+    const id = String((lm as any)?.id ?? "").trim();
+    if (n && id) lmByName.set(n, id);
+  }
+
+  const lmIds = Array.from(lmByName.values());
+  if (lmIds.length) {
+    // 2) Welche location_machines haben mindestens 1 aktiven Task mit gewünschter difficulty?
+    const { data: mt } = await sb
+      .from("machine_tasks")
+      .select("location_machine_id")
+      .in("location_machine_id", lmIds)
+      .in("difficulty", taskDifficulties as any)
+      .eq("active", true);
+
+    const okLmIds = new Set<string>((mt ?? []).map((r: any) => String(r.location_machine_id)));
+
+    // 3) Maschinen im Turnier (Snapshot) nur behalten, wenn mapping über name -> lmId existiert und ok ist
+    machinesForThisRound = machines.filter((m: any) => {
+      const name = String(m?.name ?? "").trim();
+      const lmId = lmByName.get(name);
+      return lmId ? okLmIds.has(lmId) : false;
+    });
+  } else {
+    machinesForThisRound = [];
+  }
+
+  if (!machinesForThisRound.length) {
+    return NextResponse.json(
+      { error: `Keine Maschinen mit aktiven Tasks für (${taskDifficulties.join(", ")}) gefunden.` },
+      { status: 400 }
+    );
+  }
+}
+
+
+
+
+// ✅ PREVIEW: nur erlaubte Maschinen zurückgeben – keine Runde erstellen
+if (previewOnly) {
+  return new NextResponse(
+    JSON.stringify({
+      ok: true,
+      eligibleMachineIds: (machinesForThisRound ?? []).map((m: any) => String(m.id)),
+    }),
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+    }
+  );
+}
+
+
+
   if (!players.length) {
     return NextResponse.json(
       { error: "Keine aktiven Spieler im Turnier" },
@@ -451,12 +574,14 @@ const groupSize = format === "rotation" ? groupSizeAny : groupSizeFixed;
     );
   }
 
-  if (!machines.length) {
-    return NextResponse.json(
-      { error: "Keine aktiven Maschinen im Turnier" },
-      { status: 400 }
-    );
-  }
+const machinesToValidate = String(format).toLowerCase() === "timeplay" ? machinesForThisRound : machines;
+
+if (!machinesToValidate.length) {
+  return NextResponse.json(
+    { error: "Keine aktiven Maschinen im Turnier" },
+    { status: 400 }
+  );
+}
 
   // Bisherige Runden / Matches / Match-Players laden (für Swiss + Standings)
   const { data: rounds } = await sb
@@ -1045,7 +1170,7 @@ const groupSize = format === "rotation" ? groupSizeAny : groupSizeFixed;
       .filter(Boolean);
 
     const machine = pickMachine(
-      machines,
+      machinesForThisRound,
       usedByPlayer,
       playerIds,
       usedMachinesInRound
@@ -1087,6 +1212,31 @@ const groupSize = format === "rotation" ? groupSizeAny : groupSizeFixed;
     }
 
     const matchId = match.id as string;
+
+   
+
+// ✅ Timeplay: Task direkt beim Erzeugen setzen (weil machine_id schon gesetzt ist)
+if (String(format).toLowerCase() === "timeplay" && locationId && machine?.name) {
+  const picked = await pickRandomTaskForLocationMachine(
+    sb,
+    locationId,
+    String(machine.name),
+    taskDifficulties
+  );
+
+
+  if (picked?.id) {
+    await sb
+      .from("matches")
+      .update({
+        task_id: picked.id,
+        task_text: String((picked as any)?.title ?? "").trim() || null,
+        task_difficulty: String((picked as any)?.difficulty ?? "").trim() || null,
+      })
+      .eq("id", matchId);
+  }
+}
+
 
     let playersInThisMatch = group.slice();
 

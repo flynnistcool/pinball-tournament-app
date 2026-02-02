@@ -812,36 +812,16 @@ function MachinesList({
   busy,
   locked,
   usageCounts = {},
-  isTimeplayFormat,
-  taskDifficulties,
-  eligibleMachineIds,
-  eligibleMachinesLoading,
 }: {
   machines: any[];
   onToggle: (id: string) => void;
   busy: boolean;
   locked: boolean;
   usageCounts?: Record<string, number>;
-  isTimeplayFormat: boolean;
-  taskDifficulties: string[];
-  eligibleMachineIds: string[] | null; // null = nicht relevant (kein Timeplay)
-  eligibleMachinesLoading?: boolean;
 }) {
-  // In Timeplay gilt: "effektiv aktiv" = in DB aktiv UND eligible (hat Tasks in gewählten Difficulties).
-  // In allen anderen Formaten: eligible spielt keine Rolle.
-  const eligibleSet =
-    isTimeplayFormat && Array.isArray(eligibleMachineIds)
-      ? new Set((eligibleMachineIds ?? []).map((x) => String(x)))
-      : null;
+  const active = (machines ?? []).filter((m) => m.active);
+  const inactive = (machines ?? []).filter((m) => !m.active);
 
-  function isEligible(m: any) {
-    if (!isTimeplayFormat) return true;
-    if (!eligibleSet) return true; // solange Preview noch nicht da ist, nichts blocken
-    return eligibleSet.has(String(m.id));
-  }
-
-  const effectiveActive = (machines ?? []).filter((m) => Boolean(m?.active) && isEligible(m));
-  const effectiveInactive = (machines ?? []).filter((m) => !Boolean(m?.active) || !isEligible(m));
 
   // ✅ max Nutzung für Balken-Skalierung (mind. 1, damit wir nicht durch 0 teilen)
   const maxUsedCount = Math.max(
@@ -849,118 +829,85 @@ function MachinesList({
     ...((machines ?? []).map((m) => usageCounts?.[String(m.id)] ?? 0))
   );
 
-  const diffLabel =
-    Array.isArray(taskDifficulties) && taskDifficulties.length
-      ? taskDifficulties.join(", ")
-      : "—";
-
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div>Maschinen</div>
-
-            {isTimeplayFormat && (
-              <span className="text-xs text-neutral-500">
-                (Timeplay • Tasks: {diffLabel}
-                {eligibleMachinesLoading ? " • prüfe…" : ""})
-              </span>
-            )}
-          </div>
-
+          <div>Maschinen</div>
           <div className="text-sm text-neutral-500">
-            {effectiveActive.length} aktiv • {effectiveInactive.length} inaktiv • {machines.length} gesamt
+            {active.length} aktiv • {inactive.length} inaktiv • {machines.length} gesamt
           </div>
         </div>
       </CardHeader>
-
       <CardBody>
         <div className="space-y-2">
-          {(machines ?? []).map((m) => {
-            const count = usageCounts?.[String(m.id)] ?? 0;
-            const pct = Math.round((count / maxUsedCount) * 100);
+{(machines ?? []).map((m) => {
+  const count = usageCounts?.[String(m.id)] ?? 0;
+  const pct = Math.round((count / maxUsedCount) * 100);
 
-            const eligible = isEligible(m);
-            const effectiveIsActive = Boolean(m?.active) && eligible;
+  return (
+    <div
+      key={m.id}
+      className="flex items-center justify-between gap-3 rounded-xl border bg-white px-2 py-1"
+    >
+      {/* LINKER TEIL: Icon + Name + Nutzung */}
+      <div className="flex items-center gap-3">
+        <MachineIcon name={m.name} emoji={m.icon_emoji} />
 
-            // Timeplay: nicht-eligible Maschinen sollen "inaktiv" wirken und nicht klickbar sein.
-            const disableToggle = busy || locked || (isTimeplayFormat && eligibleSet && !eligible);
+        <div className="flex flex-col min-w-0">
+          <div className="text-base font-medium truncate">{m.name}</div>
+          <div className="mt-1 flex items-center gap-2">
+            <div className="text-xs text-neutral-500 whitespace-nowrap">
+              {count}× im Turnier verwendet
+            </div>
+          </div>
+        </div>
 
-            return (
+                    {/* Usage-Bar */}
+            <div className="h-2 w-40 rounded-full bg-neutral-100 overflow-hidden">
               <div
-                key={m.id}
-                className={
-                  "flex items-center justify-between gap-3 rounded-xl border bg-white px-2 py-1 " +
-                  (isTimeplayFormat && eligibleSet && !eligible ? "opacity-50" : "")
-                }
-                title={
-                  isTimeplayFormat && eligibleSet && !eligible
-                    ? `Keine aktiven Tasks für (${diffLabel})`
-                    : undefined
-                }
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <MachineIcon name={m.name} emoji={m.icon_emoji} />
+                className="h-full rounded-full bg-neutral-400/70"
+                style={{ width: `${pct}%` }}
+                aria-label={`${count}× verwendet`}
+              />
+            </div>
+      </div>
 
-                  <div className="flex flex-col min-w-0">
-                    <div className="text-base font-medium truncate">{m.name}</div>
+      {/* RECHTS: dein bestehender aktiv/inaktiv-Button bleibt unverändert */}
+      <button
+        type="button"
+        disabled={busy || locked}
+        onClick={() => onToggle(m.id)}
+        className={
+          "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition " +
+          (m.active
+            ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+            : "bg-neutral-100 text-neutral-600 border-neutral-200")
+        }
+      >
+        <span
+          className={
+            "mr-2 h-2 w-2 rounded-full " +
+            (m.active ? "bg-emerald-500" : "bg-neutral-400")
+          }
+        />
+        {m.active ? "aktiv" : "inaktiv"}
+      </button>
+    </div>
+  );
+})}
 
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="text-xs text-neutral-500 whitespace-nowrap">
-                        {count}× im Turnier verwendet
-                      </div>
-
-                      {isTimeplayFormat && eligibleSet && !eligible && (
-                        <div className="text-xs text-neutral-500 truncate">
-                          • keine Tasks ({diffLabel})
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="h-2 w-40 rounded-full bg-neutral-100 overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-neutral-400/70"
-                      style={{ width: `${pct}%` }}
-                      aria-label={`${count}× verwendet`}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={disableToggle}
-                  onClick={() => onToggle(m.id)}
-                  className={
-                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition " +
-                    (disableToggle ? "cursor-not-allowed " : "") +
-                    (effectiveIsActive
-                      ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-                      : "bg-neutral-100 text-neutral-600 border-neutral-200")
-                  }
-                >
-                  <span
-                    className={
-                      "mr-2 h-2 w-2 rounded-full " +
-                      (effectiveIsActive ? "bg-emerald-500" : "bg-neutral-400")
-                    }
-                  />
-                  {effectiveIsActive ? "aktiv" : "inaktiv"}
-                </button>
-              </div>
-            );
-          })}
 
           {(!machines || machines.length === 0) && (
-            <div className="text-sm text-neutral-500">Noch keine Maschinen.</div>
+            <div className="text-sm text-neutral-500">
+              Noch keine Maschinen.
+            </div>
           )}
         </div>
       </CardBody>
     </Card>
   );
 }
-
 
 type MatchPlacementRow = {
   playerId: string;
@@ -9372,37 +9319,6 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   }, [data?.tournament?.superfinal_elo_enabled]);
   // ⭐ ENDE NEU
 
-  // 🔊 Sprachausgabe pro Runde (DB-Flag)
-const [speechRoundEnabledUi, setSpeechRoundEnabledUi] = useState<boolean>(false);
-
-useEffect(() => {
-  if (data?.tournament?.speech_round_enabled != null) {
-    setSpeechRoundEnabledUi(Boolean(data.tournament.speech_round_enabled));
-  }
-}, [data?.tournament?.speech_round_enabled]);
-
-async function setSpeechRoundEnabled(next: boolean) {
-  if (!isAdmin) return; // Zuschauer nicht
-  setSpeechRoundEnabledUi(next);
-
-  const res = await fetch("/api/tournaments/set-speech-round", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify({ code, enabled: next, _ts: Date.now() }),
-  });
-
-  if (!res.ok) {
-    // Fehler -> UI zurückrollen
-    setSpeechRoundEnabledUi(!next);
-    alert("Konnte die Einstellung 'Sprachausgabe pro Runde' nicht speichern.");
-  } else {
-    // Optional: damit load() sofort den neuen DB-Wert spiegelt
-    await reloadAll();
-  }
-}
-
-
   // Merkt sich, wie viele fertige Runden wir bereits für Elo berücksichtigt haben
   const finishedRoundsSeenRef = useRef<number | null>(null);
 
@@ -10200,8 +10116,6 @@ async function reloadAll() {
     loadTournamentHighscores(false),
     loadCategoryTournamentLeaderboard(next?.tournament?.category, false),
   ]);
-
-  return next;
 }
 
 
@@ -10405,83 +10319,6 @@ async function reloadAll() {
 }, [rounds]);
 
   const isRotationFormat = String(data?.tournament?.format ?? "") === "rotation";
-
-  const isTimeplayFormat = String(data?.tournament?.format ?? "") === "timeplay";
-
-  // ✅ Timeplay: Welche Task-Schwierigkeiten sind für diese Runde erlaubt?
-  const [taskDifficulties, setTaskDifficulties] = useState<string[]>([
-    "easy",
-    "medium",
-    "hard",
-  ]);
-
-
-  // ✅ Timeplay: Preview der "eligible" Maschinen für die aktuell gewählten Task-Schwierigkeiten
-// Idee: Backend kann das bereits (previewOnly in /api/rounds/create).
-// Wir nutzen das hier, um unten in der Maschinenliste alles "auszugrauen", was keine passenden Tasks hat.
-const [eligibleMachineIds, setEligibleMachineIds] = useState<string[] | null>(null);
-const [eligibleMachinesLoading, setEligibleMachinesLoading] = useState(false);
-
-useEffect(() => {
-  // Nur relevant für Timeplay
-  if (!isTimeplayFormat) {
-    setEligibleMachineIds(null);
-    return;
-  }
-
-  // Wenn der User ALLE Difficulties abwählt, ist per Definition nichts eligible.
-  if (!taskDifficulties || taskDifficulties.length === 0) {
-    setEligibleMachineIds([]);
-    return;
-  }
-
-  let cancelled = false;
-
-  async function fetchEligibleMachines() {
-    try {
-      setEligibleMachinesLoading(true);
-
-      // Cache-Busting + no-store (damit nix "alt" cached)
-      const ts = Date.now();
-      const res = await fetch(`/api/rounds/create?ts=${ts}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-          code,
-          previewOnly: true,
-          format: "timeplay",
-          taskDifficulties,
-        }),
-      });
-
-      const j = await res.json().catch(() => ({}));
-      if (cancelled) return;
-
-      if (!res.ok) {
-        console.warn("Preview eligible machines failed:", j?.error ?? j);
-        setEligibleMachineIds([]);
-        return;
-      }
-
-      const ids = Array.isArray(j?.eligibleMachineIds) ? j.eligibleMachineIds : [];
-      setEligibleMachineIds(ids.map((x: any) => String(x)));
-    } catch (e) {
-      if (cancelled) return;
-      console.warn("Preview eligible machines network error:", e);
-      setEligibleMachineIds([]);
-    } finally {
-      if (!cancelled) setEligibleMachinesLoading(false);
-    }
-  }
-
-  fetchEligibleMachines();
-
-  return () => {
-    cancelled = true;
-  };
-}, [isTimeplayFormat, code, JSON.stringify(taskDifficulties)]);
-
 
   // ================================
   // Rotation Global Timer (ONE timer for the whole tournament)
@@ -10798,75 +10635,6 @@ function rotPrepareEndSound(): Promise<boolean> {
       // ignore
     }
   }
-
-  // 🔊 Round Speech (für alle Formate außer Elimination/Rotation)
-const roundSpeechUnlockedRef = useRef(false);
-
-function roundUnlockSpeechOnce() {
-  if (typeof window === "undefined") return;
-  const synth = window.speechSynthesis;
-  if (!synth) return;
-  if (roundSpeechUnlockedRef.current) return;
-
-  try {
-    synth.cancel();
-
-    const u = new SpeechSynthesisUtterance(".");
-    // iOS: muss im User-Click passieren; minimal hörbar vermeiden wir -> sehr leise
-    u.volume = 0.01;
-    u.rate = 1;
-    u.pitch = 1;
-
-    // wir nutzen deine vorhandene Voice-Auswahl aus Rotation:
-    // rotPickVoice(["en-US","de-DE"]) existiert schon weiter oben
-    const v = rotPickVoice(["en-US", "de-DE"]);
-    if (v) {
-      u.voice = v;
-      u.lang = v.lang || "en-US";
-    } else {
-      u.lang = "en-US";
-    }
-
-    synth.speak(u);
-    roundSpeechUnlockedRef.current = true;
-  } catch {
-    // ignore
-  }
-}
-
-function roundSpeak(text: string) {
-  if (typeof window === "undefined") return;
-  const synth = window.speechSynthesis;
-  if (!synth) return;
-
-  try {
-    // iOS: voices anstoßen falls leer
-    if ((rotVoicesRef.current?.length ?? 0) === 0) {
-      synth.getVoices();
-    }
-
-    if (!roundSpeechUnlockedRef.current) {
-      roundUnlockSpeechOnce();
-    }
-
-    synth.cancel();
-
-    const utter = new SpeechSynthesisUtterance(text);
-
-    const v = rotPickVoice(["en-US", "de-DE"]);
-    if (v) {
-      utter.voice = v;
-      utter.lang = v.lang || "en-US";
-    } else {
-      utter.lang = "en-US";
-    }
-
-    synth.speak(utter);
-  } catch {
-    // ignore
-  }
-}
-
 
   function elimUnlockSpeechOnce() {
     if (elimSpeechUnlockedRef.current) return;
@@ -11375,13 +11143,6 @@ if (rotEndTimeoutRef.current != null) {
     setBusy(true);
     setNotice(null);
 
-    const speechRoundEnabled = Boolean(speechRoundEnabledUi);
-
-    // ✅ iOS: Unlock MUSS im Button-Click passieren
-    if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat) {
-      roundUnlockSpeechOnce();
-    }
-
     const res = await fetch("/api/rounds/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -11389,9 +11150,6 @@ if (rotEndTimeoutRef.current != null) {
         code,
         startOrderMode,
         useElo,      // Elo-Flag für die Runde
-
-        // ✅ Timeplay: Difficulty-Filter für Tasks/Maschinen
-        taskDifficulties: isTimeplayFormat ? taskDifficulties : undefined,
       }),
     });
 
@@ -11403,145 +11161,8 @@ if (rotEndTimeoutRef.current != null) {
       // ✅ Nach dem Erzeugen wollen wir direkt zu den Matches springen.
     // Wir setzen nur ein Flag; das tatsächliche Scrollen passiert in einem useEffect
     // NACH reloadAll(), wenn die neuen Runden/Matches schon im DOM sind.
-const next = await reloadAll();
-setScrollToMatchesNext(true);
-
-if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
-  try {
-    // 1) neueste Runde finden (höchste number)
-    const rounds = Array.isArray(next.rounds) ? next.rounds : [];
-    const newestRound = rounds
-      .filter((r: any) => r && typeof r.number === "number")
-      .sort((a: any, b: any) => (b.number ?? 0) - (a.number ?? 0))[0];
-
-    if (!newestRound) return;
-
-    const roundId = String(newestRound.id);
-    const roundNo = newestRound.number;
-
-    // 2) Matches dieser Runde
-    const matches = (Array.isArray(next.matches) ? next.matches : []).filter(
-      (m: any) => String(m.round_id) === roundId
-    );
-
-    // Maschinen-Map
-    const machinesById = Object.fromEntries(
-      (Array.isArray(next.machines) ? next.machines : []).map((m: any) => [
-        String(m.id),
-        String(m.name ?? "Unknown machine"),
-      ])
-    );
-
-    // Spieler-Map (Name + profile_id für Winrates)
-    const playersByIdLocal = Object.fromEntries(
-      (Array.isArray(next.players) ? next.players : []).map((p: any) => [
-        String(p.id),
-        { name: String(p.name ?? "Unknown"), profile_id: p.profile_id ? String(p.profile_id) : null },
-      ])
-    );
-
-    // match_players gruppieren
-    const mps = Array.isArray(next.match_players) ? next.match_players : [];
-    const mpByMatch: Record<string, any[]> = {};
-    for (const mp of mps) {
-      const mid = String(mp.match_id);
-      if (!mpByMatch[mid]) mpByMatch[mid] = [];
-      mpByMatch[mid].push(mp);
-    }
-    // nach start_position sortieren
-    for (const mid of Object.keys(mpByMatch)) {
-      mpByMatch[mid].sort(
-        (a, b) => Number(a.start_position ?? 0) - Number(b.start_position ?? 0)
-      );
-    }
-
-    // 3) Winrates holen (m-winrate: machine-location)
-    const locationId = next?.tournament?.location_id ? String(next.tournament.location_id) : "";
-    const machineNamesUnique = Array.from(
-      new Set(matches.map((m: any) => machinesById[String(m.machine_id)]).filter(Boolean))
-    );
-
-    // alle profileIds, die in den Matches vorkommen
-    const profileIdsUnique = Array.from(
-      new Set(
-        matches
-          .flatMap((m: any) =>
-            (mpByMatch[String(m.id)] ?? []).map((mp: any) => playersByIdLocal[String(mp.player_id)]?.profile_id)
-          )
-          .filter(Boolean)
-      )
-    ) as string[];
-
-    let winrateRows: any[] = [];
-    if (locationId && profileIdsUnique.length && machineNamesUnique.length) {
-      const wrRes = await fetch("/api/winrates/machine-location", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-        cache: "no-store",
-        body: JSON.stringify({
-          profileIds: profileIdsUnique,
-          machineNames: machineNamesUnique,
-          locationId,
-        }),
-      });
-      const wrJson = await wrRes.json().catch(() => ({}));
-      winrateRows = Array.isArray(wrJson.rows) ? wrJson.rows : [];
-    }
-
-    // winrate lookup: key = profileId__machineName
-    const wrByKey: Record<string, { winrate: number | null; matchesPlayed: number; wins: number }> = {};
-    for (const r of winrateRows) {
-      const pid = String(r.profileId ?? "");
-      const mn = String(r.machineName ?? "");
-      if (!pid || !mn) continue;
-      wrByKey[`${pid}__${mn}`] = {
-        winrate: typeof r.winrate === "number" ? r.winrate : null,
-        matchesPlayed: Number(r.matchesPlayed ?? 0),
-        wins: Number(r.wins ?? 0),
-      };
-    }
-
-    // 4) Speech zusammenbauen
-    const parts: string[] = [];
-    parts.push(`Round ${roundNo}.`);
-
-    matches.forEach((m: any, idx: number) => {
-      const machineName = machinesById[String(m.machine_id)] ?? "Unknown machine";
-      const mpList = mpByMatch[String(m.id)] ?? [];
-
-      const players = mpList
-        .map((mp: any) => playersByIdLocal[String(mp.player_id)])
-        .filter(Boolean);
-
-      const playersText = players.map((p: any) => p.name).join(", ");
-      let line = `Match ${idx + 1} on machine ${machineName} with the playing order: ${playersText}.`;
-
-      // Favorite = höchste m-winrate auf dieser Maschine (falls verfügbar)
-      // Matchnummer: wenn Backend eine Nummer liefert, nutzen wir die; sonst 1..n
-      const matchNo = typeof m.number === "number" ? m.number : idx + 1;
-      let best: { name: string; winrate: number } | null = null;
-      for (const p of players) {
-        if (!p.profile_id) continue;
-        const wr = wrByKey[`${p.profile_id}__${machineName}`];
-        const wv = wr?.winrate;
-        if (typeof wv !== "number") continue;
-        if (!best || wv > best.winrate) best = { name: p.name, winrate: wv };
-      }
-
-      if (best) {
-        line += ` Favorite player with the better machine-winrate on ${machineName} in this match is ${best.name}.`;
-      }
-
-      parts.push(line);
-    });
-
-    roundSpeak(parts.join(" "));
-  } catch (e) {
-    console.log("Round speech failed:", e);
-  }
-}
-
-
+    await reloadAll();
+    setScrollToMatchesNext(true);
   
 
     
@@ -11947,20 +11568,6 @@ const tasksById = useMemo(() => {
     {/* Rechte Button-Gruppe: Danger-Zone „Turnier löschen“ */}
     <div className="ml-auto flex items-center gap-2">
               <div className="flex flex-col items-end gap-1 ml-auto">
-
-
-<label className="mr-3 inline-flex items-center gap-2 text-sm text-neutral-700">
-  <input
-    type="checkbox"
-    checked={speechRoundEnabledUi}
-    onChange={(e) => setSpeechRoundEnabled(e.target.checked)}
-    disabled={!isAdmin}
-    title={!isAdmin ? "Nur Admins können das ändern" : ""}
-  />
-  <span>Sprachausgabe pro Runde aktiv</span>
-</label>
-
-
 <Button
   variant="secondary"
   onClick={deleteTournament}
@@ -11970,8 +11577,6 @@ const tasksById = useMemo(() => {
 >
   Turnier löschen
 </Button>
-
-
 
                 {!isFinished ? (
                   <div className="text-xs text-amber-700 max-w-xs text-right">
@@ -12227,35 +11832,6 @@ const tasksById = useMemo(() => {
         </option>
       </Select>
 
-{isTimeplayFormat && (
-  <div className="rounded-lg border p-3">
-    <div className="text-sm font-medium mb-2">Tasks für diese Runde</div>
-
-    <div className="flex flex-wrap gap-3">
-      {["easy", "medium", "hard"].map((d) => (
-        <label key={d} className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={taskDifficulties.includes(d)}
-            onChange={() => {
-              setTaskDifficulties((prev) =>
-                prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
-              );
-            }}
-            disabled={busy || locked}
-          />
-          <span className="capitalize">{d}</span>
-        </label>
-      ))}
-    </div>
-
-    <p className="mt-2 text-xs text-neutral-500">
-      Nur Maschinen mit aktiven Tasks in den gewählten Difficulties werden für diese Runde verwendet.
-    </p>
-  </div>
-)}
-
-
       {isDypRR && (
         <p className="text-sm text-neutral-500 leading-snug">
           Bei <b>DYP Round Robin</b> ist die Startreihenfolge immer <b>zufällig</b>.
@@ -12281,14 +11857,7 @@ const tasksById = useMemo(() => {
       <Button
         className="px-6 py-3 font-semibold"
         onClick={createRound}
-        disabled={
-          busy ||
-          hasOpenPositions ||
-          locked ||
-          superFinalRunning ||
-          hasActiveRound ||
-          (isTimeplayFormat && taskDifficulties.length === 0)
-        }
+        disabled={busy || hasOpenPositions || locked || superFinalRunning || hasActiveRound}
         title={
           locked
             ? "Turnier ist beendet"
@@ -12338,18 +11907,13 @@ const tasksById = useMemo(() => {
 
       </Card>
 
-<MachinesList
-  machines={data?.machines ?? []}
-  onToggle={toggleMachine}
-  busy={busy}
-  locked={locked}
-  usageCounts={machineUsageCounts}
-  isTimeplayFormat={isTimeplayFormat}
-  taskDifficulties={taskDifficulties}
-  eligibleMachineIds={eligibleMachineIds}
-  eligibleMachinesLoading={eligibleMachinesLoading}
-/>
-
+      <MachinesList
+        machines={data?.machines ?? []}
+        onToggle={toggleMachine}
+        busy={busy}
+        locked={locked}
+        usageCounts={machineUsageCounts}
+      />
 
       <PlayersList
         players={data?.players ?? []}
@@ -12851,8 +12415,7 @@ const tasksById = useMemo(() => {
 
         <Button
           disabled={
-            busy || hasOpenPositions || locked || superFinalRunning || hasActiveRound ||
-            (isTimeplayFormat && taskDifficulties.length === 0)
+            busy || hasOpenPositions || locked || superFinalRunning || hasActiveRound
           }
           onClick={createRound}
           className="flex-1 !py-2 !text-xs sm:!py-3 sm:!text-base"
