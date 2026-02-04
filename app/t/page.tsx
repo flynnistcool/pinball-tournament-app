@@ -8478,7 +8478,7 @@ const isIOS = /iPad|iPhone|iPod/i.test(ua);
 // Standard = 1.0
 let rate = 1.0;
 if (isWindows) rate = 0.82;  // dein bisheriger Windows-Wert
-else if (isIOS) rate = 1.08; // iOS etwas schneller
+else if (isIOS) rate = 1.18; // iOS etwas schneller
 
 utter.rate = rate;
 
