@@ -30,6 +30,7 @@ import { ProfilePicker } from "@/components/ProfilePicker";
 import AdminTab from "./AdminTab";
 import Image from "next/image";
 import PinballScore from "@/components/PinballScore";
+import AnnouncerAvatar from "@/components/AnnouncerAvatar";
 
 
 function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
@@ -4962,6 +4963,133 @@ function RotationTimerFullscreenOverlay({
   );
 }
 
+function TimeplayStopwatchFullscreenOverlay({
+  open,
+  onClose,
+  elapsedMs,
+  running,
+  locked,
+  onStartStop,
+  onReset,
+  onApply,
+}: {
+  open: boolean;
+  onClose: () => void;
+  elapsedMs: number;
+  running: boolean;
+  locked: boolean;
+  onStartStop: () => void;
+  onReset: () => void;
+  onApply: () => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  // iOS/Safari: body scroll lock wie bei Rotation
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
+
+const totalMs = Math.max(0, Math.round(elapsedMs));
+const totalSeconds = Math.floor(totalMs / 1000);
+const minutes = Math.floor(totalSeconds / 60);
+const seconds = totalSeconds % 60;
+const msPart = totalMs % 1000;
+
+const label = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(msPart).padStart(3, "0")}`;
+
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] bg-black/95 text-white"
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        paddingLeft: "env(safe-area-inset-left)",
+        paddingRight: "env(safe-area-inset-right)",
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="h-full w-full flex flex-col">
+        {/* Header: ALLE kleinen Buttons oben in gleicher Größe */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <div className="text-sm font-semibold tracking-wide">Stoppuhr</div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 px-3 text-sm"
+              disabled={locked}
+              onClick={onReset}
+            >
+              Reset
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 px-3 text-sm"
+              disabled={locked || running || elapsedMs <= 0}
+              onClick={onApply}
+              title={running ? "Erst stoppen" : "Zeit übernehmen"}
+            >
+              Übernehmen
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 px-3 text-sm"
+              onClick={onClose}
+            >
+              Schließen
+            </Button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 flex flex-col px-4">
+          {/* Anzeige */}
+          <div className="flex items-center justify-center py-6">
+            <div className="text-[clamp(56px,12vw,140px)] font-bold tabular-nums font-mono">
+              {label}
+            </div>
+          </div>
+
+          {/* START/STOP: riesig, min. halbe Screen-Höhe */}
+          <div className="flex-1 flex items-stretch">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full text-[clamp(28px,6vw,64px)] font-extrabold rounded-2xl"
+              style={{ minHeight: "50vh" }}
+              disabled={locked}
+              onClick={onStartStop}
+            >
+              {running ? "STOP" : "START"}
+            </Button>
+          </div>
+
+          {/* Optional: bisschen Luft unten */}
+          <div className="h-4" />
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+
+}
+
 
 function MatchplayProgressStack({
   tournament,
@@ -5658,6 +5786,63 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
   const [timeOverride, setTimeOverride] = useState<Record<string, string>>({});
   const [savingTime, setSavingTime] = useState<Record<string, boolean>>({});
   const [timeFocusKey, setTimeFocusKey] = useState<string | null>(null);
+
+
+    // ================================
+  // Timeplay Stopwatch (Fullscreen Overlay)
+  // ================================
+  const [tpStopwatchOpen, setTpStopwatchOpen] = useState(false);
+  const [tpStopwatchTarget, setTpStopwatchTarget] = useState<{
+    matchId: string;
+    playerId: string;
+  } | null>(null);
+
+  const [tpSwRunning, setTpSwRunning] = useState(false);
+  const [tpSwStartAt, setTpSwStartAt] = useState<number | null>(null);
+  const [tpSwElapsedMs, setTpSwElapsedMs] = useState(0);
+
+  // Tick damit Anzeige sichtbar "läuft"
+  const [_tpSwTick, setTpSwTick] = useState(0);
+  useEffect(() => {
+    if (!tpStopwatchOpen) return;
+    if (!tpSwRunning) return;
+    const id = window.setInterval(() => setTpSwTick((x) => x + 1), 50);
+    return () => window.clearInterval(id);
+  }, [tpStopwatchOpen, tpSwRunning]);
+
+  function tpOpenStopwatch(matchId: string, playerId: string, initialMs = 0) {
+    setTpStopwatchTarget({ matchId, playerId });
+    setTpSwElapsedMs(initialMs);
+    setTpSwRunning(false);
+    setTpSwStartAt(null);
+    setTpStopwatchOpen(true);
+  }
+
+  function tpToggleStartStop() {
+    if (tpSwRunning) {
+      if (tpSwStartAt != null) {
+        setTpSwElapsedMs((prev) => prev + (Date.now() - tpSwStartAt));
+      }
+      setTpSwRunning(false);
+      setTpSwStartAt(null);
+    } else {
+      setTpSwRunning(true);
+      setTpSwStartAt(Date.now());
+    }
+  }
+
+  function tpResetStopwatch() {
+    setTpSwRunning(false);
+    setTpSwStartAt(null);
+    setTpSwElapsedMs(0);
+  }
+
+  function tpSwNowElapsedMs() {
+    if (!tpSwRunning || tpSwStartAt == null) return tpSwElapsedMs;
+    return tpSwElapsedMs + (Date.now() - tpSwStartAt);
+  }
+
+  
 
   // ================================
 // OCR pro Match (Foto NICHT speichern)
@@ -6475,32 +6660,63 @@ function parseTimeToMs(raw: string): number | null {
   const s = String(raw ?? "").trim();
   if (!s) return null;
 
-  // erlaubt: "ss" oder "mm:ss"
-  if (/^\d+$/.test(s)) {
-    const sec = Number(s);
-    if (!Number.isFinite(sec) || sec < 0) return null;
-    return Math.round(sec * 1000);
+  // Erlaubt:
+  //  - "ss"           (z.B. "12")
+  //  - "ss.mmm"       (z.B. "12.345")
+  //  - "mm:ss"        (z.B. "1:23")
+  //  - "mm:ss.mmm"    (z.B. "1:23.456")
+
+  // Case A: "ss" oder "ss.mmm"
+  // Sekunden: 1..n Stellen, optional .mmm (1-3 Stellen)
+  {
+    const m = s.match(/^(\d+)(?:\.(\d{1,3}))?$/);
+    if (m) {
+      const sec = Number(m[1]);
+      const msPartRaw = m[2] ?? "0";
+      const msPart = Number(msPartRaw.padEnd(3, "0")); // "4"->"400", "45"->"450"
+
+      if (![sec, msPart].every(Number.isFinite) || sec < 0 || msPart < 0 || msPart > 999) return null;
+      return sec * 1000 + msPart;
+    }
   }
 
-  const m = s.match(/^(\d+):(\d{1,2})$/);
-  if (m) {
-    const mm = Number(m[1]);
-    const ss = Number(m[2]);
-    if (![mm, ss].every(Number.isFinite) || mm < 0 || ss < 0 || ss > 59) return null;
-    return (mm * 60 + ss) * 1000;
+  // Case B: "mm:ss" oder "mm:ss.mmm"
+  {
+    const m = s.match(/^(\d+):(\d{1,2})(?:\.(\d{1,3}))?$/);
+    if (m) {
+      const mm = Number(m[1]);
+      const ss = Number(m[2]);
+      const msPartRaw = m[3] ?? "0";
+      const msPart = Number(msPartRaw.padEnd(3, "0"));
+
+      if (![mm, ss, msPart].every(Number.isFinite) || mm < 0 || ss < 0 || ss > 59 || msPart < 0 || msPart > 999) return null;
+      return (mm * 60 + ss) * 1000 + msPart;
+    }
   }
 
   return null;
 }
 
+
 function formatTimeFromMs(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "";
-  const totalSec = Math.round(ms / 1000);
+  const totalMs = Math.max(0, Math.round(ms));
+
+  const totalSec = Math.floor(totalMs / 1000);
+  const msec = totalMs % 1000;
+
   const mm = Math.floor(totalSec / 60);
   const ss = totalSec % 60;
-  if (mm <= 0) return String(ss);
-  return `${mm}:${String(ss).padStart(2, "0")}`;
+
+  const msStr = String(msec).padStart(3, "0");
+
+  // Wenn keine Minuten: "ss.mmm" (z.B. "12.345")
+  if (mm <= 0) return `${ss}.${msStr}`;
+
+  // Sonst: "mm:ss.mmm" (z.B. "1:02.345")
+  return `${mm}:${String(ss).padStart(2, "0")}.${msStr}`;
 }
+
 
 function getTimeMs(mp: any) {
   const key = k(mp.match_id, mp.player_id);
@@ -7567,7 +7783,9 @@ disabled={
     ) : null}
   </div>
 
+    
     {/* Winrate direkt im Match (links) */}
+    {!isTimeplayFormat && (
     <div className="pl-9 flex items-center gap-3 text-[11px] tabular-nums">
       {(() => {
         const pid = mp?.player_id ? String(mp.player_id) : "";
@@ -7666,6 +7884,7 @@ return (
         );
       })()}
     </div>
+    )}
 </div>
 </div>
 
@@ -7883,6 +8102,22 @@ return (
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
       }}
     />
+
+    {/* ⏱️ Fullscreen-Stoppuhr wie Rotation-Timer */}
+    <button
+      type="button"
+      className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md border bg-white text-sm hover:bg-neutral-50 active:scale-[0.99] disabled:opacity-50"
+      disabled={locked}
+      title="Stoppuhr öffnen"
+      onClick={() => {
+        const initialMs = getTimeMs(mp) ?? 0;
+        tpOpenStopwatch(mp.match_id, mp.player_id, initialMs);
+      }}
+    >
+      ⏱️
+    </button>
+
+
 
     {savingTime[k(mp.match_id, mp.player_id)] ? (
       <span className="text-[10px] sm:text-xs text-neutral-500">
@@ -8108,6 +8343,40 @@ try {
           </div>
         )}
       </div>
+
+<TimeplayStopwatchFullscreenOverlay
+  open={tpStopwatchOpen}
+  onClose={() => setTpStopwatchOpen(false)}
+  elapsedMs={tpSwNowElapsedMs()}
+  running={tpSwRunning}
+  locked={locked}
+  onStartStop={tpToggleStartStop}
+  onReset={tpResetStopwatch}
+  onApply={async () => {
+    const tgt = tpStopwatchTarget;
+    if (!tgt) return;
+    if (tpSwRunning) return;
+
+    const ms = Math.max(0, Math.round(tpSwNowElapsedMs()));
+    const key = k(tgt.matchId, tgt.playerId);
+
+    // 1) UI sofort aktualisieren (damit es im Input sofort steht)
+    setTimeOverride((prev) => ({
+      ...prev,
+      [key]: formatTimeFromMs(ms),
+    }));
+
+    // 2) Persistieren über deine bestehende API
+    await setTime(tgt.matchId, tgt.playerId, ms);
+
+    // 3) schließen
+    setTpStopwatchOpen(false);
+  }}
+/>
+
+
+
+
     </CardBody>
   </Card>
 );
@@ -8130,11 +8399,121 @@ export default function AdminHome() {
   const [showBottomBar, setShowBottomBar] = useState(true);
 
 
-  // 🔊 Stimmen einmal initialisieren (Safari / iOS)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+// 🎤 Announcer Avatar overlay
+const [announcerVisible, setAnnouncerVisible] = useState(false);
+const [announcerSpeaking, setAnnouncerSpeaking] = useState(false);
+
+const activeUtterancesRef = useRef(0);
+const showTimerRef = useRef<number | null>(null);
+const hideTimerRef = useRef<number | null>(null);
+
+const SHOW_DELAY_MS = 1800; // <- HIER deine Schwelle
+
+const clearShowTimer = () => {
+  if (showTimerRef.current !== null) {
+    clearTimeout(showTimerRef.current);
+    showTimerRef.current = null;
+  }
+};
+
+const clearHideTimer = () => {
+  if (hideTimerRef.current !== null) {
+    clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
+  }
+};
+
+const scheduleShow = () => {
+  if (showTimerRef.current !== null) return;
+
+  showTimerRef.current = window.setTimeout(() => {
+    showTimerRef.current = null;
+
+    // NUR anzeigen, wenn JETZT noch gesprochen wird
+    if (activeUtterancesRef.current > 0) {
+      setAnnouncerVisible(true);
+      setAnnouncerSpeaking(true);
+    }
+  }, SHOW_DELAY_MS);
+};
+
+const hideAvatar = () => {
+  clearShowTimer();
+  clearHideTimer();
+
+  setAnnouncerSpeaking(false);
+
+  // wenn er nie sichtbar war → sofort weg
+  if (!announcerVisible) {
+    setAnnouncerVisible(false);
+    return;
+  }
+
+  // sonst weich ausblenden
+  hideTimerRef.current = window.setTimeout(() => {
+    setAnnouncerVisible(false);
+  }, 1000);
+};
+
+// 🔧 Patch speechSynthesis.speak
+useEffect(() => {
+  if (typeof window === "undefined") return;
+
+  const synth: any = window.speechSynthesis;
+  if (!synth || synth.__announcerPatched) return;
+
+  synth.__announcerPatched = true;
+  const originalSpeak = synth.speak.bind(synth);
+
+synth.speak = (utter: SpeechSynthesisUtterance) => {
+  activeUtterancesRef.current += 1;
+
+  scheduleShow();
+
+// 🐢 Windows Speech etwas langsamer / 🍏 iOS etwas schneller
+const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+const isWindows = /Windows/i.test(ua);
+const isIOS = /iPad|iPhone|iPod/i.test(ua);
+
+// Standard = 1.0
+let rate = 1.0;
+if (isWindows) rate = 0.82;  // dein bisheriger Windows-Wert
+else if (isIOS) rate = 1.08; // iOS etwas schneller
+
+utter.rate = rate;
+
+  const cleanup = () => {
+    activeUtterancesRef.current = Math.max(
+      0,
+      activeUtterancesRef.current - 1
+    );
+
+    if (activeUtterancesRef.current === 0) {
+      hideAvatar();
+    }
+  };
+
+  utter.onend = cleanup;
+  utter.onerror = cleanup;
+
+  return originalSpeak(utter);
+};
+
+
+  return () => {
+    synth.speak = originalSpeak;
+    delete synth.__announcerPatched;
+  };
+}, [announcerVisible]);
+
+// Stimmen initialisieren (Safari)
+useEffect(() => {
+  if (typeof window !== "undefined") {
     window.speechSynthesis.getVoices();
-  }, []);
+  }
+}, []);
+
+
 
 
   useEffect(() => {
@@ -8570,6 +8949,8 @@ if (joined)
           <Dashboard code={joined.code} name={joined.name} isAdmin={isAdmin} />
         </CardBody>
       </Card>
+      {/* 🎤 Avatar overlay while speech is playing */}
+      <AnnouncerAvatar visible={announcerVisible} speaking={announcerSpeaking} />
     </div>
   );
 
@@ -9835,7 +10216,7 @@ useEffect(() => {
       const next = s - 1;
       return next <= 1 ? 1 : next;
     });
-  }, 1000);
+  }, 4000);
 
   return () => {
     clearTimers();
@@ -10503,6 +10884,11 @@ useEffect(() => {
   // Rotation Timer "Fullscreen" Anzeige (Overlay via Portal)
 const [rotTimerFullscreen, setRotTimerFullscreen] = useState(false);
 const rotTimerAutoOpenedRef = useRef(false);
+
+
+
+
+
 
   // --- Prestart (15s) ---
   const [rotPrestartEndAt, setRotPrestartEndAt] = useState<number | null>(null);
@@ -12451,6 +12837,9 @@ const tasksById = useMemo(() => {
   tasksById={tasksById}
   />
 )}
+
+
+
 
 
   </div>
