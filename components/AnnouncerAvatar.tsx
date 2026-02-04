@@ -16,7 +16,7 @@ type Props = {
 export default function AnnouncerAvatar({
   visible,
   speaking,
-  videoSrc = "/animation8.mp4",
+  videoSrc = "/animation11.mp4",
 }: Props) {
   const vidRef = useRef<HTMLVideoElement | null>(null);
 
@@ -54,7 +54,7 @@ export default function AnnouncerAvatar({
       "pointer-events-none fixed bottom-4 right-4 z-[70] transition-all " +
       (visible
         ? "opacity-100 translate-y-0 duration-[2200ms] ease-out"
-        : "opacity-0 translate-y-3 duration-[2200] ease-in") +
+        : "opacity-0 translate-y-3 duration-[2100ms] ease-in") +
       " " +
       (speaking ? "scale-100" : "scale-100")
     }

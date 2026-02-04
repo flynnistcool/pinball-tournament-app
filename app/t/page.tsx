@@ -8452,7 +8452,7 @@ const hideAvatar = () => {
   // sonst weich ausblenden
   hideTimerRef.current = window.setTimeout(() => {
     setAnnouncerVisible(false);
-  }, 1000);
+  }, 1);
 };
 
 // 🔧 Patch speechSynthesis.speak
@@ -8477,7 +8477,7 @@ const isIOS = /iPad|iPhone|iPod/i.test(ua);
 
 // Standard = 1.0
 let rate = 1.0;
-if (isWindows) rate = 0.82;  // dein bisheriger Windows-Wert
+if (isWindows) rate = 0.88;  // dein bisheriger Windows-Wert
 else if (isIOS) rate = 1.18; // iOS etwas schneller
 
 utter.rate = rate;
