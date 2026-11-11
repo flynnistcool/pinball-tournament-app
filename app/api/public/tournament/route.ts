@@ -10,17 +10,22 @@ export async function GET(req: Request) {
 
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, code, name, created_at, category, season_year, best_of, match_size, location_id, locations(name), status")
+    // Hinweis: season_year und best_of existieren in der Live-DB nicht -> nicht abfragen
+    .select("id, code, name, created_at, category, match_size, format, location_id, locations(name), status")
     .eq("code", code)
     .single();
 
-  if (tErr || !t) return NextResponse.json({ error: "Turnier nicht gefunden" }, { status: 404 });
+  // Echten DB-Fehler melden statt pauschal "nicht gefunden" (erleichtert Fehlersuche)
+  if (tErr && tErr.code !== "PGRST116") {
+    return NextResponse.json({ error: `Turnier laden fehlgeschlagen: ${tErr.message}` }, { status: 500 });
+  }
+  if (!t) return NextResponse.json({ error: "Turnier nicht gefunden" }, { status: 404 });
 
   // Load core entities first
   const [{ data: players, error: pErr }, { data: machines, error: mErr }, { data: rounds, error: rErr }] =
     await Promise.all([
       sb.from("players").select("id, name, active, profile_id").eq("tournament_id", t.id).order("created_at"),
-      sb.from("machines").select("id, name, active").eq("tournament_id", t.id).order("created_at"),
+      sb.from("machines").select("id, name, active, icon_emoji").eq("tournament_id", t.id).order("created_at"),
       sb.from("rounds").select("id, format, number, status").eq("tournament_id", t.id).order("format").order("number"),
     ]);
 
@@ -47,15 +52,24 @@ export async function GET(req: Request) {
 const { data: matchPlayers, error: mpErr } = matchIds.length
   ? await sb
       .from("match_players")
-      .select("match_id, player_id, position, start_position")
+      .select("match_id, player_id, position, start_position, score") // score: für Infobildschirm (/s/CODE/tv)
       .in("match_id", matchIds)
       .order("start_position", { ascending: true })
   : { data: [], error: null as any };
 
   if (mpErr) return NextResponse.json({ error: `MatchPlayers load failed: ${mpErr.message}` }, { status: 500 });
 
+  // Profil-Optik (Emoji + Farbe) für Infobildschirm – optional, Fehler hier sind nicht kritisch
+  const profileIds = Array.from(
+    new Set((players ?? []).map((p: any) => p.profile_id).filter(Boolean))
+  ) as string[];
+  const { data: profiles } = profileIds.length
+    ? await sb.from("profiles").select("id, icon, color").in("id", profileIds)
+    : { data: [] as any[] };
+
   return NextResponse.json({
     tournament: t,
+    profiles: profiles ?? [],
     players: players ?? [],
     machines: machines ?? [],
     rounds: rounds ?? [],

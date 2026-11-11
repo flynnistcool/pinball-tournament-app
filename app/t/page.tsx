@@ -31,6 +31,7 @@ import AdminTab from "./AdminTab";
 import Image from "next/image";
 import PinballScore from "@/components/PinballScore";
 import AnnouncerAvatar from "@/components/AnnouncerAvatar";
+import { computeProvisionalRotationPoints } from "@/lib/points";
 
 
 function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
@@ -4193,8 +4194,32 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
   );
 }
 
-function MiniLeaderboard({ code }: { code: string }) {
+function MiniLeaderboard({
+  code,
+  rotation = false,
+  matches = [],
+  matchPlayers = [],
+}: {
+  code: string;
+  // ✅ Rotation ("Round the Pinball"): zusätzliche Spalte "vorl." mit vorläufigem Stand
+  rotation?: boolean;
+  matches?: any[];
+  matchPlayers?: any[];
+}) {
   const [rows, setRows] = useState<any[]>([]);
+
+  // Vorläufige Zusatzpunkte aus laufenden Flippern (nur Anzeige, speichert nichts)
+  const provisional = useMemo(
+    () => (rotation ? computeProvisionalRotationPoints(matches, matchPlayers) : {}),
+    [rotation, matches, matchPlayers]
+  );
+
+  // Wenn sich gespeicherte Plätze ändern: echte Punkte sofort neu laden
+  // (sonst springt "vorl." bis zum nächsten 8s-Poll kurz zurück)
+  const placedCount = useMemo(
+    () => (matchPlayers ?? []).filter((x: any) => x?.position != null).length,
+    [matchPlayers]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -4223,20 +4248,52 @@ function MiniLeaderboard({ code }: { code: string }) {
       cancelled = true;
       clearInterval(t);
     };
-  }, [code]);
+  }, [code, placedCount]);
 
-  const top = rows.slice(0, 8);
+  // Rotation: alle Spieler, sortiert nach vorläufigem Gesamtstand (echt + vorl.)
+  // Sonst: wie bisher Top 8 nach echten Punkten
+  const top = useMemo(() => {
+    if (!rotation) return rows.slice(0, 8);
+    return rows
+      .map((r: any) => {
+        const pts = Number(r?.points ?? 0);
+        const extra = Number(provisional[r?.id] ?? 0);
+        return { ...r, provExtra: extra, provTotal: pts + extra };
+      })
+      .sort(
+        (a: any, b: any) =>
+          b.provTotal - a.provTotal ||
+          Number(b.points ?? 0) - Number(a.points ?? 0) ||
+          String(a.name ?? "").localeCompare(String(b.name ?? ""))
+      );
+  }, [rows, rotation, provisional]);
+
+  const valueOf = (r: any) =>
+    rotation ? Number(r?.provTotal ?? 0) : Number(r?.points ?? 0);
+
   const topPlaces = useMemo(
-    () => computeCompetitionPlaces(top, (r: any) => Number(r?.points ?? 0)),
-    [top]
+    () => computeCompetitionPlaces(top, valueOf),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [top, rotation]
   );
 
   return (
     <Card>
-      <CardHeader>
-        <div className="text-sm font-semibold">Leaderboard (live)</div>
-      </CardHeader>
-      <CardBody>
+      {/* Kompaktere Ränder als CardHeader/CardBody, damit Namen mehr Platz haben */}
+      <div className="px-2.5 pt-4 pb-2.5 border-b">
+        <div className="flex items-center justify-between gap-1.5">
+          <div className="text-sm font-semibold whitespace-nowrap">Leaderboard (live)</div>
+          {rotation && top.length > 0 ? (
+            <div className="flex gap-1.5 text-[11px] font-medium text-neutral-500 tabular-nums">
+              <span className="w-6 text-right">Pkt</span>
+              <span className="w-7 text-right" title="Vorläufiger Stand inkl. laufender Flipper">
+                vorl.
+              </span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="px-2.5 py-3">
         {top.length === 0 ? (
           <div className="text-sm text-neutral-500">
             Noch keine Ergebnisse.
@@ -4257,12 +4314,13 @@ function MiniLeaderboard({ code }: { code: string }) {
               return (
                 <div
                   key={r.id ?? r.player_id ?? index}
-                  className="flex items-start gap-2 text-sm"
+                  className="flex items-start gap-1.5 text-sm"
                 >
-                  <div className="w-5 text-right tabular-nums text-neutral-500 pt-0.5">
+                  <div className="w-5 shrink-0 text-right tabular-nums text-neutral-500 pt-0.5">
                     {(() => {
                       const place = topPlaces[index] ?? index + 1;
-                      const medal = medalForPlace(place);
+                      // Medaille erst ab > 0 Punkten (sonst hat zu Beginn jeder Gold)
+                      const medal = valueOf(r) > 0 ? medalForPlace(place) : null;
                       return medal ? (
                         <span className="text-base">{medal}</span>
                       ) : (
@@ -4270,24 +4328,41 @@ function MiniLeaderboard({ code }: { code: string }) {
                       );
                     })()}
                   </div>
-                  <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <div className="flex items-start gap-1.5 flex-1 min-w-0">
                     <span
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border bg-white/70 text-xs mt-0.5"
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-white/70 text-xs mt-0.5"
                       style={color ? { backgroundColor: color } : {}}
                     >
                       {emoji || initials}
                     </span>
                     <span className="truncate font-medium">{r.name}</span>
                   </div>
-                  <div className="tabular-nums text-neutral-700 font-semibold pl-2">
-                    {r.points ?? "—"}
-                  </div>
+                  {rotation ? (
+                    <div className="flex shrink-0 gap-1.5 pl-1 tabular-nums">
+                      <span className="w-6 text-right text-neutral-500">
+                        {r.points ?? 0}
+                      </span>
+                      <span
+                        className={
+                          "w-7 text-right font-semibold " +
+                          (r.provExtra > 0 ? "text-emerald-700" : "text-neutral-700")
+                        }
+                        title={r.provExtra > 0 ? `+${r.provExtra} vorläufig` : undefined}
+                      >
+                        {r.provTotal}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="shrink-0 tabular-nums text-neutral-700 font-semibold pl-1">
+                      {r.points ?? "—"}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
-      </CardBody>
+      </div>
     </Card>
   );
 }
@@ -4752,6 +4827,7 @@ function RotationGlobalTimerSticky({
             >
               <option value="3">3 min</option>
               <option value="5">5 min</option>
+              <option value="8">8 min</option>
               <option value="10">10 min</option>
               <option value="15">15 min</option>
               <option value="20">20 min</option>
@@ -4816,10 +4892,6 @@ function RotationGlobalTimerSticky({
             </Button>
           </div>
         </div>
-
-        <p className="mt-2 text-xs text-neutral-500">
-          Ein gemeinsamer Timer für alle Spieler – gilt über alle Runden/Matches.
-        </p>
       </CardBody>
     </Card>
   );
@@ -5603,6 +5675,23 @@ function RoundMatchesCard({
   }
   return map;
 }, [matches]);
+
+  // ✅ Rotation: welcher Flipper ist in welcher Runde gewählt? (machineId -> [{matchId, roundNo}])
+  // Grundlage für Doppel-Prüfung beim Score-Speichern und Hinweis im Dropdown.
+  const rotationMachineUse = useMemo(() => {
+    const roundNoById: Record<string, number> = {};
+    for (const r of rounds ?? []) roundNoById[String(r.id)] = Number(r.number);
+    const map: Record<string, { matchId: string; roundNo: number }[]> = {};
+    for (const m of matches ?? []) {
+      if (!m.machine_id) continue;
+      (map[m.machine_id] ||= []).push({
+        matchId: String(m.id),
+        roundNo: roundNoById[String((m as any).round_id)] ?? 0,
+      });
+    }
+    for (const id of Object.keys(map)) map[id].sort((a, b) => a.roundNo - b.roundNo);
+    return map;
+  }, [rounds, matches]);
 
   // ================================
   // Winrate / M-Winrate (für Anzeige direkt im Match links)
@@ -6477,8 +6566,35 @@ function elimSpeak(text: string) {
   }
 }
 
+  // ✅ Rotation: Text mit allen doppelt gewählten Flippern (oder "" wenn alles ok)
+  function rotationDuplicateMachinesText(): string {
+    if (!isRotationFormat) return "";
+    const lines: string[] = [];
+    for (const [machineId, uses] of Object.entries(rotationMachineUse)) {
+      if (uses.length < 2) continue;
+      const name = machinesInfoById?.[machineId]?.name ?? "Unbekannter Flipper";
+      const roundsTxt = uses.map((u) => `#${u.roundNo}`).join(", ");
+      lines.push(`• „${name}“ ist mehrfach gewählt: Runde ${roundsTxt}`);
+    }
+    return lines.join("\n");
+  }
+
   async function setScore(matchId: string, playerId: string, score: number | null) {
     if (locked) return;
+
+    // ✅ Rotation: Score nur speichern, wenn jeder Flipper genau einmal vergeben ist
+    if (isRotationFormat && score !== null) {
+      const dupText = rotationDuplicateMachinesText();
+      if (dupText) {
+        alert(
+          "⚠️ Score wurde NICHT gespeichert.\n\n" +
+            "Im Modus „Round the Pinball“ darf jeder Flipper nur einmal vorkommen:\n\n" +
+            dupText +
+            "\n\nBitte zuerst die Flipper-Auswahl korrigieren."
+        );
+        return;
+      }
+    }
 
     const key = k(matchId, playerId);
     setSavingScore((prev) => ({ ...prev, [key]: true }));
@@ -7103,6 +7219,21 @@ const highestScoreInMatch = (() => {
   return max;
 })();
 
+// ✅ Name(n) des aktuellen Highscore-Halters (bei Gleichstand mehrere)
+const highestScoreHolderName = (() => {
+  if (typeof highestScoreInMatch !== "number" || !Number.isFinite(highestScoreInMatch)) return "";
+  const names: string[] = [];
+  for (const mp of mps ?? []) {
+    const pid = (mp as any)?.player_id;
+    if (!pid) continue;
+    const sc = getScore(mp as any);
+    if (sc !== highestScoreInMatch) continue;
+    const n = String(playersById?.[pid]?.name ?? "").trim();
+    if (n) names.push(n);
+  }
+  return names.join(" & ");
+})();
+
 // ✅ Timeplay: beste (kleinste) Zeit in diesem Match
 const bestTimeInMatch = (() => {
   let min: number | null = null;
@@ -7212,11 +7343,22 @@ disabled={
                                       }
                                     >
                                       <option value="">Maschine wählen…</option>
-                                      {Object.entries(machinesInfoById).map(([id, info]) => (
-                                        <option key={id} value={id}>
-                                          {info.name}
-                                        </option>
-                                      ))}
+                                      {Object.entries(machinesInfoById).map(([id, info]) => {
+                                        // ✅ Rotation: Hinweis, wenn Flipper schon in einer anderen Runde gewählt ist
+                                        const otherRounds = isRotationFormat
+                                          ? (rotationMachineUse[id] ?? [])
+                                              .filter((u) => u.matchId !== String(m.id))
+                                              .map((u) => `#${u.roundNo}`)
+                                          : [];
+                                        return (
+                                          <option key={id} value={id}>
+                                            {info.name}
+                                            {otherRounds.length > 0
+                                              ? ` (schon in ${otherRounds.join(", ")})`
+                                              : ""}
+                                          </option>
+                                        );
+                                      })}
                                     </Select>
 
 
@@ -7489,7 +7631,14 @@ disabled={
       <div className="text-center text-[12px] font-semibold text-neutral-500 tabular-nums">
         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
           {typeof highestScoreInMatch === "number" && Number.isFinite(highestScoreInMatch) ? (
-            <PinballScore value={highestScoreInMatch} minDigits={7} />
+            <>
+              <PinballScore value={highestScoreInMatch} minDigits={7} />
+              {highestScoreHolderName ? (
+                <div className="max-w-full truncate text-sm font-semibold text-neutral-700">
+                  🏆 {highestScoreHolderName}
+                </div>
+              ) : null}
+            </>
           ) : (
             <span className="text-[12px] text-neutral-500">—</span>
           )}
@@ -7753,6 +7902,13 @@ disabled={
               const isWinner = pos === 1;
               const isSaving = saving[k(mp.match_id, mp.player_id)] === true;
 
+              // ✅ Rotation: Score bereits gespeichert (DB-Wert) -> dezent grün hinterlegen
+              const hasSavedScore =
+                isRotationFormat &&
+                (mp as any)?.score != null &&
+                (mp as any)?.score !== "" &&
+                Number.isFinite(Number((mp as any).score));
+
               return (
                 <SortablePlayerRow
                   key={k(mp.match_id, mp.player_id)}
@@ -7762,7 +7918,11 @@ disabled={
                   <div
                     className={
                       "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-3 sm:py-2 " +
-                      (isWinner ? "bg-amber-200 border-amber-300" : "bg-white")
+                      (isWinner
+                        ? "bg-amber-200 border-amber-300"
+                        : hasSavedScore
+                        ? "bg-emerald-50 border-emerald-200"
+                        : "bg-white")
                     }
                   >
                     
@@ -12776,7 +12936,22 @@ const tasksById = useMemo(() => {
   <div className="lg:flex-[1] min-w-0">
 <div className="rounded-2xl border bg-white p-3 h-full flex flex-col">
   <div className="sticky top-4">
-    <MiniLeaderboard code={code} />
+    <MiniLeaderboard
+      code={code}
+      rotation={isRotationFormat}
+      matches={matches}
+      matchPlayers={matchPlayers}
+    />
+    {/* 📺 Infobildschirm (öffentlich, ohne Login) in neuem Fenster – z. B. für zweiten PC/TV */}
+    <a
+      href={`/s/${encodeURIComponent(code)}/tv`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-200"
+      title={`Infobildschirm öffnen: /s/${code}/tv`}
+    >
+      📺 Infobildschirm
+    </a>
     <MatchplayProgressStack
       tournament={(data as any)?.tournament}
       rounds={rounds}

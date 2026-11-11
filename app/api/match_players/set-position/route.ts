@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   if (!matchId) return NextResponse.json({ error: "match_id fehlt" }, { status: 400 });
   if (!playerId) return NextResponse.json({ error: "player_id fehlt" }, { status: 400 });
 
-  if (position !== null && (!Number.isFinite(position) || position < 1 || position > 8)) {
+  if (position !== null && (!Number.isFinite(position) || position < 1 || position > 99)) {
     return NextResponse.json({ error: "Ungültige Position" }, { status: 400 });
   }
 

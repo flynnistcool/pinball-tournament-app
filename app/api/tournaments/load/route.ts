@@ -11,8 +11,9 @@ async function handle(codeRaw: string) {
   const { data: t, error: tErr } = await sb
     .from("tournaments")
     .select(
-      "id, code, name, created_at, category, match_size, format, location_id, locations(name), status"
+      "id, code, name, created_at, category, match_size, format, location_id, locations(name), status, speech_round_enabled"
     )
+
     .eq("code", code)
     .single();
 

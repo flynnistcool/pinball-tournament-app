@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { matchPoints } from "@/lib/points";
 
 type MPRow = {
   player_id: string;
@@ -13,12 +14,9 @@ type MPRow = {
   };
 };
 
-function pointsFor(position: number, nPlayers: number) {
-  if (nPlayers <= 1) return 0;
-  if (nPlayers === 2) return position === 1 ? 2 : 0;
-  if (nPlayers === 3) return position === 1 ? 3 : position === 2 ? 1 : 0;
-  // default 4+
-  return position === 1 ? 4 : position === 2 ? 2 : position === 3 ? 1 : 0;
+// Punkte-Logik zentral in lib/points.ts (Rotation 5+ Spieler: N, N-2, N-3, ...)
+function pointsFor(position: number, nPlayers: number, format?: string | null) {
+  return matchPoints(position, nPlayers, format);
 }
 
 export async function POST(req: Request) {
@@ -153,7 +151,7 @@ sb
     if (pos === 1) wins[pid] = (wins[pid] ?? 0) + 1;
     if (pos <= 3) podiums[pid] = (podiums[pid] ?? 0) + 1;
 
-    const pts = pointsFor(pos, nPlayers);
+    const pts = pointsFor(pos, nPlayers, row.matches?.rounds?.format);
     pointsSum[pid] = (pointsSum[pid] ?? 0) + pts;
 
     
