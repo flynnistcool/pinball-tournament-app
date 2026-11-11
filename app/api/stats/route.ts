@@ -77,7 +77,7 @@ const [
           .eq("tournament_id", t.id),
 sb
   .from("rounds")
-  .select("id, number, status, format")
+  .select("id, number, status, format, elo_enabled")
   .eq("tournament_id", t.id),
     ]);
 

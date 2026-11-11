@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     await Promise.all([
       sb.from("players").select("id, name, active, profile_id").eq("tournament_id", t.id).order("created_at"),
       sb.from("machines").select("id, name, active, icon_emoji").eq("tournament_id", t.id).order("created_at"),
-      sb.from("rounds").select("id, format, number, status").eq("tournament_id", t.id).order("format").order("number"),
+      sb.from("rounds").select("id, format, number, status, elo_enabled").eq("tournament_id", t.id).order("format").order("number"),
     ]);
 
   if (pErr) return NextResponse.json({ error: `Players load failed: ${pErr.message}` }, { status: 500 });
@@ -64,12 +64,19 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     new Set((players ?? []).map((p: any) => p.profile_id).filter(Boolean))
   ) as string[];
   const { data: profiles } = profileIds.length
-    ? await sb.from("profiles").select("id, icon, color").in("id", profileIds)
+    ? await sb.from("profiles").select("id, icon, color, rating").in("id", profileIds)
     : { data: [] as any[] };
+
+  // Elo-Stand vor dem Turnier (Sicherung beim Turnierstart) – für Infobildschirm
+  const { data: startRatings } = await sb
+    .from("tournament_ratings")
+    .select("profile_id, rating_before")
+    .eq("tournament_id", t.id);
 
   return NextResponse.json({
     tournament: t,
     profiles: profiles ?? [],
+    start_ratings: startRatings ?? [],
     players: players ?? [],
     machines: machines ?? [],
     rounds: rounds ?? [],

@@ -3884,6 +3884,8 @@ return (
 function Stats({ code, tournamentName }: { code: string; tournamentName: string }) {
   const [rows, setRows] = useState<any[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
+  // ✅ Elo im Turnier ausgeschaltet (alle Runden elo_enabled=false) -> keine Elo-Veränderung anzeigen
+  const [eloOff, setEloOff] = useState(false);
 
   async function load() {
     const res = await fetch("/api/stats", {
@@ -3893,6 +3895,8 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
     });
     const j = await res.json();
     setRows(j.stats ?? []);
+    const rs = Array.isArray(j?.rounds) ? j.rounds : [];
+    setEloOff(rs.length > 0 && rs.every((r: any) => r?.elo_enabled === false));
 }
 
   useEffect(() => {
@@ -4049,7 +4053,9 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
 
                             {/* detail row */}
                             <div className="mt-0.5 text-[11px] tabular-nums text-neutral-600">
-                              {r.eloStart != null && r.eloEnd != null ? (
+                              {eloOff ? (
+                                <span className="text-neutral-400">Elo aus – nicht gewertet</span>
+                              ) : r.eloStart != null && r.eloEnd != null ? (
                                 <>
                                   {Math.round(r.eloStart)}{" "}
                                   <span className="mx-1">→</span>{" "}
@@ -9964,6 +9970,49 @@ async function setSpeechRoundEnabled(next: boolean) {
 
   const [useElo, setUseElo] = useState(true);
 
+  // ✅ Elo-Schalter gilt für das GANZE Turnier:
+  // Zustand aus den Runden übernehmen (sonst springt er beim Neuladen fälschlich auf "an").
+  // Gibt es noch keine Runden, bleibt die lokale Einstellung (gilt dann für neue Runden).
+  useEffect(() => {
+    const rs = (data?.rounds ?? []) as any[];
+    if (rs.length === 0) return;
+    setUseElo(rs.some((r) => r?.elo_enabled !== false));
+  }, [data?.rounds]);
+
+  // An/Aus für alle Runden setzen. Die automatische Elo-Neuberechnung
+  // (siehe eloBasis) bemerkt die Änderung und rechnet neu bzw. setzt bei "aus"
+  // alle Spieler auf ihren Elo-Stand vor dem Turnier zurück.
+  async function toggleTournamentElo() {
+    if (busy || locked) return;
+    const next = !useElo;
+    setUseElo(next);
+
+    const rs = ((data?.rounds ?? []) as any[]).filter(
+      (r) => (r?.elo_enabled !== false) !== next
+    );
+    if (rs.length === 0) return;
+
+    setBusy(true);
+    try {
+      for (const r of rs) {
+        const res = await fetch("/api/rounds/set-elo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roundId: r.id, eloEnabled: next }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j?.error ?? "Elo-Schalter konnte nicht gespeichert werden");
+        }
+      }
+    } catch (e: any) {
+      alert(e?.message ?? "Elo-Schalter konnte nicht gespeichert werden");
+    } finally {
+      setBusy(false);
+      await reloadAll();
+    }
+  }
+
 
 
 
@@ -10258,28 +10307,59 @@ async function registerFinalWin(playerId: string, winnerName: string) {
     location.href = "/t";
   }
 
+  // ✅ Elo automatisch neu berechnen, sobald sich die Elo-Grundlage ändert:
+  //    - eine Runde wird "finished"
+  //    - Platzierung in einer fertigen Runde wird nachträglich korrigiert
+  //    - Elo-Schalter einer fertigen Runde wird umgestellt
+  // Dazu merken wir uns die Platzierungen aller fertigen Runden und vergleichen.
+  // Vorläufige Punkte / Scores in laufenden Runden lösen nichts aus.
+  const eloBasisRef = useRef<string | null>(null);
+  const eloRecalcTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const eloBasis = useMemo(() => {
+    const finishedRounds = (rounds ?? []).filter((r: any) => r.status === "finished");
+    if (finishedRounds.length === 0) return "";
+    const finishedRoundIds = new Set(finishedRounds.map((r: any) => String(r.id)));
+    const matchRound: Record<string, string> = {};
+    for (const m of matches ?? []) {
+      if (finishedRoundIds.has(String((m as any).round_id))) matchRound[String(m.id)] = String((m as any).round_id);
+    }
+    const parts: string[] = finishedRounds.map(
+      (r: any) => `R${r.id}:${r.elo_enabled === false ? 0 : 1}`
+    );
+    for (const mp of matchPlayers ?? []) {
+      const rid = matchRound[String((mp as any).match_id)];
+      if (!rid) continue;
+      parts.push(`${(mp as any).match_id}/${(mp as any).player_id}=${(mp as any).position ?? "-"}`);
+    }
+    return parts.sort().join("|");
+  }, [rounds, matches, matchPlayers]);
+
   useEffect(() => {
     if (!data || locked) return;
 
-    const finishedCount = (rounds ?? []).filter(
-      (r: any) => r.status === "finished"
-    ).length;
-
     // Erstes Laden: nur den aktuellen Stand merken, noch nichts tun
-    if (finishedRoundsSeenRef.current === null) {
-      finishedRoundsSeenRef.current = finishedCount;
+    if (eloBasisRef.current === null) {
+      eloBasisRef.current = eloBasis;
       return;
     }
+    if (eloBasis === eloBasisRef.current) return;
+    eloBasisRef.current = eloBasis;
+    if (!eloBasis) return; // keine fertigen Runden -> nichts zu rechnen
 
-    // Wenn mehr fertige Runden als vorher -> Elo automatisch neu berechnen
-    if (finishedCount > finishedRoundsSeenRef.current) {
-      finishedRoundsSeenRef.current = finishedCount;
+    // Kurz warten, bis alle Plätze gespeichert sind -> dann EINMAL rechnen
+    if (eloRecalcTimerRef.current) clearTimeout(eloRecalcTimerRef.current);
+    eloRecalcTimerRef.current = setTimeout(() => {
+      eloRecalcTimerRef.current = null;
       recalcElo();
-    } else {
-      // Stand aktualisieren, falls z.B. neu geladen wurde
-      finishedRoundsSeenRef.current = finishedCount;
-    }
-  }, [rounds, data, locked]);
+    }, 2000);
+  }, [eloBasis, data, locked]);
+
+  useEffect(() => {
+    return () => {
+      if (eloRecalcTimerRef.current) clearTimeout(eloRecalcTimerRef.current);
+    };
+  }, []);
 
 
 useEffect(() => {
@@ -12726,15 +12806,12 @@ const tasksById = useMemo(() => {
         
   <div className="mt-2 flex justify-between gap-3 ml-auto">
   <span className="text-sm">
-    Elo für diese Runde berechnen
+    Elo für dieses Turnier berechnen
   </span>
 
   <button
     type="button"
-    onClick={() => {
-      if (busy || locked) return;
-      setUseElo((prev) => !prev);
-    }}
+    onClick={toggleTournamentElo}
     className={`relative inline-flex h-5 w-9 items-center rounded-full transition
       ${useElo ? "bg-emerald-500" : "bg-neutral-300"}
       ${busy || locked ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
@@ -12861,10 +12938,10 @@ const tasksById = useMemo(() => {
 
       {/* ⭐ Toggle in einer cleanen Zeile */}
       <div className="flex items-center gap-3 text-sm text-neutral-600">
-        <span className="whitespace-nowrap">Elo für diese Runde berechnen</span>
+        <span className="whitespace-nowrap">Elo für dieses Turnier berechnen</span>
         <button
           type="button"
-          onClick={() => setUseElo((prev) => !prev)}
+          onClick={toggleTournamentElo}
           disabled={busy || locked}
           className={`relative inline-flex h-5 w-9 items-center rounded-full transition
             ${useElo ? "bg-emerald-500" : "bg-neutral-300"}
@@ -13439,8 +13516,8 @@ const tasksById = useMemo(() => {
   <button
     type="button"
     disabled={busy || locked}
-    onClick={() => setUseElo((prev) => !prev)}
-    //onClick={toggleUseElo}
+    onClick={toggleTournamentElo}
+    title="Elo für das ganze Turnier an/aus"
     className={`text-xs sm:text-sm font-medium ${
       useElo ? "text-green-400" : "text-gray-500"
     }`}

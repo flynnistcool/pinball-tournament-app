@@ -19,8 +19,15 @@ const MAX_SCALE = 2; // bei wenigen Spielern darf vergrößert werden
 
 type Player = { id: string; name: string | null; active?: boolean; profile_id?: string | null };
 type Machine = { id: string; name: string | null; icon_emoji?: string | null };
-type Profile = { id: string; icon?: string | null; color?: string | null };
-type Round = { id: string; number: number; format: string | null; status: string | null };
+type Profile = { id: string; icon?: string | null; color?: string | null; rating?: number | null };
+type Round = {
+  id: string;
+  number: number;
+  format: string | null;
+  status: string | null;
+  elo_enabled?: boolean | null;
+};
+type StartRating = { profile_id: string; rating_before: number | null };
 type Match = { id: string; round_id: string; machine_id: string | null };
 type MatchPlayer = {
   match_id: string;
@@ -32,6 +39,7 @@ type PublicTournament = {
   tournament?: { name?: string | null; code?: string | null; format?: string | null; status?: string | null };
   players?: Player[];
   profiles?: Profile[];
+  start_ratings?: StartRating[];
   machines?: Machine[];
   rounds?: Round[];
   matches?: Match[];
@@ -59,6 +67,8 @@ type Row = {
   extra: number;
   total: number;
   place: number;
+  eloStart: number | null; // Elo vor dem Turnier (tournament_ratings)
+  eloNow: number | null; // aktuelle Elo im Profil (wird nach jeder fertigen Runde neu berechnet)
 };
 
 const scoreFmt = new Intl.NumberFormat("de-DE");
@@ -152,6 +162,13 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
 
     const profileById: Record<string, Profile> = {};
     for (const p of profiles) profileById[p.id] = p;
+    const startEloByProfile: Record<string, number> = {};
+    for (const sr of data?.start_ratings ?? []) {
+      const v = Number(sr.rating_before);
+      if (sr.profile_id && Number.isFinite(v)) startEloByProfile[sr.profile_id] = v;
+    }
+    // Elo im Turnier an? (Schalter gilt fürs ganze Turnier; ohne Runden: an)
+    const eloOn = rounds.length === 0 || rounds.some((r) => r.elo_enabled !== false);
     const playerName: Record<string, string> = {};
     for (const p of players) playerName[p.id] = String(p.name ?? "?");
     const machineById: Record<string, Machine> = {};
@@ -190,6 +207,9 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
         extra: e,
         total: r + e,
         place: 0,
+        eloStart: p.profile_id != null ? startEloByProfile[p.profile_id] ?? null : null,
+        eloNow:
+          prof?.rating != null && Number.isFinite(Number(prof.rating)) ? Number(prof.rating) : null,
       };
     });
     rowsUnsorted.sort((a, b) => b.total - a.total || b.real - a.real || a.name.localeCompare(b.name));
@@ -253,7 +273,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
       }
     }
 
-    return { rows, columns };
+    return { rows, columns, eloOn };
   }, [data, isRotation]);
 
   const tournamentName = data?.tournament?.name ?? "Turnier";
@@ -366,9 +386,9 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           {!data && !error ? (
             <div className="py-24 text-center text-2xl text-white/50">Lade Turnier …</div>
           ) : isRotation ? (
-            <RotationTable rows={view.rows} columns={view.columns} />
+            <RotationTable rows={view.rows} columns={view.columns} eloOn={view.eloOn} />
           ) : (
-            <LeaderboardOnly rows={view.rows} />
+            <LeaderboardOnly rows={view.rows} eloOn={view.eloOn} />
           )}
         </div>
       </div>
@@ -391,6 +411,34 @@ function PlayerAvatar({ row, size = "h-9 w-9 text-lg" }: { row: Row; size?: stri
   );
 }
 
+// Elo unter dem Spielernamen:
+// - immer die Elo vom Turnierstart
+// - bei Elo an und Veränderung: Start → aktuell (+/-Differenz), live nach jeder fertigen Runde
+function EloLine({ row, eloOn }: { row: Row; eloOn: boolean }) {
+  const start = row.eloStart != null ? Math.round(row.eloStart) : null;
+  const now = row.eloNow != null ? Math.round(row.eloNow) : null;
+  const base = start ?? now; // vor der ersten Runde gibt es evtl. noch keinen Startwert
+  if (base == null) return null;
+
+  const delta = eloOn && start != null && now != null ? now - start : 0;
+
+  return (
+    <div className="mt-0.5 text-[0.65em] font-medium tabular-nums text-white/45">
+      Elo {base}
+      {delta !== 0 ? (
+        <>
+          <span className="mx-1 text-white/30">→</span>
+          <span className="text-white/80">{now}</span>
+          <span className={`ml-1.5 font-bold ${delta > 0 ? "text-emerald-300" : "text-rose-300"}`}>
+            ({delta > 0 ? "+" : ""}
+            {delta})
+          </span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function PlaceBadge({ place, total }: { place: number; total: number }) {
   const p = total > 0 ? podium(place) : null;
   return (
@@ -404,7 +452,7 @@ function PlaceBadge({ place, total }: { place: number; total: number }) {
   );
 }
 
-function RotationTable({ rows, columns }: { rows: Row[]; columns: Column[] }) {
+function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[]; eloOn: boolean }) {
   return (
     <div className="overflow-hidden rounded-3xl bg-white/[0.04] ring-1 ring-white/10 shadow-2xl backdrop-blur">
       {/* feste Basisgröße – das Einpassen auf den Bildschirm übernimmt scale() */}
@@ -474,9 +522,12 @@ function RotationTable({ rows, columns }: { rows: Row[]; columns: Column[] }) {
                   <PlaceBadge place={r.place} total={r.total} />
                 </td>
                 <td className="px-3 py-2">
-                  <div className="flex max-w-[13em] items-center gap-3">
+                  <div className="flex max-w-[15em] items-center gap-3">
                     <PlayerAvatar row={r} />
-                    <span className="truncate font-bold">{r.name}</span>
+                    <div className="min-w-0">
+                      <div className="truncate font-bold leading-tight">{r.name}</div>
+                      <EloLine row={r} eloOn={eloOn} />
+                    </div>
                   </div>
                 </td>
                 {columns.map((c) => {
@@ -539,7 +590,7 @@ function RotationTable({ rows, columns }: { rows: Row[]; columns: Column[] }) {
   );
 }
 
-function LeaderboardOnly({ rows }: { rows: Row[] }) {
+function LeaderboardOnly({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
   return (
     <div className="w-[52rem] overflow-hidden rounded-3xl bg-white/[0.04] ring-1 ring-white/10 shadow-2xl">
       <table className="w-full border-collapse text-[26px]">
@@ -569,7 +620,10 @@ function LeaderboardOnly({ rows }: { rows: Row[] }) {
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-3">
                     <PlayerAvatar row={r} size="h-11 w-11 text-xl" />
-                    <span className="truncate font-bold">{r.name}</span>
+                    <div className="min-w-0">
+                      <div className="truncate font-bold leading-tight">{r.name}</div>
+                      <EloLine row={r} eloOn={eloOn} />
+                    </div>
                   </div>
                 </td>
                 <td className="px-6 py-2.5 text-right text-[1.2em] font-extrabold tabular-nums">{r.real}</td>
