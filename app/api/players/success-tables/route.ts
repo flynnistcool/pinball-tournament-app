@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+// Lange ID-Listen in Paketen + seitenweise laden (sonst "fetch failed" / 1000-Zeilen-Limit)
+import { fetchAllIn } from "@/lib/supabaseChunks";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -38,11 +40,14 @@ export async function POST(req: Request) {
   }
 
   // 2) Turniere laden (Name/Datum + Location für linke Tabelle "global" pro (Location+Maschine))
-  const { data: tRows, error: tErr } = await sb
-    .from("tournaments")
-    // locations(name) setzt voraus, dass tournaments.location_id -> locations.id als FK existiert
-    .select("id, name, created_at, location_id, locations(name)")
-    .in("id", tournamentIds.length ? tournamentIds : ["__none__"]);
+  const { data: tRows, error: tErr } = await fetchAllIn<any>(tournamentIds as string[], (chunk) =>
+    sb
+      .from("tournaments")
+      // locations(name) setzt voraus, dass tournaments.location_id -> locations.id als FK existiert
+      .select("id, name, created_at, location_id, locations(name)")
+      .in("id", chunk)
+      .order("id")
+  );
 
   if (tErr) return noStoreJson({ error: tErr.message }, { status: 500 });
 
@@ -50,10 +55,9 @@ export async function POST(req: Request) {
   for (const t of tRows ?? []) tournamentInfoById.set(t.id, t);
 
   // 3) Für "Turnier-Highscores": alle rounds+matches dieser Turniere holen
-  const { data: rounds, error: rErr } = await sb
-    .from("rounds")
-    .select("id, tournament_id")
-    .in("tournament_id", tournamentIds.length ? tournamentIds : ["__none__"]);
+  const { data: rounds, error: rErr } = await fetchAllIn<any>(tournamentIds as string[], (chunk) =>
+    sb.from("rounds").select("id, tournament_id").in("tournament_id", chunk).order("id")
+  );
 
   if (rErr) return noStoreJson({ error: rErr.message }, { status: 500 });
 
@@ -65,10 +69,9 @@ export async function POST(req: Request) {
     return noStoreJson({ ok: true, machineBests: [], tournaments: [] });
   }
 
-  const { data: matches, error: mErr } = await sb
-    .from("matches")
-    .select("id, round_id, machine_id")
-    .in("round_id", roundIds);
+  const { data: matches, error: mErr } = await fetchAllIn<any>(roundIds, (chunk) =>
+    sb.from("matches").select("id, round_id, machine_id").in("round_id", chunk).order("id")
+  );
 
   if (mErr) return noStoreJson({ error: mErr.message }, { status: 500 });
 
@@ -86,19 +89,22 @@ export async function POST(req: Request) {
   }
 
   // 4) match_players für diese Matches (für Turnier-Highscores)
-  const { data: mpRows, error: mpErr } = await sb
-    .from("match_players")
-    .select("match_id, player_id, score")
-    .in("match_id", matchIds)
-    .not("score", "is", null);
+  const { data: mpRows, error: mpErr } = await fetchAllIn<any>(matchIds, (chunk) =>
+    sb
+      .from("match_players")
+      .select("match_id, player_id, score")
+      .in("match_id", chunk)
+      .not("score", "is", null)
+      .order("match_id")
+      .order("player_id")
+  );
 
   if (mpErr) return noStoreJson({ error: mpErr.message }, { status: 500 });
 
-  const uniquePlayerIds = Array.from(new Set((mpRows ?? []).map((x: any) => x.player_id)));
-  const { data: allPlayers, error: apErr } = await sb
-    .from("players")
-    .select("id, profile_id, name")
-    .in("id", uniquePlayerIds.length ? uniquePlayerIds : ["__none__"]);
+  const uniquePlayerIds = Array.from(new Set((mpRows ?? []).map((x: any) => x.player_id))) as string[];
+  const { data: allPlayers, error: apErr } = await fetchAllIn<any>(uniquePlayerIds, (chunk) =>
+    sb.from("players").select("id, profile_id, name").in("id", chunk).order("id")
+  );
 
   if (apErr) return noStoreJson({ error: apErr.message }, { status: 500 });
 
@@ -108,14 +114,15 @@ export async function POST(req: Request) {
   }
 
   // Maschinen-Namen
-  const uniqueMachineIds = Array.from(new Set((matches ?? []).map((m: any) => m.machine_id).filter(Boolean)));
+  const uniqueMachineIds = Array.from(
+    new Set((matches ?? []).map((m: any) => m.machine_id).filter(Boolean))
+  ) as string[];
   const machineNameById = new Map<string, string>();
   const machineEmojiById = new Map<string, string | null>();
   if (uniqueMachineIds.length) {
-    const { data: macRows, error: macErr } = await sb
-      .from("machines")
-      .select("id, name, icon_emoji")
-      .in("id", uniqueMachineIds);
+    const { data: macRows, error: macErr } = await fetchAllIn<any>(uniqueMachineIds, (chunk) =>
+      sb.from("machines").select("id, name, icon_emoji").in("id", chunk).order("id")
+    );
 
     if (macErr) return noStoreJson({ error: macErr.message }, { status: 500 });
 
@@ -170,28 +177,30 @@ export async function POST(req: Request) {
   // B) Badge "Highscore": global beste Score pro (Location + Maschine)
   // Dafür holen wir ALLE Matches dieser Maschinen (inkl. round->tournament->location) + match_players scores
   // ---------
-  const { data: allMatchesForMachines, error: amErr } = await sb
-    .from("matches")
-    .select("id, machine_id, round_id")
-    .in("machine_id", machineIdsForLeft);
+  const { data: allMatchesForMachines, error: amErr } = await fetchAllIn<any>(machineIdsForLeft, (chunk) =>
+    sb.from("matches").select("id, machine_id, round_id").in("machine_id", chunk).order("id")
+  );
 
   if (amErr) return noStoreJson({ error: amErr.message }, { status: 500 });
 
-  const allMatchIdsForMachines = (allMatchesForMachines ?? []).map((m: any) => m.id);
+  const allMatchIdsForMachines = (allMatchesForMachines ?? []).map((m: any) => m.id) as string[];
 
-  const { data: mpAll, error: mpAllErr } = await sb
-    .from("match_players")
-    .select("match_id, player_id, score")
-    .in("match_id", allMatchIdsForMachines.length ? allMatchIdsForMachines : ["__none__"])
-    .not("score", "is", null);
+  const { data: mpAll, error: mpAllErr } = await fetchAllIn<any>(allMatchIdsForMachines, (chunk) =>
+    sb
+      .from("match_players")
+      .select("match_id, player_id, score")
+      .in("match_id", chunk)
+      .not("score", "is", null)
+      .order("match_id")
+      .order("player_id")
+  );
 
   if (mpAllErr) return noStoreJson({ error: mpAllErr.message }, { status: 500 });
 
-  const uniquePlayerIdsAll = Array.from(new Set((mpAll ?? []).map((x: any) => x.player_id)));
-  const { data: playersAll, error: paErr } = await sb
-    .from("players")
-    .select("id, profile_id")
-    .in("id", uniquePlayerIdsAll.length ? uniquePlayerIdsAll : ["__none__"]);
+  const uniquePlayerIdsAll = Array.from(new Set((mpAll ?? []).map((x: any) => x.player_id))) as string[];
+  const { data: playersAll, error: paErr } = await fetchAllIn<any>(uniquePlayerIdsAll, (chunk) =>
+    sb.from("players").select("id, profile_id").in("id", chunk).order("id")
+  );
 
   if (paErr) return noStoreJson({ error: paErr.message }, { status: 500 });
 
@@ -204,12 +213,11 @@ export async function POST(req: Request) {
   // Dazu: round_id -> tournament_id -> location_id/name.
   const allRoundIds = Array.from(
     new Set((allMatchesForMachines ?? []).map((m: any) => m.round_id).filter(Boolean))
-  );
+  ) as string[];
 
-  const { data: allRounds, error: arErr } = await sb
-    .from("rounds")
-    .select("id, tournament_id")
-    .in("id", allRoundIds.length ? allRoundIds : ["__none__"]);
+  const { data: allRounds, error: arErr } = await fetchAllIn<any>(allRoundIds, (chunk) =>
+    sb.from("rounds").select("id, tournament_id").in("id", chunk).order("id")
+  );
 
   if (arErr) return noStoreJson({ error: arErr.message }, { status: 500 });
 
@@ -218,12 +226,13 @@ export async function POST(req: Request) {
     if (r.id && r.tournament_id) tournamentIdByRoundAll.set(r.id, r.tournament_id);
   }
 
-  const allTournamentIds = Array.from(new Set((allRounds ?? []).map((r: any) => r.tournament_id).filter(Boolean)));
+  const allTournamentIds = Array.from(
+    new Set((allRounds ?? []).map((r: any) => r.tournament_id).filter(Boolean))
+  ) as string[];
 
-  const { data: allTournaments, error: atErr } = await sb
-    .from("tournaments")
-    .select("id, location_id, locations(name)")
-    .in("id", allTournamentIds.length ? allTournamentIds : ["__none__"]);
+  const { data: allTournaments, error: atErr } = await fetchAllIn<any>(allTournamentIds, (chunk) =>
+    sb.from("tournaments").select("id, location_id, locations(name)").in("id", chunk).order("id")
+  );
 
   if (atErr) return noStoreJson({ error: atErr.message }, { status: 500 });
 
