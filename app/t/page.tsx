@@ -7729,6 +7729,16 @@ disabled={
       .map((pid) => mpByPlayerId.get(pid))
       .filter(Boolean) as any[];
 
+    // ✅ Rotation: aktiver Spieler am Flipper = erster von oben ohne gespeicherten Score
+    // (zu Rundenbeginn der oberste; haben alle einen Score, ist niemand mehr aktiv)
+    const rotationActivePlayerId: string | null =
+      isRotationFormat && !locked
+        ? (orderedMps.find(
+            (x: any) =>
+              !(x?.score != null && x?.score !== "" && Number.isFinite(Number(x.score)))
+          )?.player_id ?? null)
+        : null;
+
     // =========================
     // 🧑‍🤝‍🧑 DYP Match Ansicht (2 Team-Zeilen)
     // =========================
@@ -7915,6 +7925,10 @@ disabled={
                 (mp as any)?.score !== "" &&
                 Number.isFinite(Number((mp as any).score));
 
+              // ✅ Rotation: dieser Spieler ist gerade am Flipper dran -> blau
+              const isActiveAtMachine =
+                rotationActivePlayerId != null && mp.player_id === rotationActivePlayerId;
+
               return (
                 <SortablePlayerRow
                   key={k(mp.match_id, mp.player_id)}
@@ -7928,6 +7942,8 @@ disabled={
                         ? "bg-amber-200 border-amber-300"
                         : hasSavedScore
                         ? "bg-emerald-50 border-emerald-200"
+                        : isActiveAtMachine
+                        ? "bg-sky-50 border-sky-400 ring-2 ring-sky-300/70"
                         : "bg-white")
                     }
                   >
@@ -7944,6 +7960,11 @@ disabled={
     />
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
+    {isActiveAtMachine ? (
+      <span className="inline-flex items-center rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-semibold text-white animate-pulse">
+        ▶ spielt
+      </span>
+    ) : null}
     {isSaving ? (
       <span className="text-xs text-neutral-500">speichere…</span>
     ) : null}

@@ -34,6 +34,7 @@ type MatchPlayer = {
   player_id: string;
   position: number | null;
   score: number | string | null;
+  start_position?: number | null;
 };
 type PublicTournament = {
   tournament?: { name?: string | null; code?: string | null; format?: string | null; status?: string | null };
@@ -54,6 +55,7 @@ type Column = {
   machineName: string;
   machineIcon: string | null;
   finished: boolean;
+  activePlayerId: string | null; // spielt gerade an diesem Flipper
   highscore: number | null;
   holder: string;
   cells: Record<string, Cell>;
@@ -260,12 +262,21 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           .join(" & ");
         const machine = m.machine_id ? machineById[m.machine_id] : undefined;
 
+        // Aktiver Spieler = erster in Startreihenfolge ohne Score (wie in der Admin-Ansicht)
+        const activePlayerId =
+          data?.tournament?.status === "finished"
+            ? null
+            : [...list]
+                .sort((a, b) => (a.start_position ?? 9999) - (b.start_position ?? 9999))
+                .find((mp) => toScore(mp.score) == null)?.player_id ?? null;
+
         columns.push({
           matchId: m.id,
           roundNo: roundById[m.round_id]?.number ?? 0,
           machineName: String(machine?.name ?? "—"),
           machineIcon: (machine?.icon_emoji ?? "").trim() || null,
           finished: list.length > 0 && list.every((x) => x.position != null),
+          activePlayerId,
           highscore,
           holder,
           cells,
@@ -532,6 +543,19 @@ function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[
                 </td>
                 {columns.map((c) => {
                   const cell = c.cells[r.id];
+                  if (!cell && c.activePlayerId === r.id) {
+                    // ▶ spielt gerade an diesem Flipper
+                    return (
+                      <td key={c.matchId} className="px-1.5 py-1.5 text-center">
+                        <div className="mx-auto flex w-[7.5em] flex-col items-center justify-center rounded-xl bg-sky-500/20 px-2 py-1 ring-2 ring-sky-400/80 shadow-[0_0_16px_rgba(56,189,248,0.45)]">
+                          <span className="animate-pulse text-[1.1em] font-extrabold text-sky-300">▶</span>
+                          <span className="text-[0.65em] font-semibold uppercase tracking-wider text-sky-200">
+                            spielt
+                          </span>
+                        </div>
+                      </td>
+                    );
+                  }
                   if (!cell) {
                     return (
                       <td key={c.matchId} className="px-2 py-2 text-center text-white/15">
