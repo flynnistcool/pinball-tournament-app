@@ -39,6 +39,7 @@ import { PointsSystemButton, PointsSchemeLine, PointsGainBadge } from "@/compone
 import VersionBadge from "@/components/VersionBadge";
 import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
+import ThemeToggle from "@/components/ThemeToggle";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
 
@@ -9298,7 +9299,8 @@ if (joined)
   return (
     <div className="grid gap-4 grid-cols-1">
       {/* 🔸 Dein Header oben rechts (wie in AdminHome) */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <ThemeToggle />
         <div className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 bg-white/60 text-xs text-neutral-600 shadow-sm">
           <span className="flex items-center gap-1 px-1">
             <span>👤</span>
@@ -9480,7 +9482,8 @@ if (joined)
     <div className="grid gap-4 grid-cols-1">
 
             {/* 🔸 Neuer Header oben rechts mit Logout */}
-<div className="flex justify-end">
+<div className="flex items-center justify-end gap-2">
+  <ThemeToggle />
   <div className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 bg-white/60 text-xs text-neutral-600 shadow-sm">
     <span className="flex items-center gap-1 px-1">
       <span>👤</span>

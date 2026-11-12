@@ -1,0 +1,121 @@
+/* 🌙 Dunkler Modus fürs Admin-Programm (/t)
+ *
+ * Greift NUR, wenn <html> die Klasse "pb-dark" hat (Schalter components/ThemeToggle.tsx,
+ * Startwert per Skript in app/layout.tsx – nur auf /t). Heller Modus bleibt unverändert.
+ *
+ * Idee: statt tausende Tailwind-Klassen einzeln umzubauen, werden die häufigsten Grau-/Weiß-
+ * Klassen hier zentral auf dunkle Farben (Farbwelt der TV-Seite) umgebogen.
+ * Bunte Klassen (blau, grün, …) bleiben wie sie sind. Weiße SCHRIFT (text-white) bleibt weiß.
+ */
+
+html.pb-dark {
+  color-scheme: dark;
+  --pbd-bg: #0b1020; /* Seitenhintergrund */
+  --pbd-surface: #161a2e; /* Karten (bg-white) */
+  --pbd-surface-rgb: 22 26 46;
+  --pbd-n50: #12162a;
+  --pbd-n50-rgb: 18 22 42;
+  --pbd-n100: #1e2238;
+  --pbd-n200: #2a2f4a;
+  --pbd-n300: #3a4060;
+  --pbd-n400: #4b5275;
+  --pbd-border: #2c3150;
+  --pbd-border-strong: #3b4166;
+  --pbd-accent: #6366f1; /* aktive Reiter usw. (statt Schwarz) – wie auf der TV-Seite */
+}
+
+/* Seite */
+html.pb-dark body,
+html.pb-dark body.bg-neutral-50 {
+  background-color: var(--pbd-bg);
+  background-image: radial-gradient(120% 60% at 50% 0%, #1b1c45 0%, transparent 70%);
+  background-attachment: fixed;
+  color: #e5e7eb;
+}
+
+/* Standard-Rahmenfarbe (Klasse "border" ohne Farbe) – :where() = schwächer als Farbklassen */
+:where(html.pb-dark) *,
+:where(html.pb-dark) ::before,
+:where(html.pb-dark) ::after {
+  border-color: var(--pbd-border);
+}
+
+/* Eingabefelder ohne eigene Hintergrundfarbe */
+:where(html.pb-dark) input,
+:where(html.pb-dark) select,
+:where(html.pb-dark) textarea {
+  background-color: var(--pbd-n50);
+  color: #e5e7eb;
+}
+html.pb-dark input::placeholder,
+html.pb-dark textarea::placeholder {
+  color: #6b7190;
+}
+
+/* ── Hintergründe ───────────────────────────────────────────── */
+html.pb-dark .bg-white { background-color: var(--pbd-surface); }
+html.pb-dark .bg-white\/95 { background-color: rgb(var(--pbd-surface-rgb) / 0.95); }
+html.pb-dark .bg-white\/85 { background-color: rgb(var(--pbd-surface-rgb) / 0.85); }
+html.pb-dark .bg-white\/70 { background-color: rgb(var(--pbd-surface-rgb) / 0.7); }
+html.pb-dark .bg-white\/60 { background-color: rgb(var(--pbd-surface-rgb) / 0.6); }
+
+html.pb-dark .bg-neutral-50,
+html.pb-dark .bg-gray-50 { background-color: var(--pbd-n50); }
+html.pb-dark .bg-neutral-50\/80 { background-color: rgb(var(--pbd-n50-rgb) / 0.8); }
+html.pb-dark .bg-neutral-50\/70 { background-color: rgb(var(--pbd-n50-rgb) / 0.7); }
+html.pb-dark .bg-neutral-50\/60 { background-color: rgb(var(--pbd-n50-rgb) / 0.6); }
+html.pb-dark .bg-neutral-50\/50 { background-color: rgb(var(--pbd-n50-rgb) / 0.5); }
+html.pb-dark .bg-neutral-100,
+html.pb-dark .bg-gray-100 { background-color: var(--pbd-n100); }
+html.pb-dark .bg-neutral-200,
+html.pb-dark .bg-gray-200 { background-color: var(--pbd-n200); }
+html.pb-dark .bg-neutral-300 { background-color: var(--pbd-n300); }
+html.pb-dark .bg-neutral-400 { background-color: var(--pbd-n400); }
+
+/* dunkle Knöpfe (bg-neutral-900/800/700, bg-black) würden im Dunkeln verschwinden */
+html.pb-dark .bg-neutral-900,
+html.pb-dark .bg-neutral-800 { background-color: #3b3f63; }
+html.pb-dark .bg-neutral-700 { background-color: #4a4f78; }
+html.pb-dark .bg-black { background-color: var(--pbd-accent); }
+
+html.pb-dark .from-white { --tw-gradient-from: var(--pbd-surface) var(--tw-gradient-from-position); --tw-gradient-to: rgb(var(--pbd-surface-rgb) / 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+html.pb-dark .to-white { --tw-gradient-to: var(--pbd-surface) var(--tw-gradient-to-position); }
+html.pb-dark .from-neutral-50 { --tw-gradient-from: var(--pbd-n50) var(--tw-gradient-from-position); --tw-gradient-to: rgb(var(--pbd-n50-rgb) / 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+
+/* Hover / Active */
+html.pb-dark .hover\:bg-white:hover,
+html.pb-dark .hover\:bg-neutral-50:hover { background-color: var(--pbd-n100); }
+html.pb-dark .hover\:bg-neutral-100:hover,
+html.pb-dark .active\:bg-neutral-100:active { background-color: var(--pbd-n200); }
+html.pb-dark .hover\:bg-neutral-200:hover { background-color: var(--pbd-n300); }
+html.pb-dark .hover\:bg-neutral-800:hover,
+html.pb-dark .hover\:bg-neutral-700:hover { background-color: #555b88; }
+
+/* ── Schrift ────────────────────────────────────────────────── */
+html.pb-dark .text-black,
+html.pb-dark .text-neutral-900,
+html.pb-dark .text-gray-900 { color: #f3f4f6; }
+html.pb-dark .text-neutral-800,
+html.pb-dark .text-gray-800 { color: #e5e7eb; }
+html.pb-dark .text-neutral-700,
+html.pb-dark .text-gray-700 { color: #d1d5db; }
+html.pb-dark .text-neutral-600,
+html.pb-dark .text-gray-600 { color: #b4b9c8; }
+html.pb-dark .text-neutral-500,
+html.pb-dark .text-gray-500 { color: #9aa0b4; }
+html.pb-dark .text-neutral-400,
+html.pb-dark .text-gray-400 { color: #7c8299; }
+html.pb-dark .text-neutral-300 { color: #5c627a; }
+html.pb-dark .hover\:text-neutral-700:hover,
+html.pb-dark .hover\:text-neutral-800:hover { color: #f3f4f6; }
+
+/* ── Rahmen / Ringe ─────────────────────────────────────────── */
+html.pb-dark .border-neutral-100,
+html.pb-dark .border-neutral-200,
+html.pb-dark .border-gray-200 { border-color: var(--pbd-border); }
+html.pb-dark .border-neutral-300,
+html.pb-dark .border-neutral-400 { border-color: var(--pbd-border-strong); }
+html.pb-dark .border-neutral-900 { border-color: #8b90b8; }
+html.pb-dark .ring-neutral-200,
+html.pb-dark .ring-neutral-300 { --tw-ring-color: var(--pbd-border-strong); }
+html.pb-dark .ring-neutral-900 { --tw-ring-color: #8b90b8; }

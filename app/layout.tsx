@@ -1,5 +1,6 @@
 // @ts-nocheck
 import "./globals.css";
+import "./dark-mode.css";
 // import RoutePill from "@/components/RoutePill";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -39,7 +40,16 @@ export const viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="de">
+    <html lang="de" suppressHydrationWarning>
+      <head>
+        {/* 🌙 Dunkler Modus (nur Admin-Programm /t): vor dem ersten Zeichnen setzen, damit nichts hell aufblitzt */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              'try{if(localStorage.getItem("pb_theme")==="dark"&&(location.pathname==="/t"||location.pathname.indexOf("/t/")===0))document.documentElement.classList.add("pb-dark")}catch(e){}',
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-neutral-50 text-neutral-900">
         {/*
           Mobile-Polish:
