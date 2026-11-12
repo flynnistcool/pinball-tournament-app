@@ -119,6 +119,179 @@ function medalForPlace(place: number) {
   return place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
 }
 
+// ✅ Kategorien, die es wirklich gibt (alle Turniere, Schreibweisen zusammengefasst)
+type CategoryInfo = { name: string; count: number; finished: number; lastUsed: string | null };
+function useExistingCategories(enabled = true) {
+  const [cats, setCats] = useState<CategoryInfo[]>([]);
+  const reload = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/tournaments/categories?_ts=${Date.now()}`, { cache: "no-store" });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) setCats(Array.isArray(j.categories) ? j.categories : []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    if (enabled) reload();
+  }, [enabled, reload]);
+  return { cats, reload };
+}
+
+// Vorschlags-Chips für Kategorien (Klick übernimmt die exakte Schreibweise)
+function CategoryChips({
+  cats,
+  value,
+  onPick,
+}: {
+  cats: CategoryInfo[];
+  value: string;
+  onPick: (c: string) => void;
+}) {
+  if (!cats.length) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="mr-1 text-neutral-500">Vorhandene Kategorien:</span>
+      {cats.map((c) => {
+        const active = value.trim().toLowerCase() === c.name.toLowerCase();
+        return (
+          <button
+            key={c.name}
+            type="button"
+            onClick={() => onPick(c.name)}
+            title={`${c.count} Turnier${c.count === 1 ? "" : "e"} (${c.finished} beendet)`}
+            className={
+              "rounded-full px-2.5 py-1 transition " +
+              (active ? "bg-neutral-900 text-white" : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200")
+            }
+          >
+            {c.name} <span className={active ? "text-white/60" : "text-neutral-400"}>{c.count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ✏️ Dialog: NUR Name + Kategorie eines (beendeten) Turniers ändern
+function EditTournamentMetaDialog({
+  open,
+  code,
+  initialName,
+  initialCategory,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  code: string;
+  initialName: string;
+  initialCategory: string;
+  onClose: () => void;
+  onSaved: (t: { name: string; category: string | null }) => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const [cat, setCat] = useState(initialCategory);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const { cats } = useExistingCategories(open);
+
+  useEffect(() => {
+    if (open) {
+      setName(initialName);
+      setCat(initialCategory);
+      setErr(null);
+    }
+  }, [open, initialName, initialCategory]);
+
+  if (!open) return null;
+
+  const changed = name.trim() !== initialName.trim() || cat.trim() !== initialCategory.trim();
+  const catIsNew =
+    cat.trim().length > 0 && !cats.some((c) => c.name.toLowerCase() === cat.trim().toLowerCase());
+
+  async function save() {
+    if (!name.trim()) {
+      setErr("Der Name darf nicht leer sein.");
+      return;
+    }
+    const lines = [];
+    if (name.trim() !== initialName.trim()) lines.push(`Name: „${initialName}“ → „${name.trim()}“`);
+    if (cat.trim() !== initialCategory.trim())
+      lines.push(`Kategorie: „${initialCategory || "—"}“ → „${cat.trim() || "—"}“`);
+    if (!confirm(`Turnier ${code} wirklich ändern?\n\n${lines.join("\n")}\n\nErgebnisse, Elo und Turnierpunkte bleiben unverändert.`))
+      return;
+
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/tournaments/update-meta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, name, category: cat }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) {
+        setErr(j?.error ?? "Speichern fehlgeschlagen");
+        return;
+      }
+      onSaved({ name: j.tournament?.name ?? name.trim(), category: j.tournament?.category ?? null });
+      onClose();
+    } catch {
+      setErr("Netzwerkfehler beim Speichern");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-semibold">✏️ Name / Kategorie ändern</div>
+            <div className="text-xs text-neutral-500">
+              Turnier <span className="font-mono">{code}</span> · Ergebnisse, Elo und Turnierpunkte bleiben unverändert.
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-neutral-500 hover:bg-neutral-100">
+            ✕
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-4">
+          <div>
+            <div className="mb-1 text-sm text-neutral-600">Turniername</div>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div>
+            <div className="mb-1 text-sm text-neutral-600">Kategorie / Serie</div>
+            <Input value={cat} onChange={(e) => setCat(e.target.value)} placeholder="z.B. Chill-Turnier" />
+            <CategoryChips cats={cats} value={cat} onPick={setCat} />
+            {catIsNew ? (
+              <div className="mt-1.5 text-xs text-amber-700">
+                Hinweis: „{cat.trim()}“ ist eine <b>neue</b> Kategorie. Das Turnier zählt dann in einer eigenen Serie.
+              </div>
+            ) : null}
+          </div>
+          {err ? <div className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{err}</div> : null}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Abbrechen
+          </Button>
+          <Button onClick={save} disabled={saving || !changed}>
+            {saving ? "Speichere…" : "Speichern"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ✅ Turnierpunkte aufgeschlüsselt: "6 + 2 🔥" wenn ein Superfinale-Bonus enthalten ist
 // tp = gespeicherte Turnierpunkte (inkl. Bonus), bonus = Superfinale-Anteil
 function TpWithBonus({ tp, bonus }: { tp: number; bonus: number }) {
@@ -8967,17 +9140,16 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   [archive]
 );
 
-  const existingCategories = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (archive ?? [])
-            .map((t) => t.category)
-            .filter((c): c is string => !!c && c.trim().length > 0)
-        )
-      ),
-    [archive]
-  );
+  // ✅ Kategorie-Vorschläge: nur Kategorien, die es wirklich gibt (alle Turniere aus der DB,
+  //    Schreibweisen zusammengefasst) – statt nur aus den neuesten 100 Archiv-Einträgen
+  const { cats: existingCategoryInfos, reload: reloadExistingCategories } = useExistingCategories(true);
+
+  // ✏️ Archiv: Name/Kategorie eines beendeten Turniers ändern
+  const [editArchiveTournament, setEditArchiveTournament] = useState<{
+    code: string;
+    name: string;
+    category: string;
+  } | null>(null);
 
   const [locations, setLocations] = useState<Location[]>([]);
 
@@ -9476,23 +9648,7 @@ if (joined)
                   placeholder="z.B. Liga 2025, Monatsserie, Fun-Cup"
                 />
 
-                {existingCategories.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-neutral-600">
-                    <span className="mr-1 text-neutral-500">
-                      Vorhandene Kategorien:
-                    </span>
-                    {existingCategories.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        className="rounded-full bg-neutral-100 px-2 py-1 hover:bg-neutral-200"
-                        onClick={() => setCategory(cat)}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <CategoryChips cats={existingCategoryInfos} value={category} onPick={setCategory} />
               </div>
 
               <div>
@@ -9624,8 +9780,25 @@ if (joined)
                     className="grid grid-cols-1 sm:grid-cols-12 gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
                               cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition"
                   >
-                    <div className="sm:col-span-4 font-medium truncate">
-                      {t.name}
+                    <div className="sm:col-span-4 flex min-w-0 items-center gap-2 font-medium">
+                      <span className="truncate">{t.name}</span>
+                      {t.status === "finished" && isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation(); // nicht das Turnier öffnen
+                            setEditArchiveTournament({
+                              code: t.code,
+                              name: t.name ?? "",
+                              category: t.category ?? "",
+                            });
+                          }}
+                          className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700"
+                          title="Name / Kategorie ändern"
+                        >
+                          ✏️
+                        </button>
+                      ) : null}
                     </div>
 
                     <div className="sm:col-span-3">
@@ -9681,6 +9854,18 @@ if (joined)
                   </div>
                 )}
               </div>
+
+              <EditTournamentMetaDialog
+                open={!!editArchiveTournament}
+                code={editArchiveTournament?.code ?? ""}
+                initialName={editArchiveTournament?.name ?? ""}
+                initialCategory={editArchiveTournament?.category ?? ""}
+                onClose={() => setEditArchiveTournament(null)}
+                onSaved={() => {
+                  loadArchive();
+                  reloadExistingCategories();
+                }}
+              />
             </div>
           ) : tab === "elimination" ? (
             // 👇 NEUER Platzhalter für deinen Modus
@@ -10108,6 +10293,8 @@ async function setSpeechRoundEnabled(next: boolean) {
   const superFinalRunning = !!(finalState && finalState.status !== "finished");
 
   const [useElo, setUseElo] = useState(true);
+  // ✏️ Name/Kategorie eines beendeten Turniers ändern (Dialog)
+  const [editMetaOpen, setEditMetaOpen] = useState(false);
 
   // ✅ Elo-Schalter gilt für das GANZE Turnier:
   // Zustand aus den Runden übernehmen (sonst springt er beim Neuladen fälschlich auf "an").
@@ -12665,139 +12852,118 @@ const tasksById = useMemo(() => {
       <Card>
         <CardHeader>
 {/* ===== TURNIER-HEADER START ===== */}
-<div className="mb-4 rounded-xl border border-neutral-200  p-3 shadow-sm">
-  {/* Zeile 1: Name + Status rechts */}
-  <div className="flex items-center justify-between gap-4">
-    <h2 className="text-2xl font-semibold">
-      {data?.tournament?.name}
-    </h2>
+<div className="mb-4 overflow-hidden rounded-2xl border border-neutral-200 shadow-sm">
+  {/* Kopf: Name + Status (Name/Kategorie bei beendeten Turnieren änderbar) */}
+  <div className="flex flex-wrap items-start justify-between gap-3 bg-gradient-to-r from-neutral-50 to-white px-4 pb-3 pt-4">
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="truncate text-2xl font-semibold leading-tight">{data?.tournament?.name}</h2>
+        {isFinished && isAdmin ? (
+          <button
+            type="button"
+            onClick={() => setEditMetaOpen(true)}
+            className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
+            title="Name / Kategorie dieses beendeten Turniers ändern"
+          >
+            ✏️ Name / Kategorie
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
+        <span>🏷️ {cat || <span className="italic">keine Kategorie</span>}</span>
+        {data?.tournament?.locations?.name ? <span>📍 {data.tournament.locations.name}</span> : null}
+      </div>
+    </div>
 
     <span
       className={
-        data?.tournament?.status === "finished"
-          ? "px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-700 font-medium"
-          : "px-3 py-1 text-xs rounded-full bg-green-100 text-green-700 font-medium"
+        "shrink-0 rounded-full px-3 py-1 text-xs font-semibold " +
+        (isFinished ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700")
       }
     >
-      {data?.tournament?.status === "finished" ? "Beendet" : "Laufend"}
+      {isFinished ? "✅ Beendet" : "● Laufend"}
     </span>
   </div>
 
-  {/* Zeile 2: Meta-Infos als Pills */}
-  <div className="mt-2 flex flex-wrap gap-2 text-sm text-neutral-700">
-    {cat && <Pill>{cat}</Pill>}
-
-    <Pill>
-      Code:
-      <span className="ml-2 font-semibold">{code}</span>
-    </Pill>
-
-    <Pill>
-      Spieler/Maschine {data?.tournament?.match_size ?? 4}
-    </Pill>
-
-    {data?.tournament?.locations?.name && (
-      <Pill>📍 {data.tournament.locations.name}</Pill>
-    )}
-
-    <Pill>
-      Format:
-      <span className="ml-2 font-semibold">{formatLabel}</span>
-    </Pill>
-
+  {/* Eckdaten */}
+  <div className="flex flex-wrap gap-2 border-t border-neutral-100 px-4 py-3 text-sm text-neutral-700">
+    <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
+      <span className="text-neutral-500">Format</span>
+      <span className="font-semibold">{formatLabel}</span>
+    </span>
+    <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
+      <span className="text-neutral-500">Spieler/Maschine</span>
+      <span className="font-semibold">{data?.tournament?.match_size ?? 4}</span>
+    </span>
+    <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
+      <span className="text-neutral-500">Code</span>
+      <span className="font-mono font-semibold tracking-wider">{code}</span>
+    </span>
     {currentRoundObj && (
-      <Pill>
-        Elo in dieser Runde:
-        <span className="ml-2 font-semibold">
+      <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
+        <span className="text-neutral-500">Elo in dieser Runde</span>
+        <span className={"font-semibold " + (currentRoundObj.elo_enabled ? "text-emerald-700" : "text-neutral-500")}>
           {currentRoundObj.elo_enabled ? "aktiv" : "aus"}
         </span>
-      </Pill>
+      </span>
     )}
   </div>
 
-  {/* Zeile 3: Aktions-Leiste */}
-  <div className="mt-3 flex flex-wrap items-center gap-2">
-    {/* Linke Button-Gruppe: hier deine bisherigen „normalen“ Buttons reinkopieren */}
-    <div className="flex flex-wrap items-center gap-2">
+  {/* Aktionen: links Ablauf, rechts Gefahrenzone */}
+  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 bg-neutral-50/60 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-3">
+      {!isFinished ? (
+        <Button
+          variant="secondary"
+          onClick={finishTournament}
+          disabled={busy || !isAdmin}
+          title={!isAdmin ? "Nur Admins können das Turnier beenden" : ""}
+        >
+          🏁 Turnier beenden
+        </Button>
+      ) : null}
 
-{!isFinished ? (
-  <Button
-    variant="secondary"
-    onClick={finishTournament}
-    disabled={busy || !isAdmin}
-    title={!isAdmin ? "Nur Admins können das Turnier beenden" : ""}
-  >
-    Turnier beenden
-  </Button>
-) : (
-  <Pill>✅ Turnier beendet</Pill>
-)}
+      <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+        <input
+          type="checkbox"
+          checked={speechRoundEnabledUi}
+          onChange={(e) => setSpeechRoundEnabled(e.target.checked)}
+          disabled={!isAdmin}
+          title={!isAdmin ? "Nur Admins können das ändern" : ""}
+        />
+        <span>🔊 Sprachausgabe pro Runde</span>
+      </label>
+    </div>
 
-              {/*
-                <Button
-                  variant="secondary"
-                  onClick={() => setShareOpen(true)}
-                >
-                  QR teilen
-                </Button>
-              */}
-
-
-{/*}
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  localStorage.removeItem("pb_code");
-                  location.reload();
-                }}
-              >
-                Startseite
-              </Button> 
-              */}
-              </div>
-
-    {/* Rechte Button-Gruppe: Danger-Zone „Turnier löschen“ */}
-    <div className="ml-auto flex items-center gap-2">
-              <div className="flex flex-col items-end gap-1 ml-auto">
-
-
-<label className="mr-3 inline-flex items-center gap-2 text-sm text-neutral-700">
-  <input
-    type="checkbox"
-    checked={speechRoundEnabledUi}
-    onChange={(e) => setSpeechRoundEnabled(e.target.checked)}
-    disabled={!isAdmin}
-    title={!isAdmin ? "Nur Admins können das ändern" : ""}
-  />
-  <span>Sprachausgabe pro Runde aktiv</span>
-</label>
-
-
-<Button
-  variant="secondary"
-  onClick={deleteTournament}
-  disabled={busy || !isAdmin}
-  className="bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-  title={!isAdmin ? "Nur Admins dürfen Turniere löschen" : ""}
->
-  Turnier löschen
-</Button>
-
-
-
-                {!isFinished ? (
-                  <div className="text-xs text-amber-700 max-w-xs text-right">
-                    Hinweis: Dieses Turnier ist noch nicht beendet. Beim Löschen werden die
-                    Elo-Werte der Spieler auf den Stand vor diesem Turnier zurückgesetzt.
-                  </div>
-                ) : (
-                  <div className="text-xs text-neutral-500 max-w-xs text-right">
-                    Hinweis: Turnier ist beendet. Elo-Werte bleiben beim Löschen unverändert.
-                  </div>
-                )}
-              </div>    </div>
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        variant="secondary"
+        onClick={deleteTournament}
+        disabled={busy || !isAdmin}
+        className="!px-3 !py-2 !text-sm bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+        title={!isAdmin ? "Nur Admins dürfen Turniere löschen" : ""}
+      >
+        🗑️ Turnier löschen
+      </Button>
+      <div className={"max-w-xs text-right text-[11px] " + (isFinished ? "text-neutral-500" : "text-amber-700")}>
+        {isFinished
+          ? "Beendet: Elo-Werte bleiben beim Löschen unverändert."
+          : "Noch nicht beendet: Beim Löschen wird die Elo auf den Stand vor diesem Turnier zurückgesetzt."}
+      </div>
+    </div>
   </div>
 </div>
+
+<EditTournamentMetaDialog
+  open={editMetaOpen}
+  code={code}
+  initialName={String(data?.tournament?.name ?? "")}
+  initialCategory={String(data?.tournament?.category ?? "")}
+  onClose={() => setEditMetaOpen(false)}
+  onSaved={() => {
+    reloadAll();
+  }}
+/>
 {/* ===== TURNIER-HEADER END ===== */}
 
         </CardHeader>
