@@ -9,7 +9,7 @@ export default function PinballScore({
   value,
   minDigits = 7,
   showSeparators = true,
-  separatorChar = ",",
+  separatorChar = ".", // wie am Flipper: 90.989.099
 }: Props) {
   const num = Math.max(0, Number(value) || 0);
   const raw = num.toString().padStart(minDigits, "0");

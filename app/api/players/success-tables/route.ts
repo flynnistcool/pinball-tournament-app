@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 // Lange ID-Listen in Paketen + seitenweise laden (sonst "fetch failed" / 1000-Zeilen-Limit)
 import { fetchAllIn } from "@/lib/supabaseChunks";
+import { machineKey } from "@/lib/machineStats";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -133,9 +134,16 @@ export async function POST(req: Request) {
   }
 
   // ---------
-  // A) Linke Tabelle: bester Score dieses Profils je (Location + Maschine)
+  // A) Linke Tabelle: bester Score dieses Profils je (Location + Flipper)
   // "global" bedeutet hier: global innerhalb dieser Location.
+  //
+  // ⚠️ Flipper werden pro Turnier neu angelegt (eigene ID je Turnier) und sind nur über den
+  //    NAMEN mit dem Location-Flipper verbunden. Deshalb Schlüssel = Flipper-Name + Location
+  //    (Groß/Klein + Leerzeichen egal) – sonst erscheint z. B. "Jaws" einmal pro Turnier.
   // ---------
+  const keyOf = (machineName: string | null | undefined, locationId: string | null) =>
+    `${machineKey(machineName)}__${locationId ?? "null"}`;
+
   const bestScoreByMachineLocForProfile = new Map<string, number>();
   const machineLocInfo = new Map<
     string,
@@ -154,14 +162,18 @@ export async function POST(req: Request) {
     const locationId = (tInfo?.location_id ?? null) as string | null;
     const locationName = (tInfo?.locations?.name ?? null) as string | null;
 
-    const key = `${machineId}__${locationId ?? "null"}`;
-    machineLocInfo.set(key, { machineId, locationId, locationName });
-
     const score = Number(mp.score);
     if (!Number.isFinite(score)) continue;
 
+    const key = keyOf(machineNameById.get(machineId), locationId);
     const cur = bestScoreByMachineLocForProfile.get(key);
-    if (cur == null || score > cur) bestScoreByMachineLocForProfile.set(key, score);
+    if (cur == null || score > cur) {
+      bestScoreByMachineLocForProfile.set(key, score);
+      // Anzeige (Name/Icon) vom Flipper, auf dem der Bestscore erzielt wurde
+      machineLocInfo.set(key, { machineId, locationId, locationName });
+    } else if (!machineLocInfo.has(key)) {
+      machineLocInfo.set(key, { machineId, locationId, locationName });
+    }
   }
 
   const keysForLeft = Array.from(bestScoreByMachineLocForProfile.keys());
@@ -169,39 +181,78 @@ export async function POST(req: Request) {
     return noStoreJson({ ok: true, machineBests: [], tournaments: [] });
   }
 
-  const machineIdsForLeft = Array.from(
-    new Set(keysForLeft.map((k) => k.split("__")[0]).filter(Boolean))
-  );
-
   // ---------
-  // B) Badge "Highscore": global beste Score pro (Location + Maschine)
-  // Dafür holen wir ALLE Matches dieser Maschinen (inkl. round->tournament->location) + match_players scores
+  // B) Badge "Highscore #1" / "Rang #n": Vergleich mit ALLEN Spielern auf diesem Flipper
+  //    in ALLEN Turnieren derselben Location (gleicher Flipper-Name).
   // ---------
-  const { data: allMatchesForMachines, error: amErr } = await fetchAllIn<any>(machineIdsForLeft, (chunk) =>
-    sb.from("matches").select("id, machine_id, round_id").in("machine_id", chunk).order("id")
-  );
+  const locIds = Array.from(
+    new Set(keysForLeft.map((k) => machineLocInfo.get(k)?.locationId).filter(Boolean))
+  ) as string[];
+  const needNoLocation = keysForLeft.some((k) => !machineLocInfo.get(k)?.locationId);
+  const wantedKeys = new Set(keysForLeft);
 
+  // Turniere dieser Locations (+ ggf. Turniere ohne Location)
+  const { data: locTournaments, error: ltErr } = await fetchAllIn<any>(locIds, (chunk) =>
+    sb.from("tournaments").select("id, location_id").in("location_id", chunk).order("id")
+  );
+  if (ltErr) return noStoreJson({ error: ltErr.message }, { status: 500 });
+  const allTournamentRows: any[] = [...(locTournaments ?? [])];
+  if (needNoLocation) {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb
+        .from("tournaments")
+        .select("id, location_id")
+        .is("location_id", null)
+        .order("id")
+        .range(from, from + 999);
+      if (error) return noStoreJson({ error: error.message }, { status: 500 });
+      allTournamentRows.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+  }
+  const locByTournament = new Map<string, string | null>();
+  for (const t of allTournamentRows) locByTournament.set(t.id, (t.location_id ?? null) as string | null);
+
+  // Flipper dieser Turniere – nur die mit passendem Namen
+  const { data: locMachines, error: lmErr } = await fetchAllIn<any>(Array.from(locByTournament.keys()), (chunk) =>
+    sb.from("machines").select("id, name, tournament_id").in("tournament_id", chunk).order("id")
+  );
+  if (lmErr) return noStoreJson({ error: lmErr.message }, { status: 500 });
+  const keyByMachineId = new Map<string, string>();
+  for (const m of locMachines ?? []) {
+    const key = keyOf(m.name, locByTournament.get(m.tournament_id) ?? null);
+    if (wantedKeys.has(key)) keyByMachineId.set(m.id, key);
+  }
+
+  const { data: allMatchesForMachines, error: amErr } = await fetchAllIn<any>(
+    Array.from(keyByMachineId.keys()),
+    (chunk) => sb.from("matches").select("id, machine_id").in("machine_id", chunk).order("id")
+  );
   if (amErr) return noStoreJson({ error: amErr.message }, { status: 500 });
 
-  const allMatchIdsForMachines = (allMatchesForMachines ?? []).map((m: any) => m.id) as string[];
+  const machineLocKeyByMatchIdAll = new Map<string, string>();
+  for (const m of allMatchesForMachines ?? []) {
+    const key = keyByMachineId.get(m.machine_id);
+    if (key) machineLocKeyByMatchIdAll.set(m.id, key);
+  }
 
-  const { data: mpAll, error: mpAllErr } = await fetchAllIn<any>(allMatchIdsForMachines, (chunk) =>
-    sb
-      .from("match_players")
-      .select("match_id, player_id, score")
-      .in("match_id", chunk)
-      .not("score", "is", null)
-      .order("match_id")
-      .order("player_id")
+  const { data: mpAll, error: mpAllErr } = await fetchAllIn<any>(
+    Array.from(machineLocKeyByMatchIdAll.keys()),
+    (chunk) =>
+      sb
+        .from("match_players")
+        .select("match_id, player_id, score")
+        .in("match_id", chunk)
+        .not("score", "is", null)
+        .order("match_id")
+        .order("player_id")
   );
-
   if (mpAllErr) return noStoreJson({ error: mpAllErr.message }, { status: 500 });
 
   const uniquePlayerIdsAll = Array.from(new Set((mpAll ?? []).map((x: any) => x.player_id))) as string[];
   const { data: playersAll, error: paErr } = await fetchAllIn<any>(uniquePlayerIdsAll, (chunk) =>
     sb.from("players").select("id, profile_id").in("id", chunk).order("id")
   );
-
   if (paErr) return noStoreJson({ error: paErr.message }, { status: 500 });
 
   const profileByPlayerAll = new Map<string, string>();
@@ -209,55 +260,9 @@ export async function POST(req: Request) {
     if (p.profile_id) profileByPlayerAll.set(p.id, p.profile_id);
   }
 
-  // Für die globalen Highscores brauchen wir die Location pro Match.
-  // Dazu: round_id -> tournament_id -> location_id/name.
-  const allRoundIds = Array.from(
-    new Set((allMatchesForMachines ?? []).map((m: any) => m.round_id).filter(Boolean))
-  ) as string[];
-
-  const { data: allRounds, error: arErr } = await fetchAllIn<any>(allRoundIds, (chunk) =>
-    sb.from("rounds").select("id, tournament_id").in("id", chunk).order("id")
-  );
-
-  if (arErr) return noStoreJson({ error: arErr.message }, { status: 500 });
-
-  const tournamentIdByRoundAll = new Map<string, string>();
-  for (const r of allRounds ?? []) {
-    if (r.id && r.tournament_id) tournamentIdByRoundAll.set(r.id, r.tournament_id);
-  }
-
-  const allTournamentIds = Array.from(
-    new Set((allRounds ?? []).map((r: any) => r.tournament_id).filter(Boolean))
-  ) as string[];
-
-  const { data: allTournaments, error: atErr } = await fetchAllIn<any>(allTournamentIds, (chunk) =>
-    sb.from("tournaments").select("id, location_id, locations(name)").in("id", chunk).order("id")
-  );
-
-  if (atErr) return noStoreJson({ error: atErr.message }, { status: 500 });
-
-  const tournamentInfoAllById = new Map<string, any>();
-  for (const t of allTournaments ?? []) tournamentInfoAllById.set(t.id, t);
-
-  const machineLocKeyByMatchIdAll = new Map<string, string>();
-  for (const m of allMatchesForMachines ?? []) {
-    const mid = (m as any).machine_id as string | null;
-    if (!mid) continue;
-
-    const rid = (m as any).round_id as string | null;
-    const tid = rid ? tournamentIdByRoundAll.get(rid) : null;
-    const tInfo = tid ? tournamentInfoAllById.get(tid) : null;
-    const locId = (tInfo?.location_id ?? null) as string | null;
-
-    const key = `${mid}__${locId ?? "null"}`;
-    machineLocKeyByMatchIdAll.set((m as any).id, key);
-  }
-
   type GlobalBest = { score: number; winners: Set<string> }; // winners = profile_id
   const globalBestByMachineLoc = new Map<string, GlobalBest>();
-
-  // 🆕 Für Platzierung (Rank) pro (Location + Maschine): best score je profile_id
-  // key = "<machineId>__<locationId|null>" -> (profileId -> bestScore)
+  // Für Platzierung (Rank) pro (Location + Flipper): best score je profile_id
   const bestScoreByMachineLocByProfile = new Map<string, Map<string, number>>();
 
   for (const mp of mpAll ?? []) {
@@ -270,7 +275,6 @@ export async function POST(req: Request) {
     const score = Number(mp.score);
     if (!Number.isFinite(score)) continue;
 
-    // best score je profile für diese (Location+Maschine)
     let byProfile = bestScoreByMachineLocByProfile.get(key);
     if (!byProfile) {
       byProfile = new Map<string, number>();
@@ -300,8 +304,7 @@ export async function POST(req: Request) {
       const bestScore = bestScoreByMachineLocForProfile.get(key) ?? 0;
       const global = globalBestByMachineLoc.get(key);
 
-      // 🆕 Platzierung (Rank) global innerhalb der Location für diese Maschine
-      // Dense Rank: 1 + Anzahl *verschiedener* Scores, die größer sind als bestScore.
+      // Platzierung (Dense Rank) innerhalb der Location für diesen Flipper
       let globalRank: number | null = null;
       const byProfile = bestScoreByMachineLocByProfile.get(key);
       if (byProfile && Number.isFinite(bestScore)) {

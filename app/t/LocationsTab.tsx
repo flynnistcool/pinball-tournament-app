@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Pill, Select } from "@/components/ui";
+import MachineStatsLine from "@/components/MachineStatsLine";
 
 type Location = { id: string; name: string; created_at?: string; machine_count?: number };
 type LocationMachine = {
@@ -156,6 +157,8 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
         return;
       }
       setTasks((j.tasks ?? []) as MachineTask[]);
+      // Task-Liste unter "mehr" (Statistik) still mitaktualisieren
+      if (openLocationId) loadMachineStats(openLocationId, true);
     } finally {
       setTasksBusy(false);
     }
@@ -167,6 +170,8 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
       return;
     }
     setTaskMachine(m);
+    // zum Task-Editor (unter der Flipper-Liste) scrollen
+    setTimeout(() => document.getElementById("timeplay-task-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     setTaskTitle("");
     setTaskDesc("");
     setNewTaskDifficulty("easy");
@@ -311,7 +316,29 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
       return;
     }
     loadMachines(openLocationId);
+    loadMachineStats(openLocationId);
   }, [openLocationId]);
+
+  // 📊 Statistik pro Flipper (nur lesend, Zuordnung über Location + Flipper-Name)
+  const [machineStats, setMachineStats] = useState<Record<string, any>>({});
+  const [machineStatsLoading, setMachineStatsLoading] = useState(false);
+  async function loadMachineStats(locationId: string, silent = false) {
+    if (!silent) {
+      setMachineStatsLoading(true);
+      setMachineStats({});
+    }
+    try {
+      const res = await fetch(`/api/locations/machine-stats?locationId=${encodeURIComponent(locationId)}&_ts=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j?.stats) setMachineStats(j.stats);
+    } catch {
+      /* Statistik ist nicht kritisch */
+    } finally {
+      setMachineStatsLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -451,27 +478,33 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
 
               {/* Maschinen Liste */}
               <div className="space-y-2">
-                {machines.map((m, idx) => (
-                  <div
-                    key={idx}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2"
-                  >
-                    {/* Name + Emoji */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-neutral-500 w-8">
-                        #{idx + 1}
+                {machines.map((m, idx) => {
+                  // kleine, einheitliche Knöpfe in der Kopfzeile
+                  const iconBtn =
+                    "inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-neutral-100 px-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-200 disabled:opacity-35 disabled:cursor-not-allowed";
+                  return (
+                  <div key={idx} className="space-y-3 rounded-2xl border bg-white p-3 shadow-sm">
+                    {/* Kopfzeile: Nr · Name · Icon · Status · Sortieren · Löschen */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="w-7 text-xs text-neutral-400">#{idx + 1}</span>
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-xl">
+                        {(m.icon_emoji ?? "").trim() || "🎰"}
                       </span>
-                      <Input
-                        value={m.name}
-                        onChange={(e) => {
-                          const next = machines.slice();
-                          next[idx] = { ...next[idx], name: e.target.value };
-                          setMachines(next);
-                        }}
-                      />
-                      <Input
-                        className="w-16 text-center"
+                      <div className="min-w-[180px] flex-1">
+                        <input
+                          className="h-9 w-full rounded-lg border px-3 text-base font-semibold outline-none focus:ring-2 focus:ring-black/10"
+                          value={m.name}
+                          onChange={(e) => {
+                            const next = machines.slice();
+                            next[idx] = { ...next[idx], name: e.target.value };
+                            setMachines(next);
+                          }}
+                        />
+                      </div>
+                      <input
+                        className="h-9 w-14 rounded-lg border text-center text-lg outline-none focus:ring-2 focus:ring-black/10"
                         maxLength={4}
+                        title="Icon (Emoji)"
                         value={m.icon_emoji ?? ""}
                         onChange={(e) => {
                           const v = e.target.value;
@@ -481,10 +514,10 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                         }}
                         placeholder="🎰"
                       />
-                      <Button
-                    
-                        variant="secondary"   // <- ghost ersetzt
-                        size="xs"
+                      <button
+                        type="button"
+                        className={iconBtn}
+                        title="Icon vorschlagen"
                         disabled={machinesBusy}
                         onClick={() => {
                           const suggestion = suggestEmojiForMachine(m.name ?? "");
@@ -494,12 +527,12 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                         }}
                       >
                         KI
-                      </Button>
-                    </div>
-
-                    {/* Status + Sortierung + Löschen */}
-                    <div className="flex items-center gap-2">
-                      <Select
+                      </button>
+                      <select
+                        className={
+                          "h-9 rounded-lg border px-2 text-sm font-medium outline-none " +
+                          (m.active ? "bg-emerald-50 text-emerald-800" : "bg-neutral-100 text-neutral-500")
+                        }
                         value={m.active ? "1" : "0"}
                         onChange={(e) => {
                           const next = machines.slice();
@@ -510,12 +543,13 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                           setMachines(next);
                         }}
                       >
-                        <option value="1">aktiv</option>
-                        <option value="0">inaktiv</option>
-                      </Select>
-
-                      <Button
-                        variant="secondary"
+                        <option value="1">● aktiv</option>
+                        <option value="0">○ inaktiv</option>
+                      </select>
+                      <button
+                        type="button"
+                        className={iconBtn}
+                        title="nach oben"
                         disabled={machinesBusy || idx === 0}
                         onClick={async () => {
                           const next = machines.slice();
@@ -527,10 +561,11 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                         }}
                       >
                         ↑
-                      </Button>
-
-                      <Button
-                        variant="secondary"
+                      </button>
+                      <button
+                        type="button"
+                        className={iconBtn}
+                        title="nach unten"
                         disabled={machinesBusy || idx === machines.length - 1}
                         onClick={async () => {
                           const next = machines.slice();
@@ -542,18 +577,11 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                         }}
                       >
                         ↓
-                      </Button>
-
-                      <Button
-                        variant="secondary"
-                        disabled={machinesBusy || !m.id}
-                        onClick={() => openTasksForMachine(m)}
-                      >
-                        Tasks
-                      </Button>
-
-                      <Button
-                        variant="secondary"
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-9 items-center justify-center rounded-lg px-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-35"
+                        title="Flipper aus der Location löschen"
                         disabled={machinesBusy}
                         onClick={async () => {
                           const next = machines.filter((_, i) => i !== idx);
@@ -561,11 +589,20 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                           await saveMachines(openLocation.id, next);
                         }}
                       >
-                        Löschen
-                      </Button>
+                        🗑 Löschen
+                      </button>
                     </div>
+
+                    {/* 📊 Statistik + Timeplay Tasks (unter "mehr") */}
+                    <MachineStatsLine
+                      stat={m.id ? machineStats[m.id] : undefined}
+                      loading={machineStatsLoading}
+                      canEditTasks={!machinesBusy && !!m.id}
+                      onEditTasks={() => openTasksForMachine(m)}
+                    />
                   </div>
-                ))}
+                  );
+                })}
 
                 {machines.length === 0 ? (
                   <div className="text-sm text-neutral-500">
@@ -584,9 +621,9 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                 </Button>
               </div>
 {taskMachine ? (
-  <div className="mt-4 rounded-2xl border bg-white p-4">
+  <div id="timeplay-task-editor" className="mt-4 scroll-mt-4 rounded-2xl border-2 border-blue-200 bg-white p-4">
     <div className="flex items-center justify-between gap-2">
-      <div className="font-semibold">Tasks: {taskMachine.name}</div>
+      <div className="font-semibold">Timeplay Tasks: {taskMachine.name}</div>
       <Button variant="secondary" onClick={() => setTaskMachine(null)}>
         Schließen
       </Button>

@@ -7,7 +7,7 @@
 //  - die Turnierpunkte von HEUTE (dieses Turnier, aus tournament_results – erst nach "Turnier beenden")
 //
 // GET /api/public/series?code=ABC123
-// -> { category, rows: [...], today: [{ playerId, profileId, tournamentPoints, finalRank }] }
+// -> { category, rows: [...], name, nameRows: [...] (gleicher Turniername), today: [{ playerId, profileId, tournamentPoints, finalRank }] }
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
@@ -31,32 +31,42 @@ export async function GET(req: Request) {
   const sb = supabaseAdmin();
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, category")
+    .select("id, name, category")
     .eq("code", code)
     .maybeSingle();
   if (tErr) return noStoreJson({ error: tErr.message }, { status: 500 });
   if (!t) return noStoreJson({ error: "Turnier nicht gefunden" }, { status: 404 });
 
   const category = String(t.category ?? "").trim();
+  const name = String(t.name ?? "").trim();
 
-  // 1) Serien-Tabelle: gleiche Berechnung wie im Admin (interner Aufruf, kein HTTP)
-  let rows: any[] = [];
-  if (category) {
+  // 1) Serien-Tabelle (exakt gleiche Kategorie) + Tabelle "gleicher Turniername":
+  //    gleiche Berechnung wie im Admin (interner Aufruf, kein HTTP)
+  async function loadRows(param: "category" | "search", value: string) {
+    if (!value) return { rows: [] as any[] };
     const inner = new URL("/api/leaderboards/tournaments", url.origin);
-    inner.searchParams.set("category", category);
+    inner.searchParams.set(param, value);
+    inner.searchParams.set("exact", "1"); // exakt gleich – wie im Admin
     const res = await leaderboardTournamentsGET(new Request(inner.toString()));
     const j: any = await res.json().catch(() => ({}));
-    if (!res.ok) return noStoreJson({ error: j?.error ?? "Serien-Tabelle fehlgeschlagen" }, { status: 500 });
-    rows = (j?.rows ?? []).map((r: any) => ({
-      profileId: r.profileId ?? null,
-      name: r.name ?? "?",
-      color: r.color ?? null,
-      icon: r.icon ?? null,
-      tournamentsPlayed: Number(r.tournamentsPlayed) || 0,
-      firstPlaces: Number(r.firstPlaces) || 0,
-      tournamentPoints: Number(r.tournamentPoints) || 0,
-    }));
+    if (!res.ok) return { error: String(j?.error ?? "Serien-Tabelle fehlgeschlagen") };
+    return {
+      rows: (j?.rows ?? []).map((r: any) => ({
+        profileId: r.profileId ?? null,
+        name: r.name ?? "?",
+        color: r.color ?? null,
+        icon: r.icon ?? null,
+        tournamentsPlayed: Number(r.tournamentsPlayed) || 0,
+        firstPlaces: Number(r.firstPlaces) || 0,
+        tournamentPoints: Number(r.tournamentPoints) || 0,
+      })),
+    };
   }
+  const [catRes, nameRes] = await Promise.all([loadRows("category", category), loadRows("search", name)]);
+  if ("error" in catRes) return noStoreJson({ error: catRes.error }, { status: 500 });
+  if ("error" in nameRes) return noStoreJson({ error: nameRes.error }, { status: 500 });
+  const rows = catRes.rows;
+  const nameRows = nameRes.rows;
 
   // 2) Turnierpunkte von heute (gibt es erst nach "Turnier beenden")
   const { data: tr, error: trErr } = await sb
@@ -79,5 +89,5 @@ export async function GET(req: Request) {
     superFinalBonus: superFinalTpBonus(r.super_final_rank ?? null), // Anteil Superfinale an den TP
   }));
 
-  return noStoreJson({ category, rows, today });
+  return noStoreJson({ category, rows, name, nameRows, today });
 }

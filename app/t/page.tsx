@@ -31,6 +31,9 @@ import AdminTab from "./AdminTab";
 import Image from "next/image";
 import PinballScore from "@/components/PinballScore";
 import AnnouncerAvatar from "@/components/AnnouncerAvatar";
+import CreateTournamentForm from "@/components/CreateTournamentForm";
+import RotationTimerOverlay from "@/components/RotationTimerOverlay";
+import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
 
 
@@ -123,11 +126,15 @@ function medalForPlace(place: number) {
 type CategoryInfo = { name: string; count: number; finished: number; lastUsed: string | null };
 function useExistingCategories(enabled = true) {
   const [cats, setCats] = useState<CategoryInfo[]>([]);
+  const [names, setNames] = useState<CategoryInfo[]>([]);
   const reload = useCallback(async () => {
     try {
       const res = await fetch(`/api/tournaments/categories?_ts=${Date.now()}`, { cache: "no-store" });
       const j = await res.json().catch(() => ({}));
-      if (res.ok) setCats(Array.isArray(j.categories) ? j.categories : []);
+      if (res.ok) {
+        setCats(Array.isArray(j.categories) ? j.categories : []);
+        setNames(Array.isArray(j.names) ? j.names : []);
+      }
     } catch {
       /* ignore */
     }
@@ -135,7 +142,7 @@ function useExistingCategories(enabled = true) {
   useEffect(() => {
     if (enabled) reload();
   }, [enabled, reload]);
-  return { cats, reload };
+  return { cats, names, reload };
 }
 
 // Vorschlags-Chips für Kategorien (Klick übernimmt die exakte Schreibweise)
@@ -143,16 +150,24 @@ function CategoryChips({
   cats,
   value,
   onPick,
+  label = "Vorhandene Kategorien:",
+  limit,
 }: {
   cats: CategoryInfo[];
   value: string;
   onPick: (c: string) => void;
+  label?: string;
+  /** nur die ersten N zeigen, Rest per "+ alle anzeigen" */
+  limit?: number;
 }) {
+  const [showAll, setShowAll] = useState(false);
   if (!cats.length) return null;
+  const visible = limit && !showAll ? cats.slice(0, limit) : cats;
+  const hidden = cats.length - visible.length;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="mr-1 text-neutral-500">Vorhandene Kategorien:</span>
-      {cats.map((c) => {
+      <span className="mr-1 text-neutral-500">{label}</span>
+      {visible.map((c) => {
         const active = value.trim().toLowerCase() === c.name.toLowerCase();
         return (
           <button
@@ -169,6 +184,15 @@ function CategoryChips({
           </button>
         );
       })}
+      {limit && cats.length > limit ? (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="rounded-full px-2.5 py-1 font-medium text-blue-700 hover:bg-blue-50"
+        >
+          {showAll ? "weniger anzeigen" : `+ alle anzeigen (${hidden})`}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -2225,8 +2249,8 @@ const globalHighscorePlayers = useMemo<HighscorePlayerRow[]>(() => {
 const top3Global = useMemo(() => globalHighscorePlayers.slice(0, 3), [globalHighscorePlayers]);
 
 function fmtScore(n: any) {
-  // du wolltest 3er-Blöcke mit Komma → en-US passt genau: 5,675,223
-  return Number(n ?? 0).toLocaleString("en-US");
+  // 3er-Blöcke mit Punkt wie am Flipper: 5.675.223
+  return Number(n ?? 0).toLocaleString("de-DE");
 }
 
 
@@ -4045,7 +4069,7 @@ return (
                         </span>
                       </div>
                       <div className="tabular-nums font-semibold">
-                         {Number(s.score).toLocaleString("en-US")}
+                         {Number(s.score).toLocaleString("de-DE")}
                       </div>
                     </li>
                   ))}
@@ -6740,7 +6764,7 @@ setTWinrateByPlayerId(map);
     return mp.score == null ? "" : String(mp.score);
   }
 
-  const scoreFmt = new Intl.NumberFormat("en-US"); // 3,300,000,000
+  const scoreFmt = new Intl.NumberFormat("de-DE"); // 3.300.000.000
 
   function formatScoreStr(raw: string) {
     const s = (raw ?? "").trim();
@@ -6896,7 +6920,7 @@ function elimSpeak(text: string) {
     const key = k(matchId, playerId);
     setSavingScore((prev) => ({ ...prev, [key]: true }));
 
-    const scoreFmt = new Intl.NumberFormat("en-US"); // 3,300,000,000
+    const scoreFmt = new Intl.NumberFormat("de-DE"); // 3.300.000.000
 
     function formatScoreStr(raw: string) {
       const s = (raw ?? "").trim();
@@ -7827,7 +7851,7 @@ disabled={
         <div className="flex flex-wrap gap-2">
           {ocrByMatch[m.id].scores.map((s, idx) => (
             <span key={idx} className="rounded-full border bg-neutral-50 px-3 py-1 text-xs">
-              P{idx + 1}: {new Intl.NumberFormat("en-US").format(s)}
+              P{idx + 1}: {new Intl.NumberFormat("de-DE").format(s)}
             </span>
           ))}
         </div>
@@ -8012,7 +8036,9 @@ disabled={
       ((typeof data === "undefined" ? undefined : data?.tournament?.format) === "dyp_round_robin" && mps.length === 4) ||
       (mps.length === 4 && mps.some((x) => (x as any).team != null));
 
-    const dndDisabled = locked || hasResults || isDypMatch; // ✅ nur solange keine Ergebnisse gesetzt sind
+    // Round the Pinball (rotation): Startreihenfolge ist beim Erzeugen so verteilt, dass pro Runde
+    // jeder Spieler an einem anderen Startplatz/Flipper ist → nicht von Hand verschieben.
+    const dndDisabled = locked || hasResults || isDypMatch || isRotationFormat; // ✅ nur solange keine Ergebnisse gesetzt sind
 
         // ✅ HIERHIN (vor return!)
     const mpByPlayerId = new Map(mps.map((mp) => [mp.player_id, mp]));
@@ -8609,24 +8635,16 @@ return (
       Punkte
     </span>
 
-    <Input
-      value={
-        scoreFocusKey === k(mp.match_id, mp.player_id)
-          ? getScoreStr(mp)
-          : formatScoreStr(getScoreStr(mp))
-      }
+    {/* Punkte: Trennzeichen schon beim Tippen + große Vorschau (components/ScoreInput.tsx) */}
+    <ScoreInput
+      digits={String(getScoreStr(mp) ?? "").replace(/[^0-9]/g, "")}
       onFocus={() =>
         setScoreFocusKey(k(mp.match_id, mp.player_id))
       }
-      inputMode="numeric"
       placeholder="0"
       className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 w--[115px] max-w-[115px]  text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
       disabled={locked}
-      onChange={(e) => {
-
-
-        const raw = e.target.value;
-        const cleaned = raw.replace(/[^0-9]/g, "");
+      onDigitsChange={(cleaned) => {
         const key = k(mp.match_id, mp.player_id);
         setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
       }}
@@ -9115,7 +9133,7 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState<string>("");
-  const [matchSize, setMatchSize] = useState<2 | 3 | 4>(4);
+  const [matchSize, setMatchSize] = useState<2 | 3 | 4>(2); // Standard: 1 vs 1
 
   const [tournamentFormat, setTournamentFormat] =
     useState<"matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation">("matchplay");
@@ -9142,7 +9160,11 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
 
   // ✅ Kategorie-Vorschläge: nur Kategorien, die es wirklich gibt (alle Turniere aus der DB,
   //    Schreibweisen zusammengefasst) – statt nur aus den neuesten 100 Archiv-Einträgen
-  const { cats: existingCategoryInfos, reload: reloadExistingCategories } = useExistingCategories(true);
+  const {
+    cats: existingCategoryInfos,
+    names: existingNameInfos,
+    reload: reloadExistingCategories,
+  } = useExistingCategories(true);
 
   // ✏️ Archiv: Name/Kategorie eines beendeten Turniers ändern
   const [editArchiveTournament, setEditArchiveTournament] = useState<{
@@ -9223,6 +9245,7 @@ async function loadArchive() {
     localStorage.setItem("pb_code", j.tournament.code);
 
     loadArchive();
+    reloadExistingCategories(); // Namens-/Kategorie-Vorschläge aktualisieren
   }
 
   async function joinTournament(cOverride?: string) {
@@ -9626,138 +9649,39 @@ if (joined)
 
               </div>
           ) : tab === "create" ? (
-            <div className="space-y-3">
-              <div>
-                <div className="mb-1 text-sm text-neutral-600">
-                  Turniername
-                </div>
-                <Input
+            <CreateTournamentForm
+              name={name}
+              onNameChange={setName}
+              nameSuggestions={
+                <CategoryChips
+                  cats={existingNameInfos}
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="z.B. Monats-Cup"
+                  onPick={setName}
+                  label="Bisherige Namen:"
                 />
-              </div>
-
-              <div>
-                <div className="mb-1 text-sm text-neutral-600">
-                  Kategorie / Serie
-                </div>
-                <Input
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  placeholder="z.B. Liga 2025, Monatsserie, Fun-Cup"
-                />
-
+              }
+              category={category}
+              onCategoryChange={setCategory}
+              categorySuggestions={
                 <CategoryChips cats={existingCategoryInfos} value={category} onPick={setCategory} />
-              </div>
-
-              <div>
-                
-
-             
-{/* Format + Spieler pro Maschine nebeneinander */}
-<div className="grid gap-3 md:grid-cols-2">
-  <div>
-    <div className="mb-1 text-sm text-neutral-600">Format</div>
-    <Select
-      value={tournamentFormat}
-      onChange={(e) => {
-        const v = e.target.value as any;
-        setTournamentFormat(v);
-        // DYP ist immer 2vs2 => 4 Spieler pro Match
-        if (v === "dyp_round_robin") setMatchSize(4);
-      }}
-    >
-      <option value="matchplay">Matchplay (Standard)</option>
-      <option value="timeplay">Timeplay (Matchplay mit Zeit)</option>
-      <option value="swiss">Swiss</option>
-      <option value="round_robin">Round Robin (Beta)</option>
-      <option value="rotation">Rotation (alle Spieler spielen jede Maschine)</option>
-        <option value="elimination">Crazy Elimination (alle gegeneinander, -1 pro Runde)</option>
-      <option value="dyp_round_robin">DYP Round Robin (2vs2, Teams rotieren)</option>
-    </Select>
-    <div className="mt-1 text-xs text-neutral-500">
-      Das Format gilt für das gesamte Turnier.
-    </div>
-  </div>
-
-  <div>
-    <div className="mb-1 text-sm text-neutral-600">Spieler pro Maschine</div>
-      <Select
-      value={String(matchSize)}
-      onChange={(e) => setMatchSize(Number(e.target.value) as any)}
-        disabled={tournamentFormat === "dyp_round_robin" || tournamentFormat === "elimination"}
-    >
-      <option value="2">1 vs 1 (2 Spieler)</option>
-      <option value="3">3 Spieler (1 vs 1 vs 1)</option>
-      <option value="4">4 Spieler (1 vs 1 vs 1 vs 1)</option>
-    </Select>
-      {tournamentFormat === "elimination" && (
-        <div className="mt-1 text-xs text-neutral-500">
-          Hinweis: Bei Elimination wird diese Einstellung ignoriert – pro Runde spielen alle verbleibenden Spieler in einem Match.
-        </div>
-      )}
-  </div>
-</div>
-
-{/* Maschinen-Import aus Location darunter in voller Breite */}
-<div className="mt-3">
-  <div className="mb-1 text-sm text-neutral-600">
-    Maschinen importieren aus Location
-  </div>
-  <Select
-    value={locationId}
-    onChange={(e) => {
-      setLocationId(e.target.value);
-      if (e.target.value) setTemplateTournamentId("");
-    }}
-  >
-    <option value="">— (kein Location-Import)</option>
-    {locations.map((l) => (
-      <option key={l.id} value={l.id}>
-        {l.name}
-      </option>
-    ))}
-  </Select>
-  <div className="mt-1 text-xs text-neutral-500">
-    Importiert Maschinen aus der Location-Datenbank.
-  </div>
-</div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {/*
-                <div>
-                  <div className="mb-1 text-sm text-neutral-600">
-                    Maschinen übernehmen aus Turnier
-                  </div>
-                  <Select
-                    value={templateTournamentId}
-                    onChange={(e) => {
-                      setTemplateTournamentId(e.target.value);
-                      if (e.target.value) setLocationId("");
-                    }}
-                  >
-                    <option value="">— (keine Übernahme)</option>
-                    {archive.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({t.code})
-                      </option>
-                    ))}
-                  </Select>
-                  <div className="mt-1 text-xs text-neutral-500">
-                    Kopiert Maschinen + Zuordnung aus einem alten Turnier.
-                  </div>
-                </div>
-                 */}
-
-
-              </div>
-
-              <Button disabled={busy} onClick={createTournament}>
-                Turnier erstellen
-              </Button>
-            </div>
+              }
+              format={tournamentFormat}
+              onFormatChange={(v) => {
+                setTournamentFormat(v);
+                // DYP ist immer 2vs2 => 4 Spieler pro Match
+                if (v === "dyp_round_robin") setMatchSize(4);
+              }}
+              matchSize={matchSize}
+              onMatchSizeChange={setMatchSize}
+              locationId={locationId}
+              onLocationChange={(v) => {
+                setLocationId(v);
+                if (v) setTemplateTournamentId("");
+              }}
+              locations={locations}
+              busy={busy}
+              onCreate={createTournament}
+            />
           ) : tab === "archive" ? (
             <div className="space-y-2">
               <div className="text-sm text-neutral-600">
@@ -9766,10 +9690,10 @@ if (joined)
               <div className="overflow-hidden rounded-2xl border bg-white">
                 {/* Desktop Header – auf Mobile ausblenden (sonst zu eng) */}
                 <div className="hidden sm:grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  <div className="col-span-4">Name</div>
+                  <div className="col-span-3">Name</div>
                   <div className="col-span-3">Kategorie / Serie</div>
                   <div className="col-span-2">Format</div>
-                  <div className="col-span-1">Code</div>
+                  <div className="col-span-2">Location</div>
                   <div className="col-span-1">Status</div>
                   <div className="col-span-1">Erstellt</div>
                 </div>
@@ -9780,7 +9704,7 @@ if (joined)
                     className="grid grid-cols-1 sm:grid-cols-12 gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
                               cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition"
                   >
-                    <div className="sm:col-span-4 flex min-w-0 items-center gap-2 font-medium">
+                    <div className="sm:col-span-3 flex min-w-0 items-center gap-2 font-medium">
                       <span className="truncate">{t.name}</span>
                       {t.status === "finished" && isAdmin ? (
                         <button
@@ -9821,8 +9745,21 @@ if (joined)
   </span>
                     </div>
 
-                    <div className="col-span-1 font-mono text-neutral-500">
-                      {t.code}
+                    {/* Location statt Code (Code steht im Turnier selbst) */}
+                    <div
+                      className="sm:col-span-2 min-w-0 truncate text-sm text-neutral-600"
+                      title={`Code: ${t.code}`}
+                    >
+                      {(() => {
+                        const locName = t.location_id
+                          ? locations.find((l) => String(l.id) === String(t.location_id))?.name
+                          : null;
+                        return locName ? (
+                          <span>📍 {locName}</span>
+                        ) : (
+                          <span className="text-xs text-neutral-400">—</span>
+                        );
+                      })()}
                     </div>
 
                     {/* NEU: Status */}
@@ -9996,7 +9933,7 @@ useEffect(() => {
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [playerName, setPlayerName] = useState("");
-  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
   const [machineName, setMachineName] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -10014,6 +9951,30 @@ useEffect(() => {
     () => computeCompetitionPlaces(categoryTournamentRows, (r: any) => Number(r?.tournamentPoints ?? 0)),
     [categoryTournamentRows]
   );
+
+  // Gleiche Tabelle, aber über alle beendeten Turniere mit exakt gleichem Namen
+  const [nameTournamentRows, setNameTournamentRows] = useState<any[]>([]);
+  const nameTournamentPlaces = useMemo(
+    () => computeCompetitionPlaces(nameTournamentRows, (r: any) => Number(r?.tournamentPoints ?? 0)),
+    [nameTournamentRows]
+  );
+  // Reiter: "category" = Serie, "name" = gleicher Turniername (gemerkt im Browser)
+  const [tpTab, setTpTab] = useState<"category" | "name">("category");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("pb_tpTab") === "name") setTpTab("name");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  function chooseTpTab(v: "category" | "name") {
+    setTpTab(v);
+    try {
+      localStorage.setItem("pb_tpTab", v);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const [hsRefreshing, setHsRefreshing] = useState(false);
   const [catRefreshing, setCatRefreshing] = useState(false);
@@ -10762,7 +10723,7 @@ async function tick() {
     loadProfiles(),
     reloadFinal(),
     loadTournamentHighscores(true), // ✅ silent
-    loadCategoryTournamentLeaderboard(next?.tournament?.category, true), // ✅ silent
+    loadCategoryTournamentLeaderboard(next?.tournament?.category, true, next?.tournament?.name), // ✅ silent
   ]);
   } catch (e) {
     // optional
@@ -11145,26 +11106,36 @@ async function loadTournamentHighscores(silent: boolean = false) {
 
 async function loadCategoryTournamentLeaderboard(
   category: string | undefined | null,
-  silent: boolean = false
+  silent: boolean = false,
+  tournamentName?: string | null
 ) {
   const cat = (category ?? "").trim();
-  if (!cat) return;
+  const tName = (tournamentName ?? "").trim();
+  if (!cat && !tName) return;
 
   if (!silent) {
     setCategoryTournamentRows([]);
+    setNameTournamentRows([]);
     setCategoryTournamentLoading(true);
   } else {
     setCatRefreshing(true);
   }
 
-  try {
+  // exact=1 → nur exakt gleiche Kategorie bzw. exakt gleicher Turniername (Groß/Klein egal)
+  const fetchRows = async (param: "category" | "search", value: string) => {
+    if (!value) return [];
     const res = await fetch(
-      `/api/leaderboards/tournaments?category=${encodeURIComponent(cat)}&_ts=${Date.now()}`,
+      `/api/leaderboards/tournaments?${param}=${encodeURIComponent(value)}&exact=1&_ts=${Date.now()}`,
       { cache: "no-store" }
     );
-
     const json = await res.json().catch(() => ({}));
-    setCategoryTournamentRows(json.rows ?? []);
+    return json.rows ?? [];
+  };
+
+  try {
+    const [catRows, nameRows] = await Promise.all([fetchRows("category", cat), fetchRows("search", tName)]);
+    setCategoryTournamentRows(catRows);
+    setNameTournamentRows(nameRows);
 
     setLastCatUpdatedAt(Date.now());
   } finally {
@@ -11192,7 +11163,7 @@ async function reloadAll() {
     loadProfiles(),
     reloadFinal(),
     loadTournamentHighscores(false),
-    loadCategoryTournamentLeaderboard(next?.tournament?.category, false),
+    loadCategoryTournamentLeaderboard(next?.tournament?.category, false, next?.tournament?.name),
   ]);
 
   return next;
@@ -11226,20 +11197,39 @@ async function reloadAll() {
 
   async function addPlayerFromProfile() {
     if (locked) return;
-    if (!selectedProfileId) return;
+    if (!selectedProfileIds.length) return;
     setBusy(true);
     setNotice(null);
-    const res = await fetch("/api/players/addFromProfile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, profileId: selectedProfileId }),
-    });
-    const j = await res.json();
+    // Mehrfachauswahl: nacheinander hinzufügen (Reihenfolge = Reihenfolge der Auswahl)
+    const errors: string[] = [];
+    for (const profileId of selectedProfileIds) {
+      try {
+        const res = await fetch("/api/players/addFromProfile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, profileId }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const pname = profiles.find((p) => p.id === profileId)?.name ?? "Spieler";
+          errors.push(`${pname}: ${j.error ?? "Fehler"}`);
+        }
+      } catch (e: any) {
+        const pname = profiles.find((p) => p.id === profileId)?.name ?? "Spieler";
+        errors.push(`${pname}: ${e?.message ?? "Fehler"}`);
+      }
+    }
     setBusy(false);
-    if (!res.ok) return setNotice(j.error ?? "Fehler");
-    setSelectedProfileId("");
+    setSelectedProfileIds([]);
+    if (errors.length) setNotice(errors.join(" · "));
     await reloadAll();
   }
+
+  // Profile, die schon im Turnier sind (in der Auswahl grau + "schon dabei")
+  const profileIdsInTournament = useMemo(
+    () => new Set<string>((data?.players ?? []).map((p: any) => p?.profile_id).filter(Boolean)),
+    [data?.players]
+  );
 
   async function togglePlayer(id: string) {
     if (locked) return;
@@ -13029,18 +13019,23 @@ const tasksById = useMemo(() => {
 <div className="mt-2 flex gap-2">
   <ProfilePicker
     profiles={profiles}
-    value={selectedProfileId}
-    onChange={(id) => setSelectedProfileId(id)}
+    value={selectedProfileIds}
+    onChange={(ids) => setSelectedProfileIds(ids)}
     disabled={busy || locked}
+    disabledIds={profileIdsInTournament}
   />
 
   <Button
-    variant="secondary"
-    disabled={busy || locked || !selectedProfileId}
+    variant={selectedProfileIds.length ? "primary" : "secondary"}
+    disabled={busy || locked || selectedProfileIds.length === 0}
     onClick={addPlayerFromProfile}
     className="h-10 px-3 text-sm"
   >
-    Hinzufügen
+    {busy && selectedProfileIds.length
+      ? "Wird hinzugefügt …"
+      : selectedProfileIds.length > 1
+      ? `Hinzufügen (${selectedProfileIds.length})`
+      : "Hinzufügen"}
   </Button>
 </div>
                 </div>
@@ -13414,7 +13409,7 @@ const tasksById = useMemo(() => {
       }}
     />
 
-    <RotationTimerFullscreenOverlay
+    <RotationTimerOverlay
       open={rotTimerFullscreen}
       onClose={() => setRotTimerFullscreen(false)}
       timeLeftLabel={rotFmt(displayMs)}
@@ -13422,6 +13417,7 @@ const tasksById = useMemo(() => {
       durationSec={preLeftMs != null ? 15 : (rotTimer?.durationSec ?? 600)}
       running={preLeftMs != null ? true : rotRunning}
       paused={preLeftMs != null ? false : rotPaused}
+      prestart={preLeftMs != null}
       locked={locked}
       onPauseToggle={rotPauseToggleGlobal}
       onReset={rotResetGlobal}
@@ -13636,21 +13632,49 @@ const tasksById = useMemo(() => {
 
 {/* --- Leaderboards unten --- */}
 <div className="mt-6 grid gap-4 lg:grid-cols-3">
-  {/* A) Turnierpunkte (dein Turnierleaderboard) */}
+  {/* A) Turnierpunkte (dein Turnierleaderboard) – Reiter: Serie (Kategorie) | gleicher Turniername */}
+  {(() => {
+    const catName = String(tournament?.category ?? "").trim();
+    const tName = String(tournament?.name ?? "").trim();
+    // ohne Kategorie gibt es nur den Namens-Reiter
+    const activeTab: "category" | "name" = !catName ? "name" : tpTab;
+    const tpRows = activeTab === "name" ? nameTournamentRows : categoryTournamentRows;
+    const tpPlaces = activeTab === "name" ? nameTournamentPlaces : categoryTournamentPlaces;
+    const tabBtn = (v: "category" | "name", icon: string, label: string, value: string) => {
+      const active = activeTab === v;
+      return (
+        <button
+          type="button"
+          onClick={() => chooseTpTab(v)}
+          title={value}
+          className={
+            "min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-left text-xs transition " +
+            (active ? "bg-neutral-900 text-white shadow" : "text-neutral-600 hover:bg-neutral-200")
+          }
+        >
+          <span className="block font-semibold">{icon} {label}</span>
+          <span className={"block truncate " + (active ? "text-white/70" : "text-neutral-500")}>{value}</span>
+        </button>
+      );
+    };
+    return (
   <Card>
     <CardHeader>
       <div ref={tournamentPointsRef} />
-      <div className="flex items-center justify-between gap-2">
-        <div className="font-semibold">🏆 Turnierpunkte <span className="text-sm  font-snormal">({tournament?.category ?? "—"})</span></div>
-        {/*<RefreshBadge refreshing={catRefreshing} lastUpdatedAt={lastCatUpdatedAt} />*/}
+      <div className="font-semibold">🏆 Turnierpunkte</div>
+      <div className="mt-2 flex gap-1 rounded-xl bg-neutral-100 p-1">
+        {catName ? tabBtn("category", "🏆", "Serie", catName) : null}
+        {tabBtn("name", "🏷️", "Turniername", tName || "—")}
       </div>
     </CardHeader>
     <CardBody>
       {categoryTournamentLoading ? (
         <div className="text-sm text-neutral-500">Lade…</div>
-      ) : categoryTournamentRows.length === 0 ? (
+      ) : tpRows.length === 0 ? (
         <div className="text-sm text-neutral-500">
-          Keine Daten für Kategorie "{tournament?.category ?? "—"}".
+          {activeTab === "name"
+            ? `Keine Daten für Turniername "${tName || "—"}".`
+            : `Keine Daten für Kategorie "${catName || "—"}".`}{" "}
           (Nur beendete Turniere zählen.)
         </div>
       ) : (
@@ -13664,8 +13688,8 @@ const tasksById = useMemo(() => {
               </tr>
             </thead>
             <tbody>
-              {categoryTournamentRows.map((r: any, idx: number) => {
-                const place = categoryTournamentPlaces[idx] ?? idx + 1;
+              {tpRows.map((r: any, idx: number) => {
+                const place = tpPlaces[idx] ?? idx + 1;
                 const medal = place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : null;
                 const rowBg =
                   place === 1
@@ -13686,7 +13710,7 @@ const tasksById = useMemo(() => {
                     </td>
                     <td className="py-1 pr-2">{r.name ?? "—"}</td>
                     <td className="py-1 pr-2 text-right tabular-nums font-semibold">
-                      {Number(r.tournamentPoints ?? 0).toLocaleString("en-US")}
+                      {Number(r.tournamentPoints ?? 0).toLocaleString("de-DE")}
                     </td>
                   </tr>
                 );
@@ -13698,6 +13722,8 @@ const tasksById = useMemo(() => {
     </CardBody>
 
   </Card>
+    );
+  })()}
 
   {/* B) Highscores pro Spieler */}
   <Card>
@@ -13821,7 +13847,7 @@ const tasksById = useMemo(() => {
 
                 {/* Score */}
                 <td className="py-2 pr-0  text-[12px] text-right align-top tabular-nums font-bold">
-                  {Number(r.score ?? 0).toLocaleString("en-US")}
+                  {Number(r.score ?? 0).toLocaleString("de-DE")}
                 </td>
               </tr>
             ))}

@@ -14,18 +14,23 @@ import { matchPoints, computeProvisionalRotationPoints } from "@/lib/points";
 import { calcRoundsPerCycle, mainRoundBars, type MainRoundBar } from "@/lib/roundProgress";
 import { RoundPointsBars } from "@/components/charts";
 import { computeFinalRanking } from "@/lib/finals";
+// @ts-ignore -- @types/react-dom ist im Projekt nicht installiert
+import { flushSync } from "react-dom";
+import { buildRaceData, type RaceData } from "@/lib/raceChart";
+import RaceChart, { type RacePlayer } from "@/components/RaceChart";
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
 // Ansichten (Tabs) mit Auto-Wechsel; Dauer je Ansicht
-type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series";
+type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race";
 const TAB_DURATION_MS: Record<TvTab, number> = {
-  current: 30000, // Aktuelle Runde
+  current: 10000, // Aktuelle Runde (laufendes Turnier: ⇄ Verlauf)
   archive: 15000, // Alle Runden
   table: 20000, // Tabelle (Rotation) / Leaderboard
   podium: 20000, // Siegerehrung
   superfinal: 20000, // 🔥 Superfinale
-  series: 15000, // 📊 Turnierserie
+  series: 16000, // 📊 Turnierserie (innen: Serie ⇄ Turniername)
+  race: 10000, // 📈 Verlauf (Matchplay & Co.)
 };
 // Nach Turnierende schneller wechseln (Siegerehrung -> Superfinale -> Runden/Tabelle)
 const FINISHED_TAB_MS = 6000;
@@ -36,6 +41,7 @@ const TAB_LABEL: Record<TvTab, string> = {
   podium: "🏆 Siegerehrung",
   superfinal: "🔥 Superfinale",
   series: "📊 Turnierserie",
+  race: "📈 Verlauf",
 };
 
 const MACHINE_WR_REFRESH_MS = 60000; // Flipper-Winraten (über alle Turniere) nur 1x pro Minute laden
@@ -67,6 +73,39 @@ type RoundBlock = {
   finished: boolean;
   matches: MatchCard[];
 };
+
+// ── Weiche Übergänge zwischen den Ansichten ───────────────────────────────
+// Chrome/Edge (& neuere Android-TV-Browser): echtes Überblenden alt → neu (View Transitions).
+// Andere Browser: neue Ansicht blendet nur weich ein (Fallback per CSS, siehe useViewTransitionSupport).
+function smoothSwitch(update: () => void) {
+  const d = (typeof document !== "undefined" ? document : null) as
+    | (Document & { startViewTransition?: (cb: () => void) => unknown })
+    | null;
+  const reduce =
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (d?.startViewTransition && !reduce && d.visibilityState === "visible") {
+    try {
+      d.startViewTransition(() => flushSync(update));
+      return;
+    } catch {
+      /* Fallback unten */
+    }
+  }
+  update();
+}
+/** true, wenn der Browser echtes Überblenden kann (erst nach dem Laden bekannt) */
+function useViewTransitionSupport() {
+  const [ok, setOk] = useState<boolean | null>(null);
+  useEffect(() => setOk(typeof document !== "undefined" && "startViewTransition" in document), []);
+  return ok;
+}
+const TRANSITION_CSS = `
+::view-transition-old(root) { animation: tvVtOut 0.6s ease both; }
+::view-transition-new(root) { animation: tvVtIn 0.6s ease both; }
+@keyframes tvVtOut { to { opacity: 0; transform: scale(1.015); } }
+@keyframes tvVtIn { from { opacity: 0; transform: scale(0.985); } }
+@keyframes tvFadeIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+`;
 
 const REFRESH_MS = 5000;
 const FIT_PAD = 20; // Rand um den Inhalt (px)
@@ -155,6 +194,8 @@ type SeriesRow = {
 type SeriesData = {
   category: string;
   rows: SeriesRow[];
+  name?: string; // Turniername
+  nameRows?: SeriesRow[]; // alle beendeten Turniere mit exakt gleichem Namen
   today: {
     playerId: string;
     profileId: string | null;
@@ -625,7 +666,35 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   // beendet:  Siegerehrung ⇄ Alle Runden / Tabelle (⇄ 🔥 Superfinale, falls gespielt)
   const hasArchive = (matchView?.archive.length ?? 0) > 1;
   // Turnierserie anzeigen, sobald es Daten gibt (Serie oder heutige Turnierpunkte)
-  const hasSeries = (series?.rows?.length ?? 0) > 0 || (isFinished && (series?.today?.length ?? 0) > 0);
+  const hasToday = isFinished && (series?.today?.length ?? 0) > 0;
+  const hasSeries = (series?.rows?.length ?? 0) > 0 || (series?.nameRows?.length ?? 0) > 0 || hasToday;
+  // beide inneren Reiter (Serie + Turniername) vorhanden → nach Turnierende doppelt so lange zeigen
+  const seriesHasBoth = !!series?.category && !!series?.name;
+
+  // 📈 Verlauf ("Rennen"): kumulierte Rundenpunkte je Spieler (Rotation inkl. vorläufiger Punkte)
+  const raceData: RaceData = useMemo(
+    () =>
+      buildRaceData(
+        (data?.players ?? []).map((p) => p.id),
+        data?.rounds ?? [],
+        data?.matches ?? [],
+        data?.match_players ?? [],
+        isRotation
+      ),
+    [data, isRotation]
+  );
+  const hasRace = raceData.rounds.length > 0;
+  const racePlayers: RacePlayer[] = useMemo(
+    () => view.rows.map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })),
+    [view.rows]
+  );
+  // Rotation: Flippername unter der Rundennummer
+  const raceRoundLabels: Record<number, string> | undefined = useMemo(() => {
+    if (!isRotation) return undefined;
+    const out: Record<number, string> = {};
+    for (const c of view.columns) if (!out[c.roundNo]) out[c.roundNo] = c.machineName;
+    return out;
+  }, [isRotation, view.columns]);
   const tabs: TvTab[] = useMemo(() => {
     if (!data) return [];
     if (isFinished) {
@@ -634,15 +703,18 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
       if (superFinal) t.push("superfinal");
       if (hasSeries) t.push("series");
       t.push(isMatchFormat ? "archive" : "table");
+      if (isMatchFormat && hasRace) t.push("race");
       return t;
     }
     const t: TvTab[] = [isMatchFormat ? "current" : "table"];
     if (isMatchFormat && hasArchive) t.push("archive");
+    if (isMatchFormat && hasRace) t.push("race");
     if (hasSeries) t.push("series");
     return t.length > 1 ? t : [];
-  }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries]);
+  }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries, hasRace]);
 
   const [tvTab, setTvTab] = useState<TvTab>("current");
+  const vtSupported = useViewTransitionSupport();
   const [autoTab, setAutoTab] = useState(true);
 
   // ── Ton: Trommelwirbel + Fanfare beim Turnierende (hier am TV statt am Admin-PC) ──
@@ -705,22 +777,65 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     const sfJustFinished = sfDone && !wasSf;
     if (justFinished || sfJustFinished) {
       // direkt zur passenden Siegerehrung springen und Auto-Wechsel wieder an
-      setTvTab(sfJustFinished ? "superfinal" : "podium");
+      // aus einem Effekt heraus: kurz verschieben (flushSync darf nicht während des Renderns laufen)
+      setTimeout(() => smoothSwitch(() => setTvTab(sfJustFinished ? "superfinal" : "podium")), 0);
       setAutoTab(true);
       if (soundOn) playCelebration();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, isFinished, superFinal]);
   // Tab gültig halten (z. B. wenn das Turnier gerade beendet wurde)
+  const tabsKey = tabs.join("|");
   const activeTab: TvTab = tabs.includes(tvTab) ? tvTab : tabs[0] ?? (isMatchFormat ? "current" : "table");
+  // Fortschrittsbalken bis zum nächsten automatischen Wechsel
+  const [mainTimer, setMainTimer] = useState<TabTimer>(null);
+  // Auto-Wechsel: solange das Turnier läuft, die Turnierserie überspringen
+  // (wichtig ist dann die Tabelle / wer wo spielt) – per Klick bleibt sie erreichbar
+  //   Matchplay & Co.: nur Aktuelle Runde ⇄ Verlauf (je 10 s) – "Alle Runden" + Serie per Klick
+  const autoTabs: TvTab[] = isFinished
+    ? tabs
+    : isMatchFormat
+    ? tabs.filter((t) => t === "current" || t === "race")
+    : tabs.filter((t) => t !== "series");
   useEffect(() => {
-    if (!autoTab || tabs.length < 2) return;
+    if (!autoTab || autoTabs.length < 2) {
+      setMainTimer(null);
+      return;
+    }
+    const ms = isFinished
+      ? FINISHED_TAB_MS * ((activeTab === "series" && seriesHasBoth) || (activeTab === "table" && hasRace) ? 2 : 1)
+      : TAB_DURATION_MS[activeTab];
+    setMainTimer({ start: Date.now(), ms });
     const t = setTimeout(() => {
-      const i = tabs.indexOf(activeTab);
-      setTvTab(tabs[(i + 1) % tabs.length]);
-    }, isFinished ? FINISHED_TAB_MS : TAB_DURATION_MS[activeTab]);
+      const i = autoTabs.indexOf(activeTab);
+      // steht man gerade auf einem übersprungenen Reiter (z. B. Serie angeklickt): zum ersten zurück
+      smoothSwitch(() => setTvTab(i < 0 ? autoTabs[0] : autoTabs[(i + 1) % autoTabs.length]));
+    }, ms);
     return () => clearTimeout(t);
-  }, [autoTab, tabs, activeTab, isFinished]);
+    // ⚠️ nicht von "tabs" (neues Array bei jedem 5-s-Neuladen) abhängen, sonst startet der
+    //    Zähler ständig neu und der Wechsel passiert nie → stabiler Schlüssel tabsKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTab, tabsKey, activeTab, isFinished, seriesHasBoth, hasRace]);
+
+  // Reiter "Tabelle" (Rotation & Co.): innen 📋 Tabelle ⇄ 📈 Verlauf – Umschalter sitzt oben in der Kopfzeile
+  const showTableSub = !isMatchFormat && hasRace && activeTab === "table";
+  const [tableSub, setTableSub] = useState<"table" | "race">("table");
+  const [tableSubAuto, setTableSubAuto] = useState(true);
+  useEffect(() => {
+    if (activeTab === "table") setTableSub("table"); // jede Runde mit der Tabelle beginnen
+  }, [activeTab]);
+  const [subTimer, setSubTimer] = useState<TabTimer>(null);
+  useEffect(() => {
+    if (!showTableSub || !tableSubAuto) {
+      setSubTimer(null);
+      return;
+    }
+    // laufendes Turnier: Tabelle 15 s, Verlauf 10 s · nach Turnierende je 6 s
+    const ms = isFinished ? FINISHED_TAB_MS : tableSub === "table" ? 15000 : 10000;
+    setSubTimer({ start: Date.now(), ms });
+    const t = setTimeout(() => smoothSwitch(() => setTableSub((v) => (v === "table" ? "race" : "table"))), ms);
+    return () => clearTimeout(t);
+  }, [showTableSub, tableSubAuto, tableSub, isFinished]);
 
   // ── Automatisch auf Bildschirmgröße einpassen ─────────────────────────────
   // Inhalt wird in fester Basisgröße gerendert, gemessen und dann per scale()
@@ -841,19 +956,51 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                   vorläufig – Flipper läuft noch
                 </div>
               ) : null}
-              {tabs.length > 1 ? (
+              {tabs.length > 1 || showTableSub ? (
                 <div className="mt-2 flex items-center justify-end gap-2">
+                  {showTableSub ? (
+                    <div className="inline-flex overflow-hidden rounded-full bg-white/5 ring-1 ring-white/15">
+                      {(
+                        [
+                          ["table", "📋 Tabelle"],
+                          ["race", "📈 Verlauf"],
+                        ] as const
+                      ).map(([v, label]) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => {
+                            smoothSwitch(() => {
+                              setTableSub(v);
+                              setTableSubAuto(false);
+                            });
+                          }}
+                          className={
+                            "relative overflow-hidden px-3 py-1 text-sm font-semibold transition " +
+                            (tableSub === v ? "bg-emerald-500 text-white" : "text-white/60 hover:bg-white/10")
+                          }
+                        >
+                          {label}
+                          {tableSub === v ? <TabProgress timer={subTimer} /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {tabs.length > 1 ? (
+                  <>
                   <div className="inline-flex overflow-hidden rounded-full bg-white/5 ring-1 ring-white/15">
                     {tabs.map((t) => (
                       <button
                         key={t}
                         type="button"
                         onClick={() => {
-                          setTvTab(t);
-                          setAutoTab(false);
+                          smoothSwitch(() => {
+                            setTvTab(t);
+                            setAutoTab(false);
+                          });
                         }}
                         className={
-                          "px-3 py-1 text-sm font-semibold transition " +
+                          "relative overflow-hidden px-3 py-1 text-sm font-semibold transition " +
                           (activeTab === t
                             ? t === "superfinal"
                               ? "bg-gradient-to-r from-orange-500 to-rose-500 text-white"
@@ -862,6 +1009,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                         }
                       >
                         {TAB_LABEL[t]}
+                        {activeTab === t ? <TabProgress timer={mainTimer} /> : null}
                       </button>
                     ))}
                   </div>
@@ -876,13 +1024,21 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                         : "text-white/40 ring-white/15 hover:bg-white/10")
                     }
                   >
-                    ⟳ Auto
+                    ⟳ Auto{autoTab ? <AutoCountdown timer={mainTimer ?? subTimer} /> : null}
                   </button>
+                  </>
+                  ) : null}
                 </div>
               ) : null}
             </div>
           </div>
 
+          <style>{TRANSITION_CSS}</style>
+          {/* Fallback-Einblenden (nur ohne echtes Überblenden): neuer key = neue Ansicht */}
+          <div
+            key={`${activeTab}|${showTableSub ? tableSub : ""}`}
+            style={vtSupported === false ? { animation: "tvFadeIn 0.6s ease both" } : undefined}
+          >
           {!data && !error ? (
             <div className="py-24 text-center text-2xl text-white/50">Lade Turnier …</div>
           ) : isMatchFormat && matchView ? (
@@ -895,6 +1051,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
               superFinal={superFinal}
               series={series}
               isFinished={isFinished}
+              race={hasRace ? <RaceChart data={raceData} players={racePlayers} width={1156} height={640} /> : null}
             />
           ) : activeTab === "podium" ? (
             <div className="w-[1500px]">
@@ -908,11 +1065,23 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             <div className="w-[1500px]">
               <SeriesView series={series} rows={rowsTp} isFinished={isFinished} />
             </div>
-          ) : isRotation ? (
-            <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} />
           ) : (
-            <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
+            // Tabelle ⇄ 📈 Verlauf (Umschalter oben in der Kopfzeile)
+            showTableSub && tableSub === "race" ? (
+              <RaceChart
+                data={raceData}
+                players={racePlayers}
+                width={1500}
+                height={Math.max(560, Math.min(760, 260 + racePlayers.length * 44))}
+                roundLabels={raceRoundLabels}
+              />
+            ) : isRotation ? (
+              <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} />
+            ) : (
+              <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
+            )
           )}
+          </div>
         </div>
       </div>
     </div>
@@ -981,6 +1150,47 @@ function PlaceBadge({ place, total }: { place: number; total: number }) {
   );
 }
 
+// ── Fortschritt bis zum nächsten automatischen Wechsel ─────────────────────
+type TabTimer = { start: number; ms: number } | null;
+
+/** dünner Balken unten im aktiven Reiter, füllt sich bis zum Wechsel (reine CSS-Animation) */
+function TabProgress({ timer }: { timer: TabTimer }) {
+  if (!timer) return null;
+  return <TabProgressBar key={timer.start} start={timer.start} ms={timer.ms} />;
+}
+function TabProgressBar({ start, ms }: { start: number; ms: number }) {
+  // nur EINMAL pro Durchlauf berechnen (sonst springt der Balken bei jedem Neuladen)
+  const [elapsed] = useState(() => Math.max(0, Math.min(ms, Date.now() - start)));
+  const timer = { ms };
+  return (
+    <>
+      <style>{`@keyframes tvTabProgress { from { transform: scaleX(0) } to { transform: scaleX(1) } }`}</style>
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-white/20" />
+      <span
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] origin-left bg-white"
+        style={{
+          animation: `tvTabProgress ${timer.ms}ms linear forwards`,
+          animationDelay: `-${elapsed}ms`,
+          boxShadow: "0 0 6px rgba(255,255,255,0.8)",
+        }}
+      />
+    </>
+  );
+}
+
+/** Restsekunden im "⟳ Auto"-Knopf */
+function AutoCountdown({ timer }: { timer: TabTimer }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!timer) return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [timer]);
+  if (!timer) return null;
+  const left = Math.max(0, Math.ceil((timer.start + timer.ms - now) / 1000));
+  return <span className="ml-1.5 inline-block min-w-[2.2em] tabular-nums text-emerald-200/80">{left}s</span>;
+}
+
 function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[]; eloOn: boolean }) {
   return (
     <div className="overflow-hidden rounded-3xl bg-white/[0.04] ring-1 ring-white/10 shadow-2xl backdrop-blur">
@@ -993,16 +1203,16 @@ function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[
               Spieler
             </th>
             {columns.map((c) => (
-              <th key={c.matchId} className="px-2 pb-3 pt-4 text-center font-normal">
-                <div className="mx-auto flex w-[8.5em] flex-col items-center gap-1">
+              <th key={c.matchId} className="px-2 pb-2 pt-3 text-center font-normal">
+                <div className="mx-auto flex w-[8.5em] flex-col items-center gap-0.5">
                   {/* Flipper-Icon */}
                   <span
-                    className={`flex h-14 w-14 items-center justify-center rounded-2xl text-3xl ring-1 ${
+                    className={`flex h-10 w-10 items-center justify-center rounded-xl text-2xl ring-1 ${
                       c.finished ? "bg-white/10 ring-white/20" : "bg-indigo-500/20 ring-indigo-300/40"
                     }`}
                   >
                     {c.machineIcon ?? (
-                      <span className="text-xl font-bold text-white/80">{initials(c.machineName)}</span>
+                      <span className="text-base font-bold text-white/80">{initials(c.machineName)}</span>
                     )}
                   </span>
                   <div className="w-full truncate text-[0.95em] font-bold text-white" title={c.machineName}>
@@ -1014,7 +1224,7 @@ function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[
                   </div>
                   {/* Highscore */}
                   {c.highscore != null ? (
-                    <div className="mt-1 w-full rounded-xl bg-amber-400/10 px-2 py-1 ring-1 ring-amber-300/30">
+                    <div className="mt-0.5 w-full rounded-xl bg-amber-400/10 px-2 py-0.5 ring-1 ring-amber-300/30">
                       <div className="text-[0.8em] font-bold tabular-nums text-amber-300">
                         🏆 {scoreFmt.format(c.highscore)}
                       </div>
@@ -1023,7 +1233,7 @@ function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-1 w-full rounded-xl bg-white/5 px-2 py-1 text-xs leading-[2.2] text-white/30">
+                    <div className="mt-0.5 w-full rounded-xl bg-white/5 px-2 py-0.5 text-xs leading-[2.2] text-white/30">
                       noch offen
                     </div>
                   )}
@@ -1160,6 +1370,7 @@ function MatchTvView({
   superFinal,
   series,
   isFinished,
+  race,
 }: {
   mv: MatchViewData;
   rows: Row[];
@@ -1168,6 +1379,8 @@ function MatchTvView({
   superFinal: SuperFinalRank[] | null;
   series: SeriesData | null;
   isFinished: boolean;
+  /** 📈 Verlauf-Graph (fertig gerendert) */
+  race?: React.ReactNode;
 }) {
   const rowById: Record<string, Row> = {};
   for (const r of rows) rowById[r.id] = r;
@@ -1183,6 +1396,8 @@ function MatchTvView({
           <SuperFinalView ranking={superFinal} rows={rows} />
         ) : tab === "series" && series ? (
           <SeriesView series={series} rows={rows} isFinished={isFinished} />
+        ) : tab === "race" && race ? (
+          race
         ) : tab === "archive" ? (
           <ArchiveView blocks={mv.archive} rowById={rowById} />
         ) : !cur ? (
@@ -1728,7 +1943,54 @@ function TpText({ tp, bonus = 0 }: { tp: number; bonus?: number }) {
 const SERIES_MAX_ROWS = 16;
 
 /** 📊 Turnierserie (gleiche Kategorie) – nach Turnierende zusätzlich "Heute" + Auf-/Abstieg */
-function SeriesView({ series, rows, isFinished }: { series: SeriesData; rows: Row[]; isFinished: boolean }) {
+function SeriesView({ series: seriesIn, rows, isFinished }: { series: SeriesData; rows: Row[]; isFinished: boolean }) {
+  // Innere Reiter: 🏆 Serie (exakt gleiche Kategorie) ⇄ 🏷️ Turniername (exakt gleicher Name)
+  const hasCat = !!seriesIn.category;
+  const hasName = !!seriesIn.name;
+  const [sub, setSub] = useState<"category" | "name">(hasCat ? "category" : "name");
+  const [subAuto, setSubAuto] = useState(true);
+  const [subTimer, setSubTimer] = useState<TabTimer>(null);
+  // am TV klickt niemand: zur Hälfte der Anzeigezeit automatisch umschalten
+  useEffect(() => {
+    if (!subAuto || !hasCat || !hasName) return;
+    const ms = isFinished ? FINISHED_TAB_MS : TAB_DURATION_MS.series / 2;
+    setSubTimer({ start: Date.now(), ms });
+    const t = setTimeout(() => smoothSwitch(() => setSub((v) => (v === "category" ? "name" : "category"))), ms);
+    return () => clearTimeout(t);
+  }, [sub, subAuto, hasCat, hasName, isFinished]);
+  useEffect(() => {
+    if (!subAuto) setSubTimer(null);
+  }, [subAuto]);
+  const byName = !hasCat || (hasName && sub === "name");
+
+  // gleiche Darstellung, nur andere Zeilen/Überschrift
+  const series: SeriesData = byName
+    ? { ...seriesIn, category: seriesIn.name ?? "", rows: seriesIn.nameRows ?? [] }
+    : seriesIn;
+  const subBtn = (v: "category" | "name", label: string, value: string) => {
+    const active = (v === "name") === byName;
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          smoothSwitch(() => {
+            setSub(v);
+            setSubAuto(false);
+          });
+        }}
+        className={
+          "relative min-w-0 max-w-[420px] overflow-hidden rounded-xl px-4 py-1.5 text-left transition " +
+          (active ? "bg-indigo-500 text-white shadow-lg" : "text-white/55 hover:bg-white/10")
+        }
+      >
+        <span className="block text-sm font-semibold uppercase tracking-widest">{label}</span>
+        <span className={"block truncate text-xl font-extrabold " + (active ? "text-white" : "text-white/60")}>
+          {value || "—"}
+        </span>
+        {active && hasCat && hasName ? <TabProgress timer={subTimer} /> : null}
+      </button>
+    );
+  };
   const rowByPlayer: Record<string, Row> = {};
   for (const r of rows) rowByPlayer[r.id] = r;
 
@@ -1803,16 +2065,16 @@ function SeriesView({ series, rows, isFinished }: { series: SeriesData; rows: Ro
       {/* Serien-Tabelle */}
       <div className="overflow-hidden rounded-3xl bg-white/[0.04] shadow-2xl ring-1 ring-white/10">
         <div className="flex items-end justify-between px-6 pb-2 pt-4">
-          <div>
-            <div className="text-sm font-semibold uppercase tracking-widest text-indigo-300/80">Turnierserie</div>
-            <div className="text-2xl font-extrabold">{series.category || "—"}</div>
+          <div className="flex min-w-0 gap-1 rounded-2xl bg-white/[0.06] p-1 ring-1 ring-white/10">
+            {hasCat ? subBtn("category", "🏆 Serie", seriesIn.category) : null}
+            {hasName ? subBtn("name", "🏷️ Turniername", seriesIn.name ?? "") : null}
           </div>
           <div className="text-sm text-white/40">
             {isFinished ? "inkl. heute" : "Stand vor heute"} · nur beendete Turniere
           </div>
         </div>
         {shown.length === 0 ? (
-          <div className="px-6 pb-6 text-lg text-white/40">Noch keine beendeten Turniere in dieser Kategorie.</div>
+          <div className="px-6 pb-6 text-lg text-white/40">Noch keine beendeten Turniere {byName ? "mit diesem Namen" : "in dieser Kategorie"}.</div>
         ) : (
           <table className="w-full border-collapse text-[20px]">
             <thead>

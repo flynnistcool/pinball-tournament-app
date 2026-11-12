@@ -65,13 +65,19 @@ export async function GET(req: Request) {
   // ✅ nur beendete Turniere berücksichtigen (stale/deleted vermeiden)
   query = query.eq("tournaments.status", "finished");
 
+  // exact=1 → Kategorie/Name müssen exakt passen (Groß/Klein egal),
+  // sonst wie bisher "enthält" (Statistik-Filter)
+  const exact = searchParams.get("exact") === "1";
+  // Platzhalter (% _ \) im Text maskieren, damit ilike wirklich exakt vergleicht
+  const escLike = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
+
   // 🔽 Filter auf Turnier-Tabelle anwenden
   if (category) {
-    query = query.ilike("tournaments.category", `%${category}%`);
+    query = query.ilike("tournaments.category", exact ? escLike(category) : `%${category}%`);
   }
 
   if (search) {
-    query = query.ilike("tournaments.name", `%${search}%`);
+    query = query.ilike("tournaments.name", exact ? escLike(search) : `%${search}%`);
   }
 
   if (from) {

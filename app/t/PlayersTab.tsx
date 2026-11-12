@@ -661,7 +661,7 @@ function extractQuotedParts(s: string): string[] {
 
 function fmtScore(v: any) {
   const n = Number(v);
-  return Number.isFinite(n) ? n.toLocaleString("en-US") : "–";
+  return Number.isFinite(n) ? n.toLocaleString("de-DE") : "–";
 }
 
 function Sparkline({ values }: { values: number[] }) {
@@ -3502,14 +3502,14 @@ const saveOptions = saveOptionGroups.flatMap((g) => g.options);
 
                 <div className="text-neutral-700">
                   Score (gesamt):{" "}
-                  <span className="font-semibold tabular-nums">{Number(scoreCum).toLocaleString("en-US") ?? "–"}</span>
+                  <span className="font-semibold tabular-nums">{Number(scoreCum).toLocaleString("de-DE") ?? "–"}</span>
                 </div>
 
                 <span className="text-neutral-300">•</span>
 
                 <div className="text-neutral-700">
                   Ball-Score (relativ):{" "}
-                  <span className="font-semibold tabular-nums">{Number(scoreRel).toLocaleString("en-US") ?? "–"}</span>
+                  <span className="font-semibold tabular-nums">{Number(scoreRel).toLocaleString("de-DE") ?? "–"}</span>
                 </div>
               </div>
 
@@ -3574,7 +3574,7 @@ const saveOptions = saveOptionGroups.flatMap((g) => g.options);
                 Ende: {opened.finished_at ? new Date(opened.finished_at).toLocaleString() : "–"}
               </div>
               <div className="mt-1 text-[12px] text-neutral-700">
-                Gesamt-Score: <span className="font-semibold tabular-nums">{Number(opened.total_score ).toLocaleString("en-US") ?? "–"}</span>
+                Gesamt-Score: <span className="font-semibold tabular-nums">{Number(opened.total_score ).toLocaleString("de-DE") ?? "–"}</span>
               </div>
               {opened.run_detail && opened.run_detail.trim().length > 0 ? (
                 <div className="mt-1 text-[12px] text-neutral-600">
@@ -4104,7 +4104,7 @@ const saveOptions = saveOptionGroups.flatMap((g) => g.options);
         <div>
           Score: <span className="tabular-nums font-semibold">
 
-            {Number(r.total_score).toLocaleString("en-US") ?? "–"}
+            {Number(r.total_score).toLocaleString("de-DE") ?? "–"}
 
           </span>
           <span className="text-neutral-400"> • </span>
