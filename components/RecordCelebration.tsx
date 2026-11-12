@@ -8,6 +8,7 @@
 // - Auch im Admin-Bereich (Dashboard) im Einsatz: dort ohne Ton und per Antippen schließbar.
 // - 🏆 Allzeit-Rekord: Konfetti + Vollbild 16 s + Fanfare (wenn Ton an).
 // - 🥇 30-Tage-Highscore (bester Score der letzten 30 Tage): Vollbild ohne Konfetti 10 s + Fanfare (5 s).
+// - 🎖️ Matchsieg-Meilenstein (1, 10, 25, 50, 100, 250, 500, jede 1.000): Vollbild lila 10 s + kurzer Ton.
 // - 💪 Persönlicher Rekord: Karte am Rand 10 s + kurzer Ton.
 // Zeiten bewusst lang: man soll es noch sehen, wenn man erst zum TV läuft.
 
@@ -15,13 +16,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert (createPortal funktioniert trotzdem)
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, type Celebration, type PriorRecords } from "@/lib/recordWatch";
+import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
 
 const STABLE_MS = 10_000;
 const RECORDS_REFRESH_MS = 5 * 60_000;
-const SHOW_MS: Record<Celebration["kind"], number> = { record: 16_000, month: 10_000, personal: 10_000 };
-const KIND_ORDER: Record<Celebration["kind"], number> = { record: 0, month: 1, personal: 2 };
 
-type LiveData = Parameters<typeof liveEntriesFrom>[0] & { tournament?: { status?: string | null } };
+type WinShown = { kind: "wins"; n: number; playerName: string; key: string };
+type Shown = Celebration | WinShown;
+
+const SHOW_MS: Record<Shown["kind"], number> = { record: 16_000, month: 10_000, wins: 10_000, personal: 10_000 };
+const KIND_ORDER: Record<Shown["kind"], number> = { record: 0, month: 1, wins: 2, personal: 3 };
+const sortValue = (x: Shown) => (x.kind === "wins" ? x.n : x.entry.score);
+
+type LiveData = Parameters<typeof liveEntriesFrom>[0] &
+  Parameters<typeof liveWinsFrom>[0] & { tournament?: { status?: string | null } };
 
 const fmt = (n: number) => n.toLocaleString("de-DE");
 
@@ -165,6 +173,30 @@ function MonthRecord({ c, onClose }: { c: Extract<Celebration, { kind: "month" }
   );
 }
 
+function WinMilestone({ c, onClose }: { c: WinShown; onClose?: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div
+        className="relative rounded-[3vw] bg-gradient-to-b from-violet-800/90 to-slate-950/95 px-[5vw] py-[3vw] text-center ring-4 ring-violet-300/70"
+        style={{ animation: "recPop 0.6s ease-out both", boxShadow: "0 0 80px rgba(167,139,250,.5)" }}
+      >
+        <div className="text-[7vw] leading-none">{milestoneIcon(c.n)}</div>
+        <div className="mt-3 text-[5vw] font-black uppercase leading-none tracking-tight text-violet-200">
+          {milestoneTitle(c.n)}
+        </div>
+        <div className="mt-5 text-[3.4vw] font-extrabold text-white">{c.playerName}</div>
+        <div className="mt-2 text-[1.6vw] font-semibold uppercase tracking-widest text-violet-100/60">
+          {c.n === 1 ? "Willkommen im Club der Sieger" : "Matchsiege insgesamt – herzlichen Glückwunsch!"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SmallPersonal({ c, onClose }: { c: Extract<Celebration, { kind: "personal" }>; onClose?: () => void }) {
   return (
     <div
@@ -204,25 +236,31 @@ export default function RecordCelebration({
 }) {
   const [prior, setPrior] = useState<PriorRecords | null>(null);
   const [enabled, setEnabled] = useState(false);
-  const [queue, setQueue] = useState<Celebration[]>([]);
+  const [priorWins, setPriorWins] = useState<Record<string, number> | null>(null);
+  const [queue, setQueue] = useState<Shown[]>([]);
   const [mounted, setMounted] = useState(false);
 
   const seenRef = useRef<Map<string, number> | null>(null); // key → zuletzt bewerteter Score
   const pendingRef = useRef<Map<string, { score: number; since: number }>>(new Map());
+  // Matchsiege: bereits gezählte Siege (key → Profil) und noch nicht stabile
+  const seenWinsRef = useRef<Map<string, string> | null>(null);
+  const pendingWinsRef = useRef<Map<string, number>>(new Map());
   // aktueller Stand für die lokale 2-s-Prüfung
   const dataRef = useRef<LiveData | null>(null);
   const priorRef = useRef<PriorRecords | null>(null);
   const enabledRef = useRef(false);
+  const priorWinsRef = useRef<Record<string, number> | null>(null);
   dataRef.current = data;
   priorRef.current = prior;
   enabledRef.current = enabled;
+  priorWinsRef.current = priorWins;
 
   useEffect(() => setMounted(true), []);
 
-  // bisherige Rekorde laden
+  // bisherige Rekorde + bisherige Matchsiege laden
   useEffect(() => {
     let disposed = false;
-    async function load() {
+    async function loadRecords() {
       try {
         const res = await fetch(`/api/public/machine-records?code=${encodeURIComponent(code)}&ts=${Date.now()}`, {
           cache: "no-store",
@@ -235,6 +273,22 @@ export default function RecordCelebration({
         /* nächster Versuch beim nächsten Intervall */
       }
     }
+    async function loadWins() {
+      try {
+        const res = await fetch(`/api/public/player-wins?code=${encodeURIComponent(code)}&ts=${Date.now()}`, {
+          cache: "no-store",
+        });
+        const j = await res.json().catch(() => null);
+        if (disposed || !res.ok || !j?.ok) return;
+        setPriorWins(j.wins ?? {});
+      } catch {
+        /* nächster Versuch beim nächsten Intervall */
+      }
+    }
+    const load = () => {
+      void loadRecords();
+      void loadWins();
+    };
     void load();
     const t = window.setInterval(load, RECORDS_REFRESH_MS);
     return () => {
@@ -249,17 +303,19 @@ export default function RecordCelebration({
       const d = dataRef.current;
       if (!d) return;
       const entries = liveEntriesFrom(d);
+      const wins = liveWinsFrom(d);
 
       // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
-      if (!seenRef.current) {
+      if (!seenRef.current || !seenWinsRef.current) {
         seenRef.current = new Map(entries.map((e) => [e.key, e.score]));
+        seenWinsRef.current = new Map(wins.map((w) => [w.key, w.profileId]));
         return;
       }
       const seen = seenRef.current;
       const pending = pendingRef.current;
       const pr = priorRef.current;
       const now = Date.now();
-      const found: Celebration[] = [];
+      const found: Shown[] = [];
       const finished = d.tournament?.status === "finished";
 
       for (const e of entries) {
@@ -284,23 +340,48 @@ export default function RecordCelebration({
       const live = new Set(entries.map((e) => e.key));
       for (const k of Array.from(pending.keys())) if (!live.has(k)) pending.delete(k);
 
+      // 🎖️ Matchsiege: neuer Platz 1 → nach STABLE_MS zählen; Meilenstein? → feiern
+      const seenWins = seenWinsRef.current;
+      const pendingWins = pendingWinsRef.current;
+      const pw = priorWinsRef.current;
+      const liveWinKeys = new Set(wins.map((w) => w.key));
+      // korrigierte Plätze (kein Platz 1 mehr) wieder aus der Zählung nehmen
+      for (const k of Array.from(seenWins.keys())) if (!liveWinKeys.has(k)) seenWins.delete(k);
+      for (const k of Array.from(pendingWins.keys())) if (!liveWinKeys.has(k)) pendingWins.delete(k);
+      for (const w of wins) {
+        if (seenWins.has(w.key)) continue;
+        const since = pendingWins.get(w.key);
+        if (since == null) {
+          pendingWins.set(w.key, now);
+          continue;
+        }
+        if (now - since < STABLE_MS || !pw) continue;
+        pendingWins.delete(w.key);
+        seenWins.set(w.key, w.profileId);
+        if (finished) continue;
+        let liveCount = 0;
+        for (const pid of Array.from(seenWins.values())) if (pid === w.profileId) liveCount++;
+        const n = (pw[w.profileId] ?? 0) + liveCount;
+        if (isWinMilestone(n)) found.push({ kind: "wins", n, playerName: w.playerName, key: w.key });
+      }
+
       if (found.length) {
-        // Rekorde zuerst, dann 30 Tage, dann persönliche – jeweils höchster Score zuerst
-        found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || b.entry.score - a.entry.score);
+        // Rekorde zuerst, dann 30 Tage, Matchsiege, persönliche – jeweils höchster Wert zuerst
+        found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || sortValue(b) - sortValue(a));
         setQueue((q) => [...q, ...found]);
       }
     }
     check();
     const t = window.setInterval(check, TICK_MS);
     return () => window.clearInterval(t);
-  }, [data, prior, enabled]);
+  }, [data, prior, enabled, priorWins]);
 
   // Warteschlange abspielen
   const current = queue[0] ?? null;
   useEffect(() => {
     if (!current) return;
     if (soundOn) {
-      if (current.kind === "personal") playDing();
+      if (current.kind === "personal" || current.kind === "wins") playDing();
       else onRecordSound?.(current.kind);
     }
     const t = window.setTimeout(() => setQueue((q) => q.slice(1)), SHOW_MS[current.kind]);
@@ -317,6 +398,8 @@ export default function RecordCelebration({
         <BigRecord c={current} onClose={close} />
       ) : current.kind === "month" ? (
         <MonthRecord c={current} onClose={close} />
+      ) : current.kind === "wins" ? (
+        <WinMilestone c={current} onClose={close} />
       ) : (
         <SmallPersonal c={current} onClose={close} />
       )}
