@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
-import { matchPoints } from "@/lib/points";
+import { matchPoints, superFinalTpBonus } from "@/lib/points";
 
 type MPRow = {
   player_id: string;
@@ -73,7 +73,7 @@ const [
           .eq("tournament_id", t.id),
         // ✅ NEU: Turnierpunkte pro Spieler aus tournament_results
         sb.from("tournament_results")
-          .select("player_id, tournament_points")
+          .select("player_id, tournament_points, super_final_rank")
           .eq("tournament_id", t.id),
 sb
   .from("rounds")
@@ -83,10 +83,12 @@ sb
 
 
   const tournamentPointsByPlayer: Record<string, number> = {};
+  const superFinalTpBonusByPlayer: Record<string, number> = {}; // Anteil Superfinale (für "6 TP + 2 🔥")
   for (const row of (trRows ?? []) as any[]) {
     const pid = row.player_id as string | undefined;
     if (!pid) continue;
     tournamentPointsByPlayer[pid] = Number(row.tournament_points ?? 0);
+    superFinalTpBonusByPlayer[pid] = superFinalTpBonus(row.super_final_rank ?? null);
   }
 
   // ⬇️ Avatare + Farben + Icons aus den Profilen holen
@@ -258,6 +260,7 @@ const rows = (players ?? []).map((p: any) => {
     points: pointsSum[p.id] ?? 0,
     // ✅ Turnierwertungspunkte (fix nach Turnierende)
     tournamentPoints: tournamentPointsByPlayer[p.id] ?? 0,
+    superFinalTpBonus: superFinalTpBonusByPlayer[p.id] ?? 0,
 
     podiumRate,
     favoriteMachine: favoriteMachine(p.id),

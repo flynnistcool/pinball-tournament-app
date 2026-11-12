@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
-import { matchPoints } from "@/lib/points";
+import { matchPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
 
 type MPRow = {
   player_id: string;
@@ -36,7 +36,7 @@ function tournamentPointsForRank(finalRank: number | null, nPlayers: number): nu
 // 👉 NEU: Bonus für Super-Final-Sieger
 function superFinalBonusPoints(nFinalPlayers: number): number {
   if (nFinalPlayers <= 0) return 0;
-  return 2;
+  return SUPER_FINAL_TP_BONUS; // zentral in lib/points.ts (auch für die Anzeige "6 TP + 2 🔥")
 }
 
 export async function POST(req: Request) {

@@ -31,7 +31,7 @@ import AdminTab from "./AdminTab";
 import Image from "next/image";
 import PinballScore from "@/components/PinballScore";
 import AnnouncerAvatar from "@/components/AnnouncerAvatar";
-import { computeProvisionalRotationPoints } from "@/lib/points";
+import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
 
 
 function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
@@ -117,6 +117,18 @@ function computeCompetitionPlaces<T>(rows: T[], getPoints: (r: T) => number) {
 
 function medalForPlace(place: number) {
   return place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : "";
+}
+
+// ✅ Turnierpunkte aufgeschlüsselt: "6 + 2 🔥" wenn ein Superfinale-Bonus enthalten ist
+// tp = gespeicherte Turnierpunkte (inkl. Bonus), bonus = Superfinale-Anteil
+function TpWithBonus({ tp, bonus }: { tp: number; bonus: number }) {
+  if (!bonus) return <>{tp}</>;
+  return (
+    <span title={`${tp - bonus} Turnierpunkte + ${bonus} Superfinale-Bonus = ${tp}`}>
+      {tp - bonus}
+      <span className="ml-1 whitespace-nowrap text-orange-600">+{bonus} 🔥</span>
+    </span>
+  );
 }
 
 
@@ -3060,7 +3072,7 @@ async function loadMatchHistory() {
                 {s.final_rank ?? "—"}
               </td>
               <td className="py-1 pr-2 text-right tabular-nums font-semibold text-amber-600">
-                {s.tournament_points ?? 0}
+                <TpWithBonus tp={Number(s.tournament_points ?? 0)} bonus={s.super_final_rank === 1 ? SUPER_FINAL_TP_BONUS : 0} />
               </td>
             </tr>
           ))}
@@ -3120,7 +3132,7 @@ async function loadMatchHistory() {
                   {s.final_rank ?? "—"}
                 </td>
                 <td className="py-1 pr-2 text-right tabular-nums font-semibold text-amber-600">
-                  {s.tournament_points ?? 0}
+                  <TpWithBonus tp={Number(s.tournament_points ?? 0)} bonus={s.super_final_rank === 1 ? SUPER_FINAL_TP_BONUS : 0} />
                 </td>
               </tr>
             ))}
@@ -3265,7 +3277,9 @@ async function loadMatchHistory() {
                     {s.created_at ? new Date(s.created_at).toLocaleDateString("de-DE") : "—"}
                   </td>
                   <td className="py-1 pr-2 text-right tabular-nums text-neutral-600">{s.final_rank ?? "—"}</td>
-                  <td className="py-1 pr-2 text-right tabular-nums font-semibold text-amber-600">{s.tournament_points ?? 0}</td>
+                  <td className="py-1 pr-2 text-right tabular-nums font-semibold text-amber-600">
+                  <TpWithBonus tp={Number(s.tournament_points ?? 0)} bonus={s.super_final_rank === 1 ? SUPER_FINAL_TP_BONUS : 0} />
+                </td>
                 </tr>
               ))
             )}
@@ -4172,7 +4186,11 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                                 </span>
                               </div>
                               <div className="mt-0.5 text-[13px] text-amber-700 font-semibold">
-                                +{Number(r.tournamentPoints ?? 0)} TP
+                                +<TpWithBonus
+                                  tp={Number(r.tournamentPoints ?? 0)}
+                                  bonus={Number(r.superFinalTpBonus ?? 0)}
+                                />{" "}
+                                TP
                               </div>
                             </div>
                           )}
@@ -10220,6 +10238,39 @@ const matchSize =
     }
   }
 
+  // ✅ Turnierende: statt Overlay + Ton am Admin-PC wird der Infobildschirm geöffnet.
+  //    Siegerehrung + Trommelwirbel/Fanfare laufen dort (am TV, wo alle hinschauen).
+  //    true = altes Verhalten (Overlay + Ton hier im Admin) wieder einschalten.
+  const ADMIN_FINISH_CELEBRATION = false;
+
+  // Fenster MUSS direkt im Klick geöffnet werden (sonst blockiert der Pop-up-Blocker).
+  // Erst leer öffnen, nach erfolgreichem Speichern auf den Infobildschirm leiten.
+  function openTvWindowNow(): Window | null {
+    if (ADMIN_FINISH_CELEBRATION) return null;
+    try {
+      return window.open("about:blank", "_blank");
+    } catch {
+      return null;
+    }
+  }
+  function showTvInWindow(w: Window | null) {
+    if (ADMIN_FINISH_CELEBRATION) return;
+    const url = `/s/${encodeURIComponent(code)}/tv`;
+    try {
+      if (w && !w.closed) w.location.href = url;
+      else window.open(url, "_blank");
+    } catch {
+      /* ignore */
+    }
+  }
+  function closeTvWindow(w: Window | null) {
+    try {
+      if (w && !w.closed) w.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
   function handleFinalWinClick(p: { playerId: string; name: string }) {
     const gamesCount = finalState?.games?.length ?? 0;
     const nextGameNumber = gamesCount + 1;
@@ -10230,14 +10281,21 @@ const matchSize =
 
     if (!sicher) return;
 
-    registerFinalWin(p.playerId, p.name);
+    // Beendet dieser Sieg das Superfinale? Dann Infobildschirm-Fenster schon jetzt (im Klick) öffnen.
+    const target = Number(finalState?.target_points ?? 0);
+    const cur = (finalState?.players ?? []).find((x: any) => x?.playerId === p.playerId);
+    const willFinish = target > 0 && Number(cur?.points ?? 0) + 1 >= target;
+    const tvWin = willFinish ? openTvWindowNow() : null;
+
+    registerFinalWin(p.playerId, p.name, tvWin);
   }
 
   async function finishTournament() {
     if (!confirm("Turnier wirklich beenden? Danach ist nichts mehr änderbar."))
       return;
 
-    playWinnerSounds();
+    const tvWin = openTvWindowNow();
+    if (ADMIN_FINISH_CELEBRATION) playWinnerSounds();
 
     const res = await fetch("/api/tournaments/finish", {
       method: "POST",
@@ -10246,14 +10304,16 @@ const matchSize =
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
+      closeTvWindow(tvWin);
       alert(j?.error ?? "Fehler beim Beenden");
       return;
     }
 
+    showTvInWindow(tvWin);
     await reloadAll();
     {/* await loadArchive(); neue hinzugefügt */}
     await loadChampions();
-    setShowCelebration(true);
+    if (ADMIN_FINISH_CELEBRATION) setShowCelebration(true);
   }
 
   async function startSuperFinal() {
@@ -10338,7 +10398,7 @@ async function waitForRoundDom(roundId: string, { mustBeOpen }: { mustBeOpen: bo
 
 
 
-async function registerFinalWin(playerId: string, winnerName: string) {
+async function registerFinalWin(playerId: string, winnerName: string, tvWin: Window | null = null) {
   if (locked) return;
   setBusy(true);
   setNotice(null);
@@ -10353,13 +10413,14 @@ async function registerFinalWin(playerId: string, winnerName: string) {
   setBusy(false);
 
   if (!res.ok) {
+    closeTvWindow(tvWin);
     setNotice(j.error ?? "Final-Spiel konnte nicht gespeichert werden");
     return;
   }
 
-  // Finale fertig -> großes Feier-Overlay, KEIN kleines Elo-Overlay
+  // Finale fertig -> Infobildschirm (Superfinale-Podest + Ton dort), KEIN kleines Elo-Overlay
   if (j.finished) {
-    playWinnerSounds();
+    if (ADMIN_FINISH_CELEBRATION) playWinnerSounds();
 
     try {
       await fetch("/api/tournaments/finish", {
@@ -10371,12 +10432,16 @@ async function registerFinalWin(playerId: string, winnerName: string) {
       // Ignorieren, Feier trotzdem zeigen
     }
 
+    showTvInWindow(tvWin);
     await reloadAll();
     {/* await loadArchive(); neue hinzugefügt */}
     await loadChampions();
-    setShowCelebration(true);
+    if (ADMIN_FINISH_CELEBRATION) setShowCelebration(true);
     return;
   }
+
+  // Finale läuft doch weiter (Vorhersage lag daneben) -> vorsorglich geöffnetes Fenster schließen
+  closeTvWindow(tvWin);
 
   // Finale läuft weiter: hier das kleine Super-Final-Elo-Overlay
   if (superfinalEloEnabled) {

@@ -73,8 +73,35 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     .select("profile_id, rating_before")
     .eq("tournament_id", t.id);
 
+  // Superfinale (falls gestartet) – für das Superfinale-Podest im Infobildschirm
+  let final: {
+    status: string | null;
+    target_points: number | null;
+    players: { player_id: string; seed: number; start_points: number; points: number }[];
+  } | null = null;
+  const { data: finales } = await sb
+    .from("finales")
+    .select("id, status, target_points")
+    .eq("tournament_id", t.id)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (finales && finales.length > 0) {
+    const f: any = finales[0];
+    const { data: fps } = await sb
+      .from("final_players")
+      .select("player_id, seed, start_points, points")
+      .eq("final_id", f.id)
+      .order("seed", { ascending: true });
+    final = {
+      status: f.status ?? null,
+      target_points: f.target_points ?? null,
+      players: (fps ?? []) as any[],
+    };
+  }
+
   return NextResponse.json({
     tournament: t,
+    final,
     profiles: profiles ?? [],
     start_ratings: startRatings ?? [],
     players: players ?? [],

@@ -100,6 +100,7 @@ export async function GET(req: Request) {
     created_at: r.tournaments?.created_at ?? null,
     final_rank: r.final_rank ?? null,
     tournament_points: r.tournament_points ?? 0,
+    super_final_rank: r.super_final_rank ?? null, // für Aufschlüsselung "6 TP + 2 🔥"
   }));
 
   // Sortierung: Punkte desc, bei Gleichstand neuestes zuerst

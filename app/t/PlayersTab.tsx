@@ -197,6 +197,7 @@ type PlayersTabProps = {
 import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/ui";
 import { EloSparkline, WinrateSparkline } from "@/components/charts";
+import { SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 import {Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
 const ACTION_COLORS = [
@@ -6077,8 +6078,17 @@ return (
           {!isStartRow && (
             <div className="mt-1 flex flex-wrap gap-2">
               {pt.tournament_points != null && (
+                // ✅ aufgeschlüsselt: Superfinale-Bonus extra ("+ 6 TP" "+2 🔥 Superfinale")
                 <span className="rounded-full bg-amber-50 px-2 py-[1px] text-[11px] font-semibold text-amber-900 border">
-                  + {' '}{pt.tournament_points} TP
+                  + {' '}{pt.tournament_points - (pt.super_final_rank === 1 ? SUPER_FINAL_TP_BONUS : 0)} TP
+                </span>
+              )}
+              {pt.tournament_points != null && pt.super_final_rank === 1 && (
+                <span
+                  className="rounded-full bg-orange-50 px-2 py-[1px] text-[11px] font-semibold text-orange-700 border border-orange-200"
+                  title="Bonus-Turnierpunkte für den Sieg im Superfinale"
+                >
+                  +{SUPER_FINAL_TP_BONUS} 🔥 Superfinale
                 </span>
               )}
 

@@ -29,6 +29,14 @@ export function matchPoints(
   return position === 1 ? 4 : position === 2 ? 2 : position === 3 ? 1 : 0;
 }
 
+/** Turnierpunkte-Bonus für den Superfinale-Sieger (genutzt von /api/tournaments/finish). */
+export const SUPER_FINAL_TP_BONUS = 2;
+
+/** Superfinale-Anteil an den Turnierpunkten (für die Aufschlüsselung "6 TP + 2 🔥"). */
+export function superFinalTpBonus(superFinalRank: number | null | undefined): number {
+  return superFinalRank === 1 ? SUPER_FINAL_TP_BONUS : 0;
+}
+
 type ProvisionalMatch = { id: string };
 type ProvisionalMatchPlayer = {
   match_id: string;
