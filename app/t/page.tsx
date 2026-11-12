@@ -38,6 +38,7 @@ import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/po
 import { PointsSystemButton, PointsSchemeLine, PointsGainBadge } from "@/components/PointsSystemInfo";
 import VersionBadge from "@/components/VersionBadge";
 import LiveTvButton from "@/components/LiveTvButton";
+import HomeTiles from "@/components/HomeTiles";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
 
@@ -9645,16 +9646,19 @@ if (joined)
 
                 <div
                   className="relative w-full overflow-hidden rounded-xl border bg-neutral-100"
-                  style={{ height: 390, minHeight: 390 }}
+                  style={{ height: 255, minHeight: 255 }}
                 >
                   <Image
                     src="/pinballturnier.png"
                     alt="Pinball Turnier"
                     fill
                     unoptimized
-                    style={{ objectFit: "cover" }}
+                    style={{ objectFit: "cover", objectPosition: "center 15%" }}
                   />
                 </div>
+
+                {/* 🏠 Kacheln: läuft gerade · letzter Sieger · höchster Score der Woche */}
+                <HomeTiles onOpenTournament={(c) => joinTournament(c)} />
 
                 {/* Programmversion (Git-Kennung + Build-Zeit, siehe next.config.mjs) */}
                 <div className="flex justify-end">
