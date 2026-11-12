@@ -21,6 +21,7 @@ import RaceChart, { type RacePlayer } from "@/components/RaceChart";
 import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
+import RecordCelebration from "@/components/RecordCelebration";
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -1081,6 +1082,24 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           </div>
 
           <style>{TRANSITION_CSS}</style>
+          {/* 🏆 Highscore-Jubel (Allzeit-Rekord / persönlicher Rekord) – Einblendung über allem */}
+          <RecordCelebration
+            code={code}
+            data={data}
+            soundOn={soundOn}
+            onRecordSound={(kind) => {
+              const f = fanfareRef.current;
+              if (!f) return;
+              try {
+                f.currentTime = 0;
+                f.play().catch(() => {});
+                // 30-Tage-Highscore: nur ca. 5 s Fanfare
+                if (kind === "month") window.setTimeout(() => f.pause(), 5000);
+              } catch {
+                /* ohne Ton weiter */
+              }
+            }}
+          />
           {/* Fallback-Einblenden (nur ohne echtes Überblenden): neuer key = neue Ansicht */}
           <div
             key={`${activeTab}|${showTableSub ? tableSub : ""}`}
