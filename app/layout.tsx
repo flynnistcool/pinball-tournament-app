@@ -3,6 +3,7 @@ import "./globals.css";
 // import RoutePill from "@/components/RoutePill";
 import type { Metadata } from "next";
 import Link from "next/link";
+import VersionBadge from "@/components/VersionBadge";
 
 export const metadata: Metadata = {
   title: "Pinball Turnier",
@@ -72,8 +73,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mt-10 text-xs text-neutral-500">
             Tipp: Auf dem iPad in Safari → Teilen → „Zum Home-Bildschirm“, dann fühlt es sich wie eine App an.
           </div>
-          */}   
+          */}
         </div>
+        <VersionBadge />
       </body>
     </html>
   );
