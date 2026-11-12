@@ -20,11 +20,12 @@ import { buildRaceData, type RaceData } from "@/lib/raceChart";
 import RaceChart, { type RacePlayer } from "@/components/RaceChart";
 import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 import KeepAwake from "@/components/KeepAwake";
+import PlayerCardsTv from "@/components/PlayerCardsTv";
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
 // Ansichten (Tabs) mit Auto-Wechsel; Dauer je Ansicht
-type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race";
+type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race" | "players";
 const TAB_DURATION_MS: Record<TvTab, number> = {
   current: 10000, // Aktuelle Runde (laufendes Turnier: ⇄ Verlauf)
   archive: 15000, // Alle Runden
@@ -33,6 +34,7 @@ const TAB_DURATION_MS: Record<TvTab, number> = {
   superfinal: 20000, // 🔥 Superfinale
   series: 16000, // 📊 Turnierserie (innen: Serie ⇄ Turniername)
   race: 10000, // 📈 Verlauf (Matchplay & Co.)
+  players: 32000, // 🃏 Spielerkarten (blättert innen alle 8 s)
 };
 // Nach Turnierende schneller wechseln (Siegerehrung -> Superfinale -> Runden/Tabelle)
 const FINISHED_TAB_MS = 6000;
@@ -44,6 +46,7 @@ const TAB_LABEL: Record<TvTab, string> = {
   superfinal: "🔥 Superfinale",
   series: "📊 Turnierserie",
   race: "📈 Verlauf",
+  players: "🃏 Spieler",
 };
 
 const MACHINE_WR_REFRESH_MS = 60000; // Flipper-Winraten (über alle Turniere) nur 1x pro Minute laden
@@ -289,6 +292,15 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   const format = String(data?.tournament?.format ?? "");
   const isRotation = format === "rotation";
   const isFinished = data?.tournament?.status === "finished";
+  // 🃏 Spielerkarten im Auto-Wechsel:
+  // - preStart: Turnier läuft, aber noch keine Runde → Karten sind die einzige Ansicht
+  // - betweenRounds: alle bisherigen Matches haben Plätze, nächste Runde noch nicht gestartet
+  const preStart = !!data && !isFinished && (data?.rounds?.length ?? 0) === 0;
+  const betweenRounds = useMemo(() => {
+    if (!data || isFinished || !(data.rounds?.length ?? 0)) return false;
+    const mps = data.match_players ?? [];
+    return mps.length > 0 && mps.every((mp) => mp.position != null && Number(mp.position) > 0);
+  }, [data, isFinished]);
 
   const view = useMemo(() => {
     const players = data?.players ?? [];
@@ -707,12 +719,14 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
       if (hasSeries) t.push("series");
       t.push(isMatchFormat ? "archive" : "table");
       if (isMatchFormat && hasRace) t.push("race");
+      t.push("players"); // 🃏 Spielerkarten (nur per Antippen)
       return t;
     }
     const t: TvTab[] = [isMatchFormat ? "current" : "table"];
     if (isMatchFormat && hasArchive) t.push("archive");
     if (isMatchFormat && hasRace) t.push("race");
     if (hasSeries) t.push("series");
+    t.push("players"); // 🃏 Spielerkarten (vorerst nur per Antippen)
     return t.length > 1 ? t : [];
   }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries, hasRace]);
 
@@ -796,10 +810,23 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   // (wichtig ist dann die Tabelle / wer wo spielt) – per Klick bleibt sie erreichbar
   //   Matchplay & Co.: nur Aktuelle Runde ⇄ Verlauf (je 10 s) – "Alle Runden" + Serie per Klick
   const autoTabs: TvTab[] = isFinished
-    ? tabs
+    ? tabs.filter((t) => t !== "players")
+    : preStart
+    ? ["players"] // vor Runde 1: nur die Spielerkarten
     : isMatchFormat
-    ? tabs.filter((t) => t === "current" || t === "race")
-    : tabs.filter((t) => t !== "series");
+    ? tabs.filter((t) => t === "current" || t === "race" || (betweenRounds && t === "players"))
+    : tabs.filter((t) => t !== "series" && (t !== "players" || betweenRounds));
+  // vor Runde 1 direkt die Karten zeigen; startet Runde 1, sofort zur Runde wechseln
+  useEffect(() => {
+    if (!data) return;
+    if (!autoTab) return;
+    if (preStart && tvTab !== "players") setTvTab("players");
+    else if (!preStart && !betweenRounds && !isFinished && tvTab === "players") {
+      // Runde gestartet (erste oder nächste): Karten sofort verlassen, nicht erst nach Ablauf
+      setTimeout(() => smoothSwitch(() => setTvTab(isMatchFormat ? "current" : "table")), 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, preStart, betweenRounds, autoTab]);
   useEffect(() => {
     if (!autoTab || autoTabs.length < 2) {
       setMainTimer(null);
@@ -818,7 +845,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     // ⚠️ nicht von "tabs" (neues Array bei jedem 5-s-Neuladen) abhängen, sonst startet der
     //    Zähler ständig neu und der Wechsel passiert nie → stabiler Schlüssel tabsKey
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoTab, tabsKey, activeTab, isFinished, seriesHasBoth, hasRace]);
+  }, [autoTab, tabsKey, activeTab, isFinished, seriesHasBoth, hasRace, preStart, betweenRounds]);
 
   // Reiter "Tabelle" (Rotation & Co.): innen 📋 Tabelle ⇄ 📈 Verlauf – Umschalter sitzt oben in der Kopfzeile
   const showTableSub = !isMatchFormat && hasRace && activeTab === "table";
@@ -1061,6 +1088,8 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           >
           {!data && !error ? (
             <div className="py-24 text-center text-2xl text-white/50">Lade Turnier …</div>
+          ) : activeTab === "players" ? (
+            <PlayerCardsTv code={code} />
           ) : isMatchFormat && matchView ? (
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
