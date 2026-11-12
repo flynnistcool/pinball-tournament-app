@@ -35,6 +35,8 @@ import CreateTournamentForm from "@/components/CreateTournamentForm";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
+import { PointsSystemButton, PointsSchemeLine, PointsGainBadge } from "@/components/PointsSystemInfo";
+import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
 
 function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
@@ -7520,6 +7522,11 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                           {/*const hasResults = mps.some((mp) => mp.position != null);*/}
                           const hasResults = mps.some((mp) => getPos(mp) != null);
 
+                          // 🎯 Matchpunkte dieses Matches nach Platz (nur Anzeige, lib/pointsDisplay.ts)
+                          const matchScheme = Array.from({ length: n }, (_, i) =>
+                            matchPointsForDisplay(i + 1, mps.length, String(tournament?.format ?? ""))
+                          );
+
 
 
 
@@ -7722,6 +7729,7 @@ disabled={
                                 <div className="flex text-xs text-neutral-500 whitespace-nowrap">
                                    {displayNo ? (
                                       <div className="flex  items-end flex items-center  gap-2">
+                                        <PointsSchemeLine values={matchScheme} />
                                         <span className="font-semibold text-neutral-500 whitespace-nowrap">
                                           Spiel {displayNo}
                                         </span>
@@ -8404,7 +8412,10 @@ return (
 
 
 
-                      
+                      <div className="flex items-center gap-1.5">
+                      <PointsGainBadge
+                        points={typeof pos === "number" && pos > 0 ? matchScheme[pos - 1] ?? 0 : null}
+                      />
                       <Select
                         value={pos ?? ""}
                         className="rounded-lg h-10 max-h-10 w--[160px] max-w-[160px]  px-1 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8"
@@ -8499,6 +8510,7 @@ return (
                           );
                         })}
                       </Select>
+                      </div>
 
                       {/* ✅ NEU: Flipperpunkte/Score (unter Platz-Dropdown) */}
                       <div className="flex items-center gap-2">
@@ -12889,6 +12901,11 @@ const tasksById = useMemo(() => {
       <span className="text-neutral-500">Code</span>
       <span className="font-mono font-semibold tracking-wider">{code}</span>
     </span>
+    <PointsSystemButton
+      format={data?.tournament?.format}
+      matchSize={data?.tournament?.match_size}
+      nPlayers={Array.isArray(data?.players) ? data.players.length : 0}
+    />
     {currentRoundObj && (
       <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
         <span className="text-neutral-500">Elo in dieser Runde</span>

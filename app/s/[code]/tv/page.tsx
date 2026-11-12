@@ -18,6 +18,7 @@ import { computeFinalRanking } from "@/lib/finals";
 import { flushSync } from "react-dom";
 import { buildRaceData, type RaceData } from "@/lib/raceChart";
 import RaceChart, { type RacePlayer } from "@/components/RaceChart";
+import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -138,6 +139,7 @@ type PublicTournament = {
     format?: string | null;
     status?: string | null;
     match_size?: number | null;
+    category?: string | null;
   };
   players?: Player[];
   profiles?: Profile[];
@@ -919,10 +921,25 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                     LIVE
                   </span>
                 )}
+                {data ? (
+                  <PointsSystemTvChips
+                    format={format}
+                    matchSize={data?.tournament?.match_size ?? null}
+                    nPlayers={Array.isArray(data?.players) ? data.players.length : 0}
+                    showSuperFinal
+                  />
+                ) : null}
               </div>
               {/* leading-normal + py: verhindert abgeschnittene Ober-/Unterlängen */}
-              <div className="max-w-[36ch] truncate py-1 text-5xl font-extrabold leading-normal tracking-tight">
-                {tournamentName}
+              <div className="flex min-w-0 items-center gap-5">
+                <div className="max-w-[36ch] truncate py-1 text-5xl font-extrabold leading-normal tracking-tight">
+                  {tournamentName}
+                </div>
+                {data?.tournament?.category ? (
+                  <span className="max-w-[40ch] shrink-0 truncate rounded-full bg-indigo-400/15 px-3.5 py-0.5 text-xl font-semibold leading-snug text-indigo-200 ring-1 ring-indigo-300/30">
+                    🏷️ {data.tournament.category}
+                  </span>
+                ) : null}
               </div>
             </div>
             <div className="whitespace-nowrap pb-2 text-right text-sm text-white/50">
