@@ -37,6 +37,7 @@ import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { PointsSystemButton, PointsSchemeLine, PointsGainBadge } from "@/components/PointsSystemInfo";
 import VersionBadge from "@/components/VersionBadge";
+import LiveTvButton from "@/components/LiveTvButton";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
 
@@ -9454,6 +9455,8 @@ if (joined)
               </>
             )}
 
+            {/* 📺 laufendes Turnier → TV-Seite (rechts in der Reiterleiste) */}
+            <div className="ml-auto shrink-0 pl-2"><LiveTvButton /></div>
           </div>
         </CardHeader>
 
@@ -9626,6 +9629,9 @@ if (joined)
                 </button>
               </>
             )}
+
+            {/* 📺 laufendes Turnier → TV-Seite (rechts in der Reiterleiste) */}
+            <div className="ml-auto shrink-0 pl-2"><LiveTvButton /></div>
           </div>
         </CardHeader>
 
@@ -9707,22 +9713,22 @@ if (joined)
               </div>
               <div className="overflow-hidden rounded-2xl border bg-white">
                 {/* Desktop Header – auf Mobile ausblenden (sonst zu eng) */}
-                <div className="hidden sm:grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                  <div className="col-span-3">Name</div>
-                  <div className="col-span-3">Kategorie / Serie</div>
-                  <div className="col-span-2">Format</div>
-                  <div className="col-span-2">Location</div>
-                  <div className="col-span-1">Status</div>
-                  <div className="col-span-1">Erstellt</div>
+                <div className="hidden sm:grid sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+                  <div className="sm:col-[span_5_/_span_5]">Name</div>
+                  <div className="sm:col-[span_6_/_span_6]">Kategorie / Serie</div>
+                  <div className="sm:col-[span_5_/_span_5]">Format</div>
+                  <div className="sm:col-[span_4_/_span_4]">Location</div>
+                  <div className="sm:col-[span_2_/_span_2]">Status</div>
+                  <div className="sm:col-[span_2_/_span_2]">Erstellt</div>
                 </div>
                 {archive.map((t) => (
                   <div
                     key={t.id}
                     onClick={() => joinTournament(t.code)}
-                    className="grid grid-cols-1 sm:grid-cols-12 gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
+                    className="grid grid-cols-1 sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
                               cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition"
                   >
-                    <div className="sm:col-span-3 flex min-w-0 items-center gap-2 font-medium">
+                    <div className="sm:col-[span_5_/_span_5] flex min-w-0 items-center gap-2 font-medium">
                       <span className="truncate">{t.name}</span>
                       {t.status === "finished" && isAdmin ? (
                         <button
@@ -9761,7 +9767,7 @@ if (joined)
                       ) : null}
                     </div>
 
-                    <div className="sm:col-span-3">
+                    <div className="sm:col-[span_6_/_span_6]">
                       {t.category ? (
                         <span className="inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-700">
                           {t.category}
@@ -9773,17 +9779,25 @@ if (joined)
                       )}
                     </div>
 
-                    <div className="col-span-2  text-sm text-neutral-400">
+                    <div className="col-span-2 sm:col-[span_5_/_span_5] flex items-center gap-1.5 text-sm text-neutral-400">
                         <span
-    className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${formatStyleRound(t.format)}`}
+    className={`inline-flex items-center whitespace-nowrap rounded-full py-1 text-xs font-medium ${formatStyleRound(t.format)}`}
   >
     {formatLabel(t.format)}
   </span>
+                      {typeof t.player_count === "number" ? (
+                        <span
+                          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600"
+                          title={`${t.player_count} Spieler`}
+                        >
+                          👥 {t.player_count}
+                        </span>
+                      ) : null}
                     </div>
 
                     {/* Location statt Code (Code steht im Turnier selbst) */}
                     <div
-                      className="sm:col-span-2 min-w-0 truncate text-sm text-neutral-600"
+                      className="sm:col-[span_4_/_span_4] min-w-0 truncate text-sm text-neutral-600"
                       title={`Code: ${t.code}`}
                     >
                       {(() => {
@@ -9799,7 +9813,7 @@ if (joined)
                     </div>
 
                     {/* NEU: Status */}
-                    <div className="col-span-1  text-left text-xs text-neutral-500">
+                    <div className="col-span-1 sm:col-[span_2_/_span_2] text-left text-xs text-neutral-500">
 
   {t.status === "finished" ? (
     <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">
@@ -9813,7 +9827,7 @@ if (joined)
 
                     </div>
 
-                    <div className="col-span-1 text-left text-xs text-neutral-500">
+                    <div className="col-span-1 sm:col-[span_2_/_span_2] text-left text-xs text-neutral-500">
                       {t.created_at
                         ? new Date(t.created_at).toLocaleDateString("de-DE")
                         : "—"}
