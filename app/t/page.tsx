@@ -40,6 +40,7 @@ import VersionBadge from "@/components/VersionBadge";
 import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
 import ThemeToggle from "@/components/ThemeToggle";
+import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
 
@@ -12690,6 +12691,8 @@ const tasksById = useMemo(() => {
 
   return (
     <div className="space-y-4">
+      {/* 🏆 Highscore-Jubel wie am TV – hier ohne Ton, Antippen schließt */}
+      <RecordCelebration code={code} data={data} soundOn={false} dismissOnTap />
 
 
 

@@ -5,6 +5,7 @@
 // - Beobachtet die Live-Daten der TV-Seite: neue/geänderte Scores werden erst nach
 //   STABLE_MS ohne Änderung bewertet (Schutz vor Tippfehlern).
 // - Was beim Öffnen der Seite schon eingetragen ist, wird nicht nachträglich gefeiert.
+// - Auch im Admin-Bereich (Dashboard) im Einsatz: dort ohne Ton und per Antippen schließbar.
 // - 🏆 Allzeit-Rekord: Konfetti + Vollbild 16 s + Fanfare (wenn Ton an).
 // - 🥇 30-Tage-Highscore (bester Score der letzten 30 Tage): Vollbild ohne Konfetti 10 s + Fanfare (5 s).
 // - 💪 Persönlicher Rekord: Karte am Rand 10 s + kurzer Ton.
@@ -106,9 +107,13 @@ const CSS = `
 }
 `;
 
-function BigRecord({ c }: { c: Extract<Celebration, { kind: "record" }> }) {
+function BigRecord({ c, onClose }: { c: Extract<Celebration, { kind: "record" }>; onClose?: () => void }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
       <Confetti />
       <div className="relative px-8 text-center" style={{ animation: "recPop 0.7s ease-out both" }}>
         <div className="text-[9vw] leading-none">🏆</div>
@@ -130,9 +135,13 @@ function BigRecord({ c }: { c: Extract<Celebration, { kind: "record" }> }) {
   );
 }
 
-function MonthRecord({ c }: { c: Extract<Celebration, { kind: "month" }> }) {
+function MonthRecord({ c, onClose }: { c: Extract<Celebration, { kind: "month" }>; onClose?: () => void }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
       <div
         className="relative rounded-[3vw] bg-gradient-to-b from-sky-900/90 to-slate-950/95 px-[5vw] py-[3vw] text-center ring-4 ring-sky-300/70"
         style={{ animation: "recPop 0.6s ease-out both", boxShadow: "0 0 80px rgba(56,189,248,.45)" }}
@@ -156,9 +165,14 @@ function MonthRecord({ c }: { c: Extract<Celebration, { kind: "month" }> }) {
   );
 }
 
-function SmallPersonal({ c }: { c: Extract<Celebration, { kind: "personal" }> }) {
+function SmallPersonal({ c, onClose }: { c: Extract<Celebration, { kind: "personal" }>; onClose?: () => void }) {
   return (
-    <div className="pointer-events-none fixed bottom-[4vh] right-[2vw] z-[100]" style={{ animation: "recSlide 0.5s ease-out both" }}>
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
       <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 px-7 py-5 text-white shadow-2xl ring-4 ring-emerald-300/60">
         <div className="text-[1.5vw] font-bold uppercase tracking-wider text-emerald-100">💪 Persönlicher Rekord</div>
         <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.entry.playerName}</div>
@@ -171,17 +185,22 @@ function SmallPersonal({ c }: { c: Extract<Celebration, { kind: "personal" }> })
   );
 }
 
+const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
+
 export default function RecordCelebration({
   code,
   data,
   soundOn,
   onRecordSound,
+  dismissOnTap = false,
 }: {
   code: string;
   data: LiveData | null;
   soundOn: boolean;
   /** Fanfare abspielen: "record" ganz, "month" kurz (ca. 5 s) */
   onRecordSound?: (kind: "record" | "month") => void;
+  /** Admin-Bereich: Antippen schließt die Einblendung sofort */
+  dismissOnTap?: boolean;
 }) {
   const [prior, setPrior] = useState<PriorRecords | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -190,6 +209,13 @@ export default function RecordCelebration({
 
   const seenRef = useRef<Map<string, number> | null>(null); // key → zuletzt bewerteter Score
   const pendingRef = useRef<Map<string, { score: number; since: number }>>(new Map());
+  // aktueller Stand für die lokale 2-s-Prüfung
+  const dataRef = useRef<LiveData | null>(null);
+  const priorRef = useRef<PriorRecords | null>(null);
+  const enabledRef = useRef(false);
+  dataRef.current = data;
+  priorRef.current = prior;
+  enabledRef.current = enabled;
 
   useEffect(() => setMounted(true), []);
 
@@ -217,49 +243,56 @@ export default function RecordCelebration({
     };
   }, [code]);
 
-  // Live-Scores beobachten (läuft bei jedem Neuladen der TV-Daten, ca. alle 5 s)
+  // Scores prüfen – bei neuen Daten UND alle 2 s (nur lokal, keine Anfrage)
   useEffect(() => {
-    if (!data) return;
-    const entries = liveEntriesFrom(data);
+    function check() {
+      const d = dataRef.current;
+      if (!d) return;
+      const entries = liveEntriesFrom(d);
 
-    // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
-    if (!seenRef.current) {
-      seenRef.current = new Map(entries.map((e) => [e.key, e.score]));
-      return;
-    }
-    const seen = seenRef.current;
-    const pending = pendingRef.current;
-    const now = Date.now();
-    const found: Celebration[] = [];
-    const finished = data.tournament?.status === "finished";
+      // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
+      if (!seenRef.current) {
+        seenRef.current = new Map(entries.map((e) => [e.key, e.score]));
+        return;
+      }
+      const seen = seenRef.current;
+      const pending = pendingRef.current;
+      const pr = priorRef.current;
+      const now = Date.now();
+      const found: Celebration[] = [];
+      const finished = d.tournament?.status === "finished";
 
-    for (const e of entries) {
-      if (seen.get(e.key) === e.score) {
+      for (const e of entries) {
+        if (seen.get(e.key) === e.score) {
+          pending.delete(e.key);
+          continue;
+        }
+        const p = pending.get(e.key);
+        if (!p || p.score !== e.score) {
+          pending.set(e.key, { score: e.score, since: now }); // neu oder korrigiert → Zeit neu starten
+          continue;
+        }
+        if (now - p.since < STABLE_MS) continue;
+        if (!pr) continue; // Rekorde noch nicht geladen → später bewerten
         pending.delete(e.key);
-        continue;
+        seen.set(e.key, e.score);
+        if (!enabledRef.current || finished) continue;
+        const c = evaluateEntry(e, pr, entries);
+        if (c) found.push(c);
       }
-      const p = pending.get(e.key);
-      if (!p || p.score !== e.score) {
-        pending.set(e.key, { score: e.score, since: now }); // neu oder korrigiert → Zeit neu starten
-        continue;
-      }
-      if (now - p.since < STABLE_MS) continue;
-      if (!prior) continue; // Rekorde noch nicht geladen → später bewerten
-      pending.delete(e.key);
-      seen.set(e.key, e.score);
-      if (!enabled || finished) continue;
-      const c = evaluateEntry(e, prior, entries);
-      if (c) found.push(c);
-    }
-    // gelöschte Scores vergessen
-    const live = new Set(entries.map((e) => e.key));
-    for (const k of Array.from(pending.keys())) if (!live.has(k)) pending.delete(k);
+      // gelöschte Scores vergessen
+      const live = new Set(entries.map((e) => e.key));
+      for (const k of Array.from(pending.keys())) if (!live.has(k)) pending.delete(k);
 
-    if (found.length) {
-      // Rekorde zuerst, dann Monat, dann persönliche – jeweils höchster Score zuerst
-      found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || b.entry.score - a.entry.score);
-      setQueue((q) => [...q, ...found]);
+      if (found.length) {
+        // Rekorde zuerst, dann 30 Tage, dann persönliche – jeweils höchster Score zuerst
+        found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || b.entry.score - a.entry.score);
+        setQueue((q) => [...q, ...found]);
+      }
     }
+    check();
+    const t = window.setInterval(check, TICK_MS);
+    return () => window.clearInterval(t);
   }, [data, prior, enabled]);
 
   // Warteschlange abspielen
@@ -276,16 +309,22 @@ export default function RecordCelebration({
   }, [current]);
 
   if (!mounted || !current) return null;
+  const close = dismissOnTap ? () => setQueue((q) => (q[0] === current ? q.slice(1) : q)) : undefined;
   return createPortal(
     <>
       <style>{CSS}</style>
       {current.kind === "record" ? (
-        <BigRecord c={current} />
+        <BigRecord c={current} onClose={close} />
       ) : current.kind === "month" ? (
-        <MonthRecord c={current} />
+        <MonthRecord c={current} onClose={close} />
       ) : (
-        <SmallPersonal c={current} />
+        <SmallPersonal c={current} onClose={close} />
       )}
+      {dismissOnTap ? (
+        <div className="pointer-events-none fixed bottom-[1.5vh] left-1/2 z-[101] -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80">
+          Antippen zum Schließen
+        </div>
+      ) : null}
     </>,
     document.body
   );
