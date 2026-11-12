@@ -196,7 +196,7 @@ type PlayersTabProps = {
 
 import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/ui";
-import { EloSparkline } from "@/components/charts";
+import { EloSparkline, WinrateSparkline } from "@/components/charts";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 import {Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
 const ACTION_COLORS = [
@@ -5777,7 +5777,7 @@ return (
                                           }`}
                                           className="flex items-center justify-between rounded-lg bg-neutral-50 px-2 py-1.5"
                                         >
-                                          <div className="min-w-0">
+                                          <div className="min-w-0 flex-1">
                                             <div className="truncate text-[13px] font-semibold">
                                               {m.machineName ?? "Maschine"}
                                             </div>
@@ -5787,46 +5787,20 @@ return (
                                             </div>
                                           </div>
 
-                                          {/* 🆕 Sparkline: Winrate-Verlauf (Maschine+Location) */}
-                                          {Array.isArray((m as any).winRateSeries) &&
-                                          ((m as any).winRateSeries?.length ?? 0) > 1 ? (
-                                            <div className="mx-2 hidden sm:block">
-                                              <svg
-                                                width="120"
-                                                height="22"
-                                                viewBox="0 0 90 22"
-                                                className="overflow-visible"
-                                              >
-                                                {(() => {
-                                                  const vals = ((m as any).winRateSeries as number[])
-                                                    .map((v) => (typeof v === "number" ? v : 0))
-                                                    .slice(-30);
-                                                  const n = vals.length;
-                                                  const clamp = (x: number) =>
-                                                    Math.max(0, Math.min(1, x));
-                                                  const pts = vals.map((v, i) => {
-                                                    const x = n <= 1 ? 0 : (i / (n - 1)) * 118; // 140 - 2
-                                                    const y = 20 - clamp(v) * 20;
-                                                    return `${x.toFixed(2)},${y.toFixed(2)}`;
-                                                  });
-                                                  const d = pts.join(" ");
-                                                  return (
-                                                    <>
-                                                      <polyline
-                                                        points={d}
-                                                        fill="none"
-                                                        stroke="currentColor"
-                                                        strokeWidth="2"
-                                                        className="text-neutral-400"
-                                                      />
-                                                    </>
-                                                  );
-                                                })()}
-                                              </svg>
-                                            </div>
-                                          ) : null}
+                                          {/* 🆕 Sparkline: Winrate-Verlauf (Maschine+Location), letzte 30 Matches.
+                                              Feste Breite -> alle Graphen stehen bündig untereinander */}
+                                          <div className="mx-3 hidden w-[140px] shrink-0 sm:block">
+                                            {Array.isArray((m as any).winRateSeries) &&
+                                            ((m as any).winRateSeries?.length ?? 0) > 1 ? (
+                                              <WinrateSparkline
+                                                values={((m as any).winRateSeries as number[])
+                                                  .map((v) => (typeof v === "number" ? v : 0))
+                                                  .slice(-30)}
+                                              />
+                                            ) : null}
+                                          </div>
 
-                                          <div className="text-right text-[13px]">
+                                          <div className="shrink-0 text-right text-[13px] sm:w-[15rem]">
                                             <div className="tabular-nums">
                                               {m.matchesPlayed} Matches
                                             </div>
@@ -5931,8 +5905,14 @@ return (
  
                                 {/* Graph */}
                                 
-                                <div className="h-32 mt-1 mb-4 flex items-center min-h-[112px]">
-                                  <EloSparkline values={eloValues} />
+                                <div className="mt-2 mb-4 w-full">
+                                  <EloSparkline
+                                    values={eloValues}
+                                    details={history.map((h) => ({
+                                      label: h.tournamentName,
+                                      date: h.created_at,
+                                    }))}
+                                  />
                                 </div>
 
 

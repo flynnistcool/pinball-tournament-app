@@ -21,7 +21,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 import { Button, Card, CardBody, CardHeader, Input, Pill, Select } from "@/components/ui";
-import { BarChart, Sparkline } from "@/components/charts";
+import { BarChart, Sparkline, RoundPointsBars, CumulativePointsLine } from "@/components/charts";
 import QRCode from "qrcode";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
@@ -3887,6 +3887,50 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
   // ✅ Elo im Turnier ausgeschaltet (alle Runden elo_enabled=false) -> keine Elo-Veränderung anzeigen
   const [eloOff, setEloOff] = useState(false);
 
+  // ✅ Gemeinsame Maßstäbe für die Spalte "Verlauf" (für alle Spieler gleich -> vergleichbar)
+  //    roundPointsMax: höchste Punktzahl in einer Runde (Balken)
+  //    totalMax / roundMin / roundMax: für die Gesamtpunkte-Linie
+  const verlaufScale = useMemo(() => {
+    let roundPointsMax = 0;
+    let totalMax = 0;
+    let roundMin = Infinity;
+    let roundMax = -Infinity;
+    for (const r of rows) {
+      let total = 0;
+      for (const h of r?.history ?? []) {
+        const p = Number(h?.points);
+        const rn = Number(h?.round);
+        if (Number.isFinite(p)) {
+          total += p;
+          if (p > roundPointsMax) roundPointsMax = p;
+        }
+        if (Number.isFinite(rn)) {
+          roundMin = Math.min(roundMin, rn);
+          roundMax = Math.max(roundMax, rn);
+        }
+      }
+      if (total > totalMax) totalMax = total;
+    }
+    if (!Number.isFinite(roundMin)) { roundMin = 1; roundMax = 1; }
+    return { roundPointsMax, totalMax, roundMin, roundMax };
+  }, [rows]);
+  const roundPointsMax = verlaufScale.roundPointsMax;
+
+  // ✅ Darstellung "Verlauf": Balken pro Runde oder Gesamtpunkte-Linie (Auswahl wird gemerkt)
+  const [verlaufMode, setVerlaufMode] = useState<"runden" | "gesamt">("runden");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("pb_verlaufMode");
+      if (v === "runden" || v === "gesamt") setVerlaufMode(v);
+    } catch {}
+  }, []);
+  function chooseVerlaufMode(v: "runden" | "gesamt") {
+    setVerlaufMode(v);
+    try {
+      localStorage.setItem("pb_verlaufMode", v);
+    } catch {}
+  }
+
   async function load() {
     const res = await fetch("/api/stats", {
       method: "POST",
@@ -3987,7 +4031,43 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
               <div className="col-span-2 text-right">Punkte</div>
               <div className="col-span-1 text-right">Matches</div>
               <div className="col-span-1 text-right">Winrate</div>
-              <div className="col-span-2 text-right">Verlauf</div>
+              <div className="col-span-2 flex items-center justify-end gap-1.5">
+                <span>Verlauf</span>
+                {/* Umschalter: Punkte pro Runde (Balken) / Gesamtpunkte (Linie) */}
+                {/* kompakt mit Symbolen; voller Name als Tooltip */}
+                <span className="inline-flex shrink-0 overflow-hidden rounded-full border bg-white">
+                  {(["runden", "gesamt"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => chooseVerlaufMode(v)}
+                      title={v === "runden" ? "Punkte pro Runde" : "Gesamtpunkte im Verlauf"}
+                      aria-label={v === "runden" ? "Punkte pro Runde" : "Gesamtpunkte im Verlauf"}
+                      className={
+                        "flex h-5 w-7 items-center justify-center transition " +
+                        (verlaufMode === v
+                          ? "bg-neutral-900 text-white"
+                          : "text-neutral-500 hover:bg-neutral-100")
+                      }
+                    >
+                      {v === "runden" ? (
+                        // Balken-Symbol
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+                          <rect x="1" y="6" width="2.5" height="5" rx="0.6" />
+                          <rect x="4.75" y="3" width="2.5" height="8" rx="0.6" />
+                          <rect x="8.5" y="1" width="2.5" height="10" rx="0.6" />
+                        </svg>
+                      ) : (
+                        // Linien-Symbol (steigend)
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+                          strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M1 10.5 L4.5 7 L7 8.5 L11 2.5" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </span>
+              </div>
             </div>
 
             {rows.map((r: any, index: number) => {
@@ -4111,7 +4191,27 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                       {r.winrate}%
                     </div>
                     <div className="hidden sm:flex col-span-2 justify-end text-neutral-900">
-                      <Sparkline values={hist} />
+                      {verlaufMode === "gesamt" ? (
+                        /* Gesamtpunkte im Turnierverlauf als Linie */
+                        <CumulativePointsLine
+                          items={(r.history ?? []).map((x: any) => ({
+                            round: Number(x.round),
+                            points: Number(x.points),
+                          }))}
+                          maxTotal={verlaufScale.totalMax}
+                          roundMin={verlaufScale.roundMin}
+                          roundMax={verlaufScale.roundMax}
+                        />
+                      ) : (
+                        /* Punkte pro Runde als Mini-Balken */
+                        <RoundPointsBars
+                          items={(r.history ?? []).map((x: any) => ({
+                            round: Number(x.round),
+                            points: Number(x.points),
+                          }))}
+                          scaleMax={roundPointsMax}
+                        />
+                      )}
                     </div>
                   </button>
 
