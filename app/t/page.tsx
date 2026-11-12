@@ -36,6 +36,7 @@ import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { PointsSystemButton, PointsSchemeLine, PointsGainBadge } from "@/components/PointsSystemInfo";
+import VersionBadge from "@/components/VersionBadge";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
 
@@ -9647,6 +9648,11 @@ if (joined)
                     unoptimized
                     style={{ objectFit: "cover" }}
                   />
+                </div>
+
+                {/* Programmversion (Git-Kennung + Build-Zeit, siehe next.config.mjs) */}
+                <div className="flex justify-end">
+                  <VersionBadge />
                 </div>
   {/*isAdmin && (
 

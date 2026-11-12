@@ -3,7 +3,6 @@ import "./globals.css";
 // import RoutePill from "@/components/RoutePill";
 import type { Metadata } from "next";
 import Link from "next/link";
-import VersionBadge from "@/components/VersionBadge";
 
 export const metadata: Metadata = {
   title: "Pinball Turnier",
@@ -75,7 +74,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
           */}
         </div>
-        <VersionBadge />
       </body>
     </html>
   );
