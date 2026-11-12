@@ -19,6 +19,7 @@ import { flushSync } from "react-dom";
 import { buildRaceData, type RaceData } from "@/lib/raceChart";
 import RaceChart, { type RacePlayer } from "@/components/RaceChart";
 import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
+import KeepAwake from "@/components/KeepAwake";
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -944,7 +945,9 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             </div>
             <div className="whitespace-nowrap pb-2 text-right text-sm text-white/50">
               {/* Ton einmalig freischalten (Browser-Vorgabe) */}
-              <div className="mb-2 flex justify-end">
+              <div className="mb-2 flex justify-end gap-2">
+                {/* ☀️ Bildschirmschoner verhindern (Wake Lock + Mini-Video) */}
+                <KeepAwake />
                 {soundOn ? (
                   <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300/80 ring-1 ring-emerald-300/30">
                     🔊 Ton an

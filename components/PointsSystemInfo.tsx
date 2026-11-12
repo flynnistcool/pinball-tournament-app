@@ -2,7 +2,7 @@
 
 // Punktesystem-Anzeigen (Admin):
 // - PointsSystemButton: ℹ️-Knopf + Fenster mit Match-, Turnier- und Superfinale-Punkten
-// - PointsSchemeLine: kleine Zeile "🎯 4 · 2 · 1 · 0" im Match-Kopf
+// - PointsSchemeLine: kleine Zeile "🏅 4 · 2 · 1 · 0" im Match-Kopf
 // - PointsGainBadge: "+4" neben dem Platz eines Spielers
 // Regeln aus lib/pointsDisplay.ts (NICHT lib/points.ts – die bleibt vorerst unberührt).
 
@@ -23,7 +23,7 @@ export function PointsSchemeLine({ values }: { values: number[] }) {
       className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700"
       title={"Matchpunkte nach Platz: " + values.map((v, i) => `${i + 1}. = ${v}`).join(", ")}
     >
-      🎯 {shown}
+      🏅 {shown}
     </span>
   );
 }
@@ -150,7 +150,7 @@ function PointsSystemDialog({
         </div>
 
         <section className="mb-5">
-          <div className="mb-1 font-semibold">🎯 Matchpunkte</div>
+          <div className="mb-1 font-semibold">🏅 Matchpunkte</div>
           <div className="mb-2 text-xs text-neutral-500">{matchHint}</div>
           <SchemeTable values={mp} unit="P" />
           <div className="mt-2 text-xs text-neutral-500">Die Summe der Matchpunkte ergibt die Turniertabelle.</div>
@@ -205,7 +205,7 @@ export function PointsSystemTvChips({
   return (
     <>
       <span className={chip}>
-        🎯 Match <b className="font-bold text-white">{join(mp, 9)}</b>
+        🏅 Match <b className="font-bold text-white">{join(mp, 9)}</b>
       </span>
       <span className={chip}>
         🏆 Turnier <b className="font-bold text-white">{join(tp, 6)}</b>

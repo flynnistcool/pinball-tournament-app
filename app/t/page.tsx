@@ -9735,6 +9735,24 @@ if (joined)
                           ✏️
                         </button>
                       ) : null}
+                      {t.status !== "finished" ? (
+                        // 📺 Laufendes Turnier: direkt zum Infobildschirm (neuer Tab), ohne das Turnier zu öffnen
+                        <a
+                          href={`/s/${encodeURIComponent(t.code)}/tv`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Infobildschirm (TV) in neuem Tab öffnen"
+                          aria-label="Infobildschirm (TV) öffnen"
+                          className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border-2 border-sky-400 bg-white px-2.5 py-1 text-xs font-bold text-sky-700 hover:bg-sky-50"
+                        >
+                          <span className="relative flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-500" />
+                          </span>
+                          📺
+                        </a>
+                      ) : null}
                     </div>
 
                     <div className="sm:col-span-3">
