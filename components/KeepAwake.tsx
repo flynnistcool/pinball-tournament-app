@@ -26,6 +26,8 @@ export default function KeepAwake() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamStartedRef = useRef(false);
+  // für den Knopf (Fernbedienung): alles erneut starten
+  const startAllRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let disposed = false;
@@ -91,6 +93,7 @@ export default function KeepAwake() {
       void requestWakeLock();
       void startVideo();
     };
+    startAllRef.current = startAll;
 
     const onVisible = () => {
       if (document.visibilityState === "visible") startAll();
@@ -134,12 +137,14 @@ export default function KeepAwake() {
         aria-hidden="true"
         style={{ position: "fixed", right: 0, bottom: 0, width: 16, height: 16, opacity: 0.01, pointerEvents: "none" }}
       />
-      <span
+      <button
+        type="button"
+        onClick={() => startAllRef.current()}
         className={
-          "rounded-full px-3 py-1 text-xs font-semibold ring-1 " +
+          "rounded-full px-3 py-1 text-xs font-semibold ring-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-white " +
           (awake
-            ? "bg-sky-400/10 text-sky-300/80 ring-sky-300/30"
-            : "animate-pulse bg-amber-400/15 text-amber-300 ring-amber-300/50")
+            ? "bg-sky-400/10 text-sky-300/80 ring-sky-300/30 hover:bg-sky-400/20"
+            : "animate-pulse bg-amber-400/15 text-amber-300 ring-amber-300/50 hover:bg-amber-400/25")
         }
         title={`Bildschirm wach halten – Wake Lock: ${status.wakeLock}, Video: ${status.video}`}
       >
@@ -149,7 +154,7 @@ export default function KeepAwake() {
           {status.wakeLock === "aktiv" && status.video === "läuft" ? "+" : ""}
           {status.video === "läuft" ? "V" : ""}
         </span>
-      </span>
+      </button>
     </>
   );
 }
