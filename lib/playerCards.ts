@@ -41,8 +41,15 @@ export type PlayerCard = {
   matchWins: number;
   winrate: number | null; // in %
   favoriteMachine: { name: string; icon: string | null; count: number } | null;
+  /** bis zu 3 Flipper mit der besten Siegquote (je mind. BEST_MACHINE_MIN_MATCHES Matches), Bester zuerst */
+  bestMachines: BestMachine[];
   bestScore: { score: number; machine: string | null; icon: string | null } | null;
 };
+
+export type BestMachine = { name: string; icon: string | null; matches: number; wins: number; winrate: number };
+
+/** so viele Matches braucht ein Flipper mindestens für "Bester Flipper" (sonst wäre 1 Sieg aus 1 = 100 %) */
+export const BEST_MACHINE_MIN_MATCHES = 3;
 
 /** Turniersieg: mit Superfinale zählt dessen Platz 1, sonst Platz 1 der Endwertung. */
 export function isTournamentWin(r: { final_rank: number | null; super_final_rank: number | null }): boolean {
@@ -60,7 +67,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     tournamentWins: number;
     matches: number;
     matchWins: number;
-    machineCount: Map<string, { name: string; icon: string | null; count: number }>;
+    machineCount: Map<string, { name: string; icon: string | null; count: number; wins: number }>;
     best: { score: number; machine: string | null; icon: string | null } | null;
   };
   const agg = new Map<string, Agg>();
@@ -90,8 +97,9 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
       if (machineName) {
         // gleicher Flipper-Name in verschiedenen Turnieren = derselbe Flipper
         const key = machineName.toLowerCase();
-        const cur = a.machineCount.get(key) ?? { name: machineName, icon: machine?.icon_emoji ?? null, count: 0 };
+        const cur = a.machineCount.get(key) ?? { name: machineName, icon: machine?.icon_emoji ?? null, count: 0, wins: 0 };
         cur.count += 1;
+        if (Number(mp.position) === 1) cur.wins += 1;
         a.machineCount.set(key, cur);
       }
     }
@@ -120,9 +128,16 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     const elo = typeof prof?.rating === "number" && Number.isFinite(prof.rating) ? prof.rating : null;
 
     let favorite: PlayerCard["favoriteMachine"] = null;
-    for (const m of Array.from(a?.machineCount.values() ?? [])) {
-      if (!favorite || m.count > favorite.count) favorite = { ...m };
+    const machineList = Array.from(a?.machineCount.values() ?? []);
+    for (const m of machineList) {
+      if (!favorite || m.count > favorite.count) favorite = { name: m.name, icon: m.icon, count: m.count };
     }
+    // Top 3 nach Siegquote; bei Gleichstand der Flipper mit mehr Matches
+    const bestMachines: BestMachine[] = machineList
+      .filter((m) => m.count >= BEST_MACHINE_MIN_MATCHES)
+      .sort((x, y) => y.wins / y.count - x.wins / x.count || y.count - x.count)
+      .slice(0, 3)
+      .map((m) => ({ name: m.name, icon: m.icon, matches: m.count, wins: m.wins, winrate: Math.round((m.wins / m.count) * 100) }));
 
     const matches = a?.matches ?? 0;
     const matchWins = a?.matchWins ?? 0;
@@ -142,6 +157,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
       matchWins,
       winrate: matches > 0 ? Math.round((matchWins / matches) * 100) : null,
       favoriteMachine: favorite,
+      bestMachines,
       bestScore: a?.best ?? null,
     };
   });

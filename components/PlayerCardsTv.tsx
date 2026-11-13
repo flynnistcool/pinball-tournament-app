@@ -5,7 +5,7 @@
 // 4 Karten je Seite, alle 8 Sekunden die nächste Seite.
 
 import { useEffect, useState } from "react";
-import type { PlayerCard } from "@/lib/playerCards";
+import type { BestMachine, PlayerCard } from "@/lib/playerCards";
 
 const REFRESH_MS = 5 * 60_000;
 const PAGE_SIZE = 4;
@@ -37,6 +37,54 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
       <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">{label}</div>
       <div className="text-2xl font-extrabold tabular-nums text-white">{value}</div>
       {sub ? <div className="text-xs text-white/50">{sub}</div> : null}
+    </div>
+  );
+}
+
+const BEST_LABELS = ["🎯 Bester Flipper", "🥈 Zweitbester Flipper", "🥉 Drittbester Flipper"];
+const BEST_SWITCH_MS = 5000;
+
+/** Bester / zweit- / drittbester Flipper (Siegquote), wechselt alle 5 s */
+function BestMachinesBox({ list }: { list: BestMachine[] }) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    setIdx(0);
+    if (list.length < 2) return;
+    const t = window.setInterval(() => setIdx((i) => (i + 1) % list.length), BEST_SWITCH_MS);
+    return () => window.clearInterval(t);
+  }, [list.length]);
+  const m = list[idx % Math.max(1, list.length)];
+
+  return (
+    <div className="relative mt-2 rounded-xl bg-white/[0.06] px-3 py-2 ring-1 ring-white/10">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">
+          {BEST_LABELS[idx] ?? BEST_LABELS[0]}
+        </div>
+        {list.length > 1 ? (
+          <div className="flex gap-1">
+            {list.map((_, i) => (
+              <span key={i} className={`h-1.5 w-1.5 rounded-full ${i === idx ? "bg-white/80" : "bg-white/20"}`} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {m ? (
+        <div key={idx} style={{ animation: "bmFade 0.5s ease both" }}>
+          <style>{"@keyframes bmFade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}"}</style>
+          <div className="flex items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate text-lg font-bold">
+              {m.icon ?? "🎰"} {m.name}
+            </span>
+            <span className="shrink-0 text-lg font-extrabold tabular-nums text-emerald-300">{m.winrate} %</span>
+          </div>
+          <div className="text-xs text-white/50">
+            {m.wins} / {m.matches} Matches gewonnen
+          </div>
+        </div>
+      ) : (
+        <div className="text-lg font-bold text-white/40">noch keiner</div>
+      )}
     </div>
   );
 }
@@ -114,6 +162,8 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
           )}
         </div>
       </div>
+
+      <BestMachinesBox list={card.bestMachines ?? []} />
 
       <div
         className="relative mt-2 rounded-xl px-3 py-2 ring-1"

@@ -9,6 +9,7 @@
 // - 🏆 Allzeit-Rekord: Konfetti + Vollbild 16 s + Fanfare (wenn Ton an).
 // - 🥇 30-Tage-Highscore (bester Score der letzten 30 Tage): Vollbild ohne Konfetti 10 s + Fanfare (5 s).
 // - 🎖️ Matchsieg-Meilenstein (1, 10, 25, 50, 100, 250, 500, jede 1.000): Vollbild lila 10 s + kurzer Ton.
+// - 🔥 Siegesserie (erstmals 3 bzw. 5 Siege in Folge im Turnier): Karte am Rand 5 s + kurzer Ton.
 // - 💪 Persönlicher Rekord: Karte am Rand 10 s + kurzer Ton.
 // Zeiten bewusst lang: man soll es noch sehen, wenn man erst zum TV läuft.
 
@@ -17,19 +18,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, type Celebration, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
+import { computeStreaks, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
 
 const STABLE_MS = 10_000;
 const RECORDS_REFRESH_MS = 5 * 60_000;
 
 type WinShown = { kind: "wins"; n: number; playerName: string; key: string };
-type Shown = Celebration | WinShown;
+type StreakShown = { kind: "streak"; n: number; mode: StreakMode; playerName: string; key: string };
+type Shown = Celebration | WinShown | StreakShown;
 
-const SHOW_MS: Record<Shown["kind"], number> = { record: 16_000, month: 10_000, wins: 10_000, personal: 10_000 };
-const KIND_ORDER: Record<Shown["kind"], number> = { record: 0, month: 1, wins: 2, personal: 3 };
-const sortValue = (x: Shown) => (x.kind === "wins" ? x.n : x.entry.score);
+const SHOW_MS: Record<Shown["kind"], number> = {
+  record: 16_000,
+  month: 10_000,
+  wins: 10_000,
+  streak: 5_000,
+  personal: 10_000,
+};
+const KIND_ORDER: Record<Shown["kind"], number> = { record: 0, month: 1, wins: 2, streak: 3, personal: 4 };
+const sortValue = (x: Shown) => (x.kind === "wins" || x.kind === "streak" ? x.n : x.entry.score);
 
 type LiveData = Parameters<typeof liveEntriesFrom>[0] &
-  Parameters<typeof liveWinsFrom>[0] & { tournament?: { status?: string | null } };
+  Parameters<typeof liveWinsFrom>[0] &
+  Parameters<typeof computeStreaks>[0] & { tournament?: { status?: string | null; format?: string | null } };
 
 const fmt = (n: number) => n.toLocaleString("de-DE");
 
@@ -217,6 +227,25 @@ function SmallPersonal({ c, onClose }: { c: Extract<Celebration, { kind: "person
   );
 }
 
+function StreakCard({ c, onClose }: { c: StreakShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-orange-500 to-red-600 px-7 py-5 text-white shadow-2xl ring-4 ring-orange-300/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-orange-100">
+          {streakFire(c.n, streakMin(c.mode))} On fire!
+        </div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[1.8vw] font-extrabold">{streakText(c.mode, c.n)}</div>
+      </div>
+    </div>
+  );
+}
+
 const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
 
 function RecordCelebrationInner({
@@ -245,6 +274,11 @@ function RecordCelebrationInner({
   // Matchsiege: bereits gezählte Siege (key → Profil) und noch nicht stabile
   const seenWinsRef = useRef<Map<string, string> | null>(null);
   const pendingWinsRef = useRef<Map<string, number>>(new Map());
+  // Siegesserien: zuletzt bestätigte Serie je Spieler + noch nicht stabile Änderungen
+  const seenStreakRef = useRef<Map<string, number> | null>(null);
+  const pendingStreakRef = useRef<Map<string, { n: number; since: number }>>(new Map());
+  // schon gemeldete Stufen (pro Spieler je Stufe nur einmal – auch wenn die Serie reißt und wiederkommt)
+  const celebratedStreakRef = useRef<Set<string>>(new Set());
   // aktueller Stand für die lokale 2-s-Prüfung
   const dataRef = useRef<LiveData | null>(null);
   const priorRef = useRef<PriorRecords | null>(null);
@@ -304,11 +338,14 @@ function RecordCelebrationInner({
       if (!d) return;
       const entries = liveEntriesFrom(d);
       const wins = liveWinsFrom(d);
+      const sMode = streakMode(d.tournament?.format);
+      const streaks = computeStreaks(d, sMode);
 
       // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
-      if (!seenRef.current || !seenWinsRef.current) {
+      if (!seenRef.current || !seenWinsRef.current || !seenStreakRef.current) {
         seenRef.current = new Map(entries.map((e) => [e.key, e.score]));
         seenWinsRef.current = new Map(wins.map((w) => [w.key, w.profileId]));
+        seenStreakRef.current = new Map(Object.entries(streaks));
         return;
       }
       const seen = seenRef.current;
@@ -365,6 +402,41 @@ function RecordCelebrationInner({
         if (isWinMilestone(n)) found.push({ kind: "wins", n, playerName: w.playerName, key: w.key });
       }
 
+      // 🔥 Siegesserien: Serie erstmals auf 3 (bzw. 5) gestiegen und STABLE_MS stabil → Karte
+      const seenStreak = seenStreakRef.current;
+      const pendingStreak = pendingStreakRef.current;
+      const nameById = new Map((d.players ?? []).map((p) => [String(p.id), String(p.name ?? "?")]));
+      const allPids = new Set([...Array.from(seenStreak.keys()), ...Object.keys(streaks)]);
+      for (const pid of Array.from(allPids)) {
+        const n = streaks[pid] ?? 0;
+        const old = seenStreak.get(pid) ?? 0;
+        if (n === old) {
+          pendingStreak.delete(pid);
+          continue;
+        }
+        if (n < old) {
+          // Serie gerissen oder Platz korrigiert → ohne Meldung übernehmen
+          seenStreak.set(pid, n);
+          pendingStreak.delete(pid);
+          continue;
+        }
+        const p = pendingStreak.get(pid);
+        if (!p || p.n !== n) {
+          pendingStreak.set(pid, { n, since: now });
+          continue;
+        }
+        if (now - p.since < STABLE_MS) continue;
+        pendingStreak.delete(pid);
+        seenStreak.set(pid, n);
+        if (finished) continue;
+        // Meldung bei jeder neuen Stufe ab dem Mindestwert (Siege: 3, 4, 5 … · Round the Pinball: 2, 3, 4 …)
+        const ck = `${pid}|${n}`;
+        if (n >= streakMin(sMode) && !celebratedStreakRef.current.has(ck)) {
+          celebratedStreakRef.current.add(ck);
+          found.push({ kind: "streak", n, mode: sMode, playerName: nameById.get(pid) ?? "?", key: ck });
+        }
+      }
+
       if (found.length) {
         // Rekorde zuerst, dann 30 Tage, Matchsiege, persönliche – jeweils höchster Wert zuerst
         found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || sortValue(b) - sortValue(a));
@@ -381,7 +453,7 @@ function RecordCelebrationInner({
   useEffect(() => {
     if (!current) return;
     if (soundOn) {
-      if (current.kind === "personal" || current.kind === "wins") playDing();
+      if (current.kind === "personal" || current.kind === "wins" || current.kind === "streak") playDing();
       else onRecordSound?.(current.kind);
     }
     const t = window.setTimeout(() => setQueue((q) => q.slice(1)), SHOW_MS[current.kind]);
@@ -400,6 +472,8 @@ function RecordCelebrationInner({
         <MonthRecord c={current} onClose={close} />
       ) : current.kind === "wins" ? (
         <WinMilestone c={current} onClose={close} />
+      ) : current.kind === "streak" ? (
+        <StreakCard c={current} onClose={close} />
       ) : (
         <SmallPersonal c={current} onClose={close} />
       )}

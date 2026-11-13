@@ -22,12 +22,16 @@ import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
 import RecordCelebration from "@/components/RecordCelebration";
+import StreakFire from "@/components/StreakFire";
+import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { liveEntriesFrom } from "@/lib/recordWatch";
-import { recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
+import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 /** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
 type RecLookup = (machineName: string) => { best: ShownRecord | null; month: ShownRecord | null } | null;
+/** persönlicher Highscore eines Spielers auf einem Flipper (null = nichts anzeigen) */
+type PbLookup = (playerId: string, machineName: string) => { before: number | null; today: number | null } | null;
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -193,6 +197,8 @@ type Row = {
   eloNow: number | null; // aktuelle Elo im Profil (wird nach jeder fertigen Runde neu berechnet)
   tp?: number | null; // Turnierpunkte heute (erst nach "Turnier beenden"), inkl. Superfinale-Bonus
   tpBonus?: number; // davon Superfinale-Bonus (für "+6 TP +2 🔥")
+  streak?: number; // 🔥 Serie (nur laufendes Turnier, siehe lib/winStreaks.ts)
+  streakMode?: StreakMode;
 };
 
 // Turnierserie (gleiche Kategorie) – aus /api/public/series
@@ -479,8 +485,17 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   }, [isFinished, code]);
 
   // Leaderboard-Zeilen + Turnierpunkte von heute (nur nach Turnierende)
+  // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
+  const winStreaks = useMemo(
+    () => (!data || isFinished ? {} : computeStreaks(data, streakMode(data.tournament?.format))),
+    [data, isFinished]
+  );
+  const tvStreakMode = streakMode(data?.tournament?.format);
+
   const rowsTp: Row[] = useMemo(() => {
-    if (!isFinished || !series?.today?.length) return view.rows;
+    if (!isFinished)
+      return view.rows.map((r) => ({ ...r, streak: winStreaks[r.id] ?? 0, streakMode: tvStreakMode }));
+    if (!series?.today?.length) return view.rows;
     const tpBy: Record<string, number> = {};
     const bonusBy: Record<string, number> = {};
     for (const x of series.today) {
@@ -488,7 +503,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
       bonusBy[x.playerId] = x.superFinalBonus ?? 0;
     }
     return view.rows.map((r) => ({ ...r, tp: tpBy[r.id] ?? null, tpBonus: bonusBy[r.id] ?? 0 }));
-  }, [view.rows, series, isFinished]);
+  }, [view.rows, series, isFinished, winStreaks, tvStreakMode]);
 
   // Flipper-Winraten (öffentliche Schnittstelle, 1x pro Minute)
   const [machineWr, setMachineWr] = useState<Record<string, MachineWr>>({});
@@ -726,6 +741,16 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     if (isFinished || !machineRecords?.enabled) return null;
     const r = recordsForMachine(machineName, machineRecords.prior, liveRecordEntries);
     return r.best || r.month ? r : null;
+  };
+  // 💪 persönlicher Highscore (wie im Admin unter jedem Spieler)
+  const profileByPlayer = useMemo(
+    () => new Map((data?.players ?? []).map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null])),
+    [data?.players]
+  );
+  const pbLookup: PbLookup = (playerId, machineName) => {
+    if (isFinished || !machineRecords?.enabled) return null;
+    const r = personalForMachine(profileByPlayer.get(String(playerId)), machineName, machineRecords.personal, liveRecordEntries);
+    return r.before != null || r.today != null ? r : null;
   };
 
   const tabs: TvTab[] = useMemo(() => {
@@ -1130,6 +1155,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
               recLookup={recLookup}
+              pbLookup={pbLookup}
               mv={matchView}
               rows={rowsTp}
               eloOn={view.eloOn}
@@ -1358,6 +1384,7 @@ function RotationTable({
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="truncate font-bold leading-tight">{r.name}</span>
+                        <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
                         <TpChip tp={r.tp} bonus={r.tpBonus} />
                       </div>
                       <EloLine row={r} eloOn={eloOn} />
@@ -1456,6 +1483,7 @@ const pctFmt = (v: number | null) =>
 
 function MatchTvView({
   recLookup,
+  pbLookup,
   mv,
   rows,
   eloOn,
@@ -1466,6 +1494,7 @@ function MatchTvView({
   race,
 }: {
   recLookup: RecLookup;
+  pbLookup: PbLookup;
   mv: MatchViewData;
   rows: Row[];
   eloOn: boolean;
@@ -1522,7 +1551,13 @@ function MatchTvView({
 
             <div className={`grid gap-4 ${cur.matches.length <= 2 ? "grid-cols-2" : "grid-cols-3"}`}>
               {cur.matches.map((m) => (
-                <MatchCardView key={m.matchId} m={m} rowById={rowById} rec={recLookup(m.machineName)} />
+                <MatchCardView
+                  key={m.matchId}
+                  m={m}
+                  rowById={rowById}
+                  rec={recLookup(m.machineName)}
+                  pb={(playerId) => pbLookup(playerId, m.machineName)}
+                />
               ))}
             </div>
 
@@ -1566,6 +1601,7 @@ function MatchTvView({
                 <div className="min-w-0 flex-1 text-[20px]">
                   <div className="flex items-center gap-2">
                     <span className="truncate font-bold leading-tight">{r.name}</span>
+                    <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
                     <TpChip tp={r.tp} bonus={r.tpBonus} />
                   </div>
                   <EloLine row={r} eloOn={eloOn} />
@@ -1662,10 +1698,12 @@ function MatchCardView({
   m,
   rowById,
   rec,
+  pb,
 }: {
   m: MatchCard;
   rowById: Record<string, Row>;
   rec: ReturnType<RecLookup>;
+  pb: (playerId: string) => ReturnType<PbLookup>;
 }) {
   return (
     <div
@@ -1696,6 +1734,8 @@ function MatchCardView({
           if (!r) return null;
           const pod = p.position != null ? podium(p.position) : null;
           const isWinner = m.finished && p.position === 1;
+          const myPb = pb(p.id);
+          const pbBeaten = myPb?.before != null && myPb.today != null && myPb.today > myPb.before;
           return (
             <div
               key={p.id}
@@ -1711,6 +1751,7 @@ function MatchCardView({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-lg font-bold">{r.name}</span>
+                  <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
                   {p.favorite ? (
                     <span className="text-lg text-amber-300 drop-shadow-[0_0_6px_rgba(251,191,36,0.7)]" title="Favorit">
                       ★
@@ -1729,6 +1770,21 @@ function MatchCardView({
                       <span className={p.mTop ? "font-bold text-emerald-300" : "text-white/70"}>{pctFmt(p.mWin)}</span>
                       {p.mCount > 0 ? <span className="text-white/35"> ({p.mCount})</span> : null}
                     </span>
+                  </div>
+                ) : null}
+                {/* 💪 persönlicher Highscore auf diesem Flipper (+ heute) */}
+                {myPb ? (
+                  <div className="flex flex-wrap gap-x-1.5 text-[13px] tabular-nums text-white/45">
+                    <span>💪 Pers. Highscore</span>
+                    {myPb.before != null ? (
+                      <span className="font-semibold text-indigo-200">{scoreFmt.format(myPb.before)}</span>
+                    ) : null}
+                    {myPb.today != null ? (
+                      <span className={pbBeaten ? "font-bold text-emerald-300" : "text-white/70"}>
+                        · heute {scoreFmt.format(myPb.today)}
+                        {pbBeaten ? " 🎉" : ""}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -2348,6 +2404,7 @@ function LeaderboardOnly({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="truncate font-bold leading-tight">{r.name}</span>
+                        <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
                         <TpChip tp={r.tp} bonus={r.tpBonus} />
                       </div>
                       <EloLine row={r} eloOn={eloOn} />

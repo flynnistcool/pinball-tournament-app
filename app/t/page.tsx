@@ -41,6 +41,8 @@ import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
 import ThemeToggle from "@/components/ThemeToggle";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
+import StreakFire from "@/components/StreakFire";
+import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
@@ -4529,14 +4531,29 @@ function MiniLeaderboard({
   rotation = false,
   matches = [],
   matchPlayers = [],
+  rounds = [],
+  tournament = null,
 }: {
   code: string;
   // ✅ Rotation ("Round the Pinball"): zusätzliche Spalte "vorl." mit vorläufigem Stand
   rotation?: boolean;
   matches?: any[];
   matchPlayers?: any[];
+  // 🔥 für Siegesserien
+  rounds?: any[];
+  tournament?: any;
 }) {
   const [rows, setRows] = useState<any[]>([]);
+
+  // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
+  const winStreakMode = streakMode(tournament?.format);
+  const winStreaks = useMemo(
+    () =>
+      tournament?.status === "finished"
+        ? {}
+        : computeStreaks({ rounds, matches, match_players: matchPlayers }, winStreakMode),
+    [rounds, matches, matchPlayers, tournament?.status, winStreakMode]
+  );
 
   // Vorläufige Zusatzpunkte aus laufenden Flippern (nur Anzeige, speichert nichts)
   const provisional = useMemo(
@@ -4666,6 +4683,7 @@ function MiniLeaderboard({
                       {emoji || initials}
                     </span>
                     <span className="truncate font-medium">{r.name}</span>
+                    <StreakFire n={winStreaks[String(r.id)]} mode={winStreakMode} />
                   </div>
                   {rotation ? (
                     <div className="flex shrink-0 gap-1.5 pl-1 tabular-nums">
@@ -5996,6 +6014,16 @@ function RoundMatchesCard({
     tournament,
     playersCount,
   ]);
+
+  // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
+  const winStreakMode = streakMode(tournament?.format);
+  const winStreaks = useMemo(
+    () =>
+      tournament?.status === "finished"
+        ? {}
+        : computeStreaks({ rounds, matches, match_players: matchPlayers }, winStreakMode),
+    [rounds, matches, matchPlayers, tournament?.status, winStreakMode]
+  );
 
   // 🏆 Scores dieses Turniers für die Highscore-Zeile im Match-Kopf
   const liveRecordEntries = useMemo(
@@ -8182,6 +8210,7 @@ disabled={
                   </div>
                   {pos ? <Pill><span className="text-[10px]">#{pos}</span></Pill> : <Pill>—</Pill>}
                   {isWinner ? <Pill><span className="text-[10px]">🏆 Sieger</span></Pill> : null}
+                  <StreakFire n={winStreaks[String(team[0]?.player_id ?? "")]} mode={winStreakMode} />
                 </div>
 
                 <div className="w-44 flex flex-col gap-1">
@@ -8312,6 +8341,7 @@ disabled={
     />
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
+    <StreakFire n={winStreaks[String(mp.player_id)]} mode={winStreakMode} />
     {isActiveAtMachine ? (
       <span className="inline-flex items-center rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-semibold text-white animate-pulse">
         ▶ spielt
@@ -13463,6 +13493,8 @@ const tasksById = useMemo(() => {
       rotation={isRotationFormat}
       matches={matches}
       matchPlayers={matchPlayers}
+      rounds={rounds}
+      tournament={(data as any)?.tournament}
     />
     {/* 📺 Infobildschirm (öffentlich, ohne Login) in neuem Fenster – z. B. für zweiten PC/TV */}
     <a
