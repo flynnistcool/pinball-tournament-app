@@ -284,6 +284,9 @@ function RecordCelebrationInner({
   const priorRef = useRef<PriorRecords | null>(null);
   const enabledRef = useRef(false);
   const priorWinsRef = useRef<Record<string, number> | null>(null);
+  // Matchsiege neu laden, wenn ein Spieler in der geladenen Liste fehlt (z. B. später hinzugefügt)
+  const reloadWinsRef = useRef<() => void>(() => {});
+  const lastWinsReloadRef = useRef(0);
   dataRef.current = data;
   priorRef.current = prior;
   enabledRef.current = enabled;
@@ -294,6 +297,7 @@ function RecordCelebrationInner({
   // bisherige Rekorde + bisherige Matchsiege laden
   useEffect(() => {
     let disposed = false;
+    setPriorWins(null); // anderes Turnier → alte Zählung nicht weiterverwenden
     async function loadRecords() {
       try {
         const res = await fetch(`/api/public/machine-records?code=${encodeURIComponent(code)}&ts=${Date.now()}`, {
@@ -319,6 +323,7 @@ function RecordCelebrationInner({
         /* nächster Versuch beim nächsten Intervall */
       }
     }
+    reloadWinsRef.current = () => void loadWins();
     const load = () => {
       void loadRecords();
       void loadWins();
@@ -393,6 +398,15 @@ function RecordCelebrationInner({
           continue;
         }
         if (now - since < STABLE_MS || !pw) continue;
+        if (!Object.prototype.hasOwnProperty.call(pw, w.profileId)) {
+          // Spieler fehlt in der geladenen Zählung (nach dem Laden hinzugefügt) → NICHT als 0 werten,
+          // sondern neu laden (höchstens alle 10 s) und den Sieg danach bewerten
+          if (now - lastWinsReloadRef.current >= 10_000) {
+            lastWinsReloadRef.current = now;
+            reloadWinsRef.current();
+          }
+          continue;
+        }
         pendingWins.delete(w.key);
         seenWins.set(w.key, w.profileId);
         if (finished) continue;

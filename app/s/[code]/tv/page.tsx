@@ -26,6 +26,7 @@ import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { liveEntriesFrom } from "@/lib/recordWatch";
+import { rotationActiveMap } from "@/lib/rotationTurn";
 import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 /** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
@@ -387,6 +388,10 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     // Spalten pro Flipper (nur Rotation), sortiert nach Rundennummer
     const columns: Column[] = [];
     if (isRotation) {
+      const rotationActive = rotationActiveMap(
+        matches.map((m) => m.id),
+        mps
+      );
       const sorted = [...matches].sort(
         (a, b) => (roundById[a.round_id]?.number ?? 0) - (roundById[b.round_id]?.number ?? 0)
       );
@@ -424,13 +429,9 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           .join(" & ");
         const machine = m.machine_id ? machineById[m.machine_id] : undefined;
 
-        // Aktiver Spieler = erster in Startreihenfolge ohne Score (wie in der Admin-Ansicht)
+        // Aktiver Spieler = Wellen-Regel (lib/rotationTurn.ts), wie im Admin-Bereich
         const activePlayerId =
-          data?.tournament?.status === "finished"
-            ? null
-            : [...list]
-                .sort((a, b) => (a.start_position ?? 9999) - (b.start_position ?? 9999))
-                .find((mp) => toScore(mp.score) == null)?.player_id ?? null;
+          data?.tournament?.status === "finished" ? null : rotationActive[m.id] ?? null;
 
         columns.push({
           matchId: m.id,
@@ -1372,7 +1373,9 @@ function RotationTable({
             return (
               <tr
                 key={r.id}
-                className={`border-t border-white/[0.07] ${p ? `bg-gradient-to-r ${p.row} to-transparent` : ""}`}
+                className={`group border-t border-white/[0.07] transition-colors hover:bg-indigo-500/30 hover:outline hover:outline-[3px] hover:-outline-offset-[3px] hover:outline-indigo-300 ${
+                  p ? `bg-gradient-to-r ${p.row} to-transparent` : ""
+                }`}
               >
                 <td className="relative py-2 pl-4 pr-2">
                   {p ? <span className={`absolute inset-y-1 left-0 w-1.5 rounded-r ${p.bar}`} /> : null}
@@ -1383,7 +1386,9 @@ function RotationTable({
                     <PlayerAvatar row={r} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="truncate font-bold leading-tight">{r.name}</span>
+                        <span className="truncate font-bold leading-tight transition-colors group-hover:text-indigo-100">
+                          {r.name}
+                        </span>
                         <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
                         <TpChip tp={r.tp} bonus={r.tpBonus} />
                       </div>
@@ -1417,10 +1422,10 @@ function RotationTable({
                   return (
                     <td key={c.matchId} className="px-1.5 py-1.5 text-center">
                       <div
-                        className={`mx-auto w-[7.5em] rounded-xl px-2 py-1 ${
+                        className={`mx-auto w-[7.5em] rounded-xl px-2 py-1 transition-transform group-hover:scale-105 ${
                           cell.provisional
                             ? "bg-emerald-400/15 ring-1 ring-emerald-300/50"
-                            : "bg-white/[0.06]"
+                            : "bg-white/[0.06] group-hover:bg-white/[0.16] group-hover:ring-1 group-hover:ring-indigo-200/60"
                         }`}
                       >
                         <div className="flex items-center justify-center gap-1.5">
@@ -1435,7 +1440,7 @@ function RotationTable({
                         {cell.score != null ? (
                           <div
                             className={`mt-0.5 text-[0.7em] tabular-nums ${
-                              cell.provisional ? "text-emerald-200/90" : "text-white/55"
+                              cell.provisional ? "text-emerald-200/90" : "text-white/55 group-hover:text-white"
                             }`}
                           >
                             {scoreFmt.format(cell.score)}
@@ -1445,7 +1450,7 @@ function RotationTable({
                     </td>
                   );
                 })}
-                <td className="border-l border-white/10 px-4 py-2 text-right text-[1.05em] tabular-nums text-white/45">
+                <td className="border-l border-white/10 px-4 py-2 text-right text-[1.05em] tabular-nums text-white/45 group-hover:text-white/80">
                   {r.real}
                 </td>
                 <td
@@ -1871,7 +1876,13 @@ function ArchiveView({ blocks, rowById }: { blocks: RoundBlock[]; rowById: Recor
   );
 }
 
+/** so viele Hauptrunden-Balken zeigt der TV höchstens (die neuesten), Rest per "mehr anzeigen" */
+const PROGRESS_BARS_MAX = 7;
+
 function RoundProgressCard({ mv }: { mv: MatchViewData }) {
+  const [showAll, setShowAll] = useState(false);
+  const hidden = showAll ? 0 : Math.max(0, mv.bars.length - PROGRESS_BARS_MAX);
+  const bars = hidden ? mv.bars.slice(-PROGRESS_BARS_MAX) : mv.bars;
   return (
     <div className="rounded-3xl bg-white/[0.04] p-5 shadow-2xl ring-1 ring-white/10">
       <div className="text-sm font-semibold uppercase tracking-widest text-white/40">Fortschritt Runden</div>
@@ -1883,7 +1894,7 @@ function RoundProgressCard({ mv }: { mv: MatchViewData }) {
         <div className="mt-3 text-base text-white/40">Noch keine Runden</div>
       ) : (
         <div className="mt-4 space-y-3">
-          {mv.bars.map((b) => (
+          {bars.map((b) => (
             <div key={b.label}>
               <div className="mb-1 flex items-baseline justify-between text-lg">
                 <span className="font-bold">{b.label}</span>
@@ -1899,6 +1910,15 @@ function RoundProgressCard({ mv }: { mv: MatchViewData }) {
               </div>
             </div>
           ))}
+          {mv.bars.length > PROGRESS_BARS_MAX ? (
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              className="w-full rounded-xl bg-white/[0.06] px-3 py-2 text-base font-semibold text-white/60 ring-1 ring-white/10 hover:bg-white/10"
+            >
+              {showAll ? "▴ weniger anzeigen" : `▾ mehr anzeigen (${hidden} ältere)`}
+            </button>
+          ) : null}
         </div>
       )}
     </div>

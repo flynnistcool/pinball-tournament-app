@@ -23,6 +23,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { Button, Card, CardBody, CardHeader, Input, Pill, Select } from "@/components/ui";
 import { BarChart, Sparkline, RoundPointsBars, CumulativePointsLine } from "@/components/charts";
 import QRCode from "qrcode";
+import PlayerQrButton from "@/components/PlayerQrButton";
+import EntryLogMatchLine from "@/components/EntryLogLine";
+import { rotationActiveMap } from "@/lib/rotationTurn";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
 import PlayersTab from "./PlayersTab";
@@ -832,6 +835,7 @@ function PlayersList({
   locked,
   eloDeltas,
   eloShieldedByProfile, // ✅ NEU
+  code, // 📱 für den QR-Knopf (Handy-Eingabe)
 }: any) {
   const active = (players ?? []).filter((p: any) => p.active);
   const inactive = (players ?? []).filter((p: any) => !p.active);
@@ -947,6 +951,9 @@ const kBadgeClass =
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {code && !locked ? (
+                    <PlayerQrButton code={code} playerId={String(p.id)} name={String(p.name ?? "?")} />
+                  ) : null}
 
                   <button
                     type="button"
@@ -5543,6 +5550,8 @@ function MatchplayProgressStack({
 
   const [openProgress, setOpenProgress] = useState(true);
   const [pairingsOpen, setPairingsOpen] = useState(true);
+  // nur die neuesten 7 Hauptrunden zeigen, Rest per "mehr anzeigen" (wie am TV)
+  const [showAllBars, setShowAllBars] = useState(false);
 
   const n =
     Number(playersCount ?? 0) ||
@@ -5816,6 +5825,9 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
   }).filter(Boolean) as Array<{ label: string; done: number; total: number; pct: number; color: string }>;
 
   const hasBars = bars.length > 0;
+  const BARS_MAX = 7;
+  const hiddenBars = showAllBars ? 0 : Math.max(0, bars.length - BARS_MAX);
+  const shownBars = hiddenBars ? bars.slice(-BARS_MAX) : bars;
 
   // ✅ Aussetzer (Bye) in der AKTUELLEN Runde anzeigen (nur wenn Spielerzahl nicht durch match_size teilbar ist)
   const activePlayers = (players ?? []).filter((p: any) => p?.active !== false);
@@ -5904,7 +5916,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
 
       {openProgress && (
         <div className={`mt-2 ${compact ? "space-y-1.5" : "space-y-2"}`}>
-        {bars.map((b, idx) => {
+        {shownBars.map((b, idx) => {
           const frac = b.total > 0 ? b.done / b.total : 0;
           return (
             <div key={idx}>
@@ -5918,6 +5930,15 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
             </div>
           );
         })}
+        {bars.length > BARS_MAX ? (
+          <button
+            type="button"
+            onClick={() => setShowAllBars((v) => !v)}
+            className="mt-1 w-full rounded-lg border bg-neutral-50 px-2 py-1 text-[12px] font-medium text-neutral-600 hover:bg-neutral-100"
+          >
+            {showAllBars ? "▴ weniger anzeigen" : `▾ mehr anzeigen (${hiddenBars} ältere)`}
+          </button>
+        ) : null}
       </div>
       )}
     </div>
@@ -6586,6 +6607,17 @@ async function autoAssignPositionsByExplicitScores(
   useEffect(() => {
     setLocalStartOrderByMatchId({});
   }, [matchPlayers]);
+
+  // 🔵 Round the Pinball: wer ist an welchem Flipper dran (Wellen-Regel über alle Flipper, lib/rotationTurn.ts)
+  const rotationActiveByMatch = useMemo(
+    () =>
+      rotationActiveMap(
+        (matches ?? []).map((x: any) => String(x.id)),
+        (matchPlayers ?? []) as any[],
+        localStartOrderByMatchId
+      ),
+    [matches, matchPlayers, localStartOrderByMatchId]
+  );
 
 
 
@@ -8109,15 +8141,10 @@ disabled={
       .map((pid) => mpByPlayerId.get(pid))
       .filter(Boolean) as any[];
 
-    // ✅ Rotation: aktiver Spieler am Flipper = erster von oben ohne gespeicherten Score
-    // (zu Rundenbeginn der oberste; haben alle einen Score, ist niemand mehr aktiv)
+    // ✅ Rotation: aktiver Spieler am Flipper = Wellen-Regel (lib/rotationTurn.ts):
+    // erst wenn an ALLEN Flippern Position 1 eingetragen ist, rücken alle auf Position 2 usw.
     const rotationActivePlayerId: string | null =
-      isRotationFormat && !locked
-        ? (orderedMps.find(
-            (x: any) =>
-              !(x?.score != null && x?.score !== "" && Number.isFinite(Number(x.score)))
-          )?.player_id ?? null)
-        : null;
+      isRotationFormat && !locked ? rotationActiveByMatch[String(m.id)] ?? null : null;
 
     // =========================
     // 🧑‍🤝‍🧑 DYP Match Ansicht (2 Team-Zeilen)
@@ -8236,6 +8263,7 @@ disabled={
     }
 
     return (
+      <>
       <DndContext
         sensors={dndSensors}
         collisionDetection={closestCenter}
@@ -8883,7 +8911,6 @@ try {
                           </Button>
                         ) : null}
 
-
                     </div>
                   </div>
                 </SortablePlayerRow>
@@ -8892,6 +8919,20 @@ try {
           </div>
         </SortableContext>
       </DndContext>
+
+      {/* 📝 Wer hat gespeichert? (Handy / Admin) – eine Zeile unter allen Spielern des Matches */}
+      <EntryLogMatchLine
+        code={code}
+        matchId={String(m.id)}
+        players={orderedMps.map((x: any) => ({
+          id: String(x.player_id),
+          name: String(playersById[x.player_id]?.name ?? "?"),
+        }))}
+        sig={orderedMps.map((x: any) => `${x.player_id}:${x.score ?? ""}:${x.position ?? ""}`).join(",")}
+        resetKey={isOpen ? "open" : "closed"}
+        className="mt-2"
+      />
+      </>
     );
   })()}
 </div>
@@ -13461,6 +13502,7 @@ const tasksById = useMemo(() => {
         locked={locked}
         eloDeltas={eloDeltas} 
         eloShieldedByProfile={eloShieldedByProfile}  // ✅ HIER
+        code={code}
       />
       <div ref={tournamentLeaderboardRef} />
       <Stats code={code} tournamentName={tournamentName} />

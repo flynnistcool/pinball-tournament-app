@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { entryAuthor, recordEntryChange } from "@/lib/entryLogServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -61,6 +62,14 @@ export async function POST(req: Request) {
 
   const currentUseElo = Boolean((m as any)?.rounds?.elo_enabled);
 
+  // 📝 alter Wert für den Verlauf (entry_log)
+  const { data: prevRow } = await sb
+    .from("match_players")
+    .select("score")
+    .eq("match_id", matchId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+
   // Update match_players
   const { data: updated, error: uErr } = await sb
     .from("match_players")
@@ -75,6 +84,14 @@ export async function POST(req: Request) {
       { error: uErr.message ?? "Update fehlgeschlagen" },
       { status: 500 }
     );
+
+  // 📝 Verlauf: wer hat was geändert (Fehler werden ignoriert)
+  await recordEntryChange(sb, matchId, playerId, {
+    ...entryAuthor(body),
+    field: "score",
+    from: (prevRow as any)?.score ?? null,
+    to: score,
+  });
 
   // ------------------------------------------------------------
   // ✅ Elimination: nach jedem Score kaskadieren

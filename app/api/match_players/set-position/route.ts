@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { entryAuthor, recordEntryChange } from "@/lib/entryLogServer";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -47,6 +48,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Match nicht gefunden (oder gehört nicht zum Turnier)" }, { status: 404 });
   }
 
+  // 📝 alter Wert für den Verlauf (entry_log)
+  const { data: prevRow } = await sb
+    .from("match_players")
+    .select("position")
+    .eq("match_id", matchId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+
   // Update match_players
   const { data: updated, error: uErr } = await sb
     .from("match_players")
@@ -57,6 +66,14 @@ export async function POST(req: Request) {
     .single();
 
   if (uErr) return NextResponse.json({ error: uErr.message ?? "Update fehlgeschlagen" }, { status: 500 });
+
+  // 📝 Verlauf: wer hat was geändert (Fehler werden ignoriert)
+  await recordEntryChange(sb, matchId, playerId, {
+    ...entryAuthor(body),
+    field: "pos",
+    from: (prevRow as any)?.position ?? null,
+    to: position,
+  });
 
 
   // ------------------------------------------------------------
