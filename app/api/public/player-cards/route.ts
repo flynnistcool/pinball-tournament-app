@@ -1,7 +1,8 @@
 // Öffentliche Daten für die Spieler-Sammelkarten am Infobildschirm (/s/<code>/tv).
 // GET /api/public/player-cards?code=ABC123
 // Liefert je Turnierspieler: Avatar/Icon/Farbe, Elo (+ Rang im Turnier), Turniere/Siege,
-// Matches/Siegquote, Lieblingsflipper (meistgespielt) und Bestscore – über ALLE Turniere.
+// Matches/Siegquote (über ALLE Turniere), Lieblingsflipper, beste Flipper und Bestscore
+// (nur an der Location des Turniers; ohne Location über alle Turniere).
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
@@ -22,7 +23,11 @@ export async function GET(req: Request) {
 
     const sb = supabaseAdmin();
 
-    const { data: t, error: tErr } = await sb.from("tournaments").select("id").eq("code", code).maybeSingle();
+    const { data: t, error: tErr } = await sb
+      .from("tournaments")
+      .select("id, location_id")
+      .eq("code", code)
+      .maybeSingle();
     if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
     if (!t) return fail("Turnier nicht gefunden", 404);
 
@@ -44,6 +49,18 @@ export async function GET(req: Request) {
     let matches: CardInput["matches"] = [];
     let machines: CardInput["machines"] = [];
     let results: CardInput["results"] = [];
+    let locationTournamentIds: string[] | null = null;
+
+    // aktive Flipper dieses Turniers (nur diese erscheinen bei Lieblings-/Bester Flipper und Bestscore)
+    const { data: curMachines, error: cmErr } = await sb
+      .from("machines")
+      .select("name, active")
+      .eq("tournament_id", t.id);
+    if (cmErr) return fail(`Flipper laden fehlgeschlagen: ${cmErr.message}`, 500);
+    const activeMachineNames = (curMachines ?? [])
+      .filter((m: { active: boolean | null }) => m.active !== false)
+      .map((m: { name: string | null }) => String(m.name ?? "").trim())
+      .filter(Boolean);
 
     if (profileIds.length) {
       const prRes = await fetchAllIn<CardProfile>(profileIds, (chunk) =>
@@ -58,6 +75,18 @@ export async function GET(req: Request) {
       if (apRes.error) return fail(`Spielerverlauf laden fehlgeschlagen: ${apRes.error.message}`, 500);
       allPlayers = apRes.data;
       const allPlayerIds = allPlayers.map((p) => String(p.id));
+
+      // Turniere an derselben Location (für Lieblings-/Bester Flipper und Bestscore)
+      if (t.location_id) {
+        const tIds = Array.from(new Set(allPlayers.map((p) => String(p.tournament_id))));
+        const tlRes = await fetchAllIn<{ id: string; location_id: string | null }>(tIds, (chunk) =>
+          sb.from("tournaments").select("id, location_id").in("id", chunk).order("id")
+        );
+        if (tlRes.error) return fail(`Turniere laden fehlgeschlagen: ${tlRes.error.message}`, 500);
+        locationTournamentIds = tlRes.data
+          .filter((x) => String(x.location_id ?? "") === String(t.location_id))
+          .map((x) => String(x.id));
+      }
 
       const [mpRes, resRes] = await Promise.all([
         fetchAllIn<CardInput["matchPlayers"][number]>(allPlayerIds, (chunk) =>
@@ -100,7 +129,17 @@ export async function GET(req: Request) {
       machines = maRes.data;
     }
 
-    const cards = buildPlayerCards({ tournamentPlayers, profiles, allPlayers, matchPlayers, matches, machines, results });
+    const cards = buildPlayerCards({
+      tournamentPlayers,
+      profiles,
+      allPlayers,
+      matchPlayers,
+      matches,
+      machines,
+      results,
+      locationTournamentIds,
+      activeMachineNames,
+    });
     return NextResponse.json({ ok: true, cards });
   } catch (e: unknown) {
     console.error("player-cards crash:", e);

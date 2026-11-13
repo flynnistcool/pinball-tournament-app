@@ -45,7 +45,12 @@ const BEST_LABELS = ["🎯 Bester Flipper", "🥈 Zweitbester Flipper", "🥉 Dr
 const BEST_SWITCH_MS = 5000;
 
 /** Bester / zweit- / drittbester Flipper (Siegquote), wechselt alle 5 s */
-function BestMachinesBox({ list }: { list: BestMachine[] }) {
+/** kleiner Hinweis hinter der Überschrift: Wert gilt nur für die Location des Turniers */
+function Here({ on }: { on: boolean }) {
+  return on ? <span className="ml-1 normal-case tracking-normal text-sky-300/80">· 📍 hier</span> : null;
+}
+
+function BestMachinesBox({ list, local }: { list: BestMachine[]; local: boolean }) {
   const [idx, setIdx] = useState(0);
   useEffect(() => {
     setIdx(0);
@@ -60,6 +65,7 @@ function BestMachinesBox({ list }: { list: BestMachine[] }) {
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">
           {BEST_LABELS[idx] ?? BEST_LABELS[0]}
+          <Here on={local} />
         </div>
         {list.length > 1 ? (
           <div className="flex gap-1">
@@ -150,7 +156,7 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
       </div>
 
       <div className="relative mt-2 rounded-xl bg-white/[0.06] px-3 py-2 ring-1 ring-white/10">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">❤️ Lieblingsflipper</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">❤️ Lieblingsflipper<Here on={!!card.localScope} /></div>
         <div className="truncate text-lg font-bold">
           {card.favoriteMachine ? (
             <>
@@ -163,13 +169,13 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
         </div>
       </div>
 
-      <BestMachinesBox list={card.bestMachines ?? []} />
+      <BestMachinesBox list={card.bestMachines ?? []} local={!!card.localScope} />
 
       <div
         className="relative mt-2 rounded-xl px-3 py-2 ring-1"
         style={{ backgroundColor: `${accent}22`, borderColor: accent, boxShadow: `inset 0 0 0 1px ${accent}55` }}
       >
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/55">🔥 Bestscore</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/55">🔥 Bestscore<Here on={!!card.localScope} /></div>
         {card.bestScore ? (
           <>
             <div className="truncate font-mono text-2xl font-extrabold tabular-nums">

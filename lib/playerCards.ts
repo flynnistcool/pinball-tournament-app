@@ -22,6 +22,16 @@ export type CardInput = {
   machines: { id: string; name: string | null; icon_emoji: string | null }[];
   /** Endergebnisse (tournament_results) dieser Spieler-Einträge */
   results: { tournament_id: string; player_id: string; final_rank: number | null; super_final_rank: number | null }[];
+  /**
+   * Turniere an der Location des aktuellen Turniers. Wenn gesetzt, zählen Lieblingsflipper,
+   * beste Flipper und Bestscore NUR aus diesen Turnieren (Turniersiege/Siegquote bleiben gesamt).
+   */
+  locationTournamentIds?: readonly string[] | null;
+  /**
+   * Namen der AKTIVEN Flipper im aktuellen Turnier. Wenn gesetzt, zeigen Lieblingsflipper,
+   * beste Flipper und Bestscore nur Flipper, die es dort aktuell (noch) gibt.
+   */
+  activeMachineNames?: readonly string[] | null;
 };
 
 export type PlayerCard = {
@@ -43,10 +53,15 @@ export type PlayerCard = {
   favoriteMachine: { name: string; icon: string | null; count: number } | null;
   /** bis zu 3 Flipper mit der besten Siegquote (je mind. BEST_MACHINE_MIN_MATCHES Matches), Bester zuerst */
   bestMachines: BestMachine[];
+  /** true = Flipper-Felder (Lieblings-/Bester Flipper, Bestscore) beziehen sich nur auf diese Location */
+  localScope: boolean;
   bestScore: { score: number; machine: string | null; icon: string | null } | null;
 };
 
 export type BestMachine = { name: string; icon: string | null; matches: number; wins: number; winrate: number };
+
+/** für "Bester Flipper" braucht ein Flipper außerdem mindestens 1 Sieg (0 % ist keine Stärke) */
+export const BEST_MACHINE_MIN_WINS = 1;
 
 /** so viele Matches braucht ein Flipper mindestens für "Bester Flipper" (sonst wäre 1 Sieg aus 1 = 100 %) */
 export const BEST_MACHINE_MIN_MATCHES = 3;
@@ -61,6 +76,13 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
   const machineById = new Map(input.machines.map((m) => [String(m.id), m]));
   const machineIdByMatch = new Map(input.matches.map((m) => [String(m.id), m.machine_id ? String(m.machine_id) : null]));
   const profileByPlayer = new Map(input.allPlayers.map((p) => [String(p.id), String(p.profile_id)]));
+  const tournamentByPlayer = new Map(input.allPlayers.map((p) => [String(p.id), String(p.tournament_id)]));
+  const localSet = input.locationTournamentIds ? new Set(input.locationTournamentIds.map(String)) : null;
+  const nameKey = (n: string) => n.trim().toLowerCase().replace(/\s+/g, " ");
+  const activeSet =
+    input.activeMachineNames && input.activeMachineNames.length
+      ? new Set(input.activeMachineNames.map((n) => nameKey(String(n))))
+      : null;
 
   type Agg = {
     tournaments: Set<string>;
@@ -89,14 +111,19 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     const machineId = machineIdByMatch.get(String(mp.match_id)) ?? null;
     const machine = machineId ? machineById.get(machineId) : undefined;
     const machineName = machine?.name?.trim() || null;
+    // Flipper-Felder nur aus Turnieren dieser Location (falls bekannt)
+    // … und nur Flipper, die im aktuellen Turnier aktiv sind (ausgemusterte Flipper nicht zeigen)
+    const machineFieldsCount =
+      (!localSet || localSet.has(tournamentByPlayer.get(String(mp.player_id)) ?? "")) &&
+      (!activeSet || (!!machineName && activeSet.has(nameKey(machineName))));
 
     // nur gewertete Matches (Platz vergeben) zählen für Matches/Siege/Lieblingsflipper
     if (mp.position != null && Number(mp.position) > 0) {
       a.matches += 1;
       if (Number(mp.position) === 1) a.matchWins += 1;
-      if (machineName) {
+      if (machineName && machineFieldsCount) {
         // gleicher Flipper-Name in verschiedenen Turnieren = derselbe Flipper
-        const key = machineName.toLowerCase();
+        const key = nameKey(machineName);
         const cur = a.machineCount.get(key) ?? { name: machineName, icon: machine?.icon_emoji ?? null, count: 0, wins: 0 };
         cur.count += 1;
         if (Number(mp.position) === 1) cur.wins += 1;
@@ -105,7 +132,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     }
 
     const s = mp.score == null || mp.score === "" ? NaN : Number(mp.score);
-    if (Number.isFinite(s) && s > 0 && (!a.best || s > a.best.score)) {
+    if (machineFieldsCount && Number.isFinite(s) && s > 0 && (!a.best || s > a.best.score)) {
       a.best = { score: s, machine: machineName, icon: machine?.icon_emoji ?? null };
     }
   }
@@ -134,7 +161,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     }
     // Top 3 nach Siegquote; bei Gleichstand der Flipper mit mehr Matches
     const bestMachines: BestMachine[] = machineList
-      .filter((m) => m.count >= BEST_MACHINE_MIN_MATCHES)
+      .filter((m) => m.count >= BEST_MACHINE_MIN_MATCHES && m.wins >= BEST_MACHINE_MIN_WINS)
       .sort((x, y) => y.wins / y.count - x.wins / x.count || y.count - x.count)
       .slice(0, 3)
       .map((m) => ({ name: m.name, icon: m.icon, matches: m.count, wins: m.wins, winrate: Math.round((m.wins / m.count) * 100) }));
@@ -158,6 +185,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
       winrate: matches > 0 ? Math.round((matchWins / matches) * 100) : null,
       favoriteMachine: favorite,
       bestMachines,
+      localScope: !!localSet,
       bestScore: a?.best ?? null,
     };
   });
