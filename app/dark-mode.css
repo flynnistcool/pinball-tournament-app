@@ -91,6 +91,12 @@ html.pb-dark .hover\:bg-neutral-200:hover { background-color: var(--pbd-n300); }
 html.pb-dark .hover\:bg-neutral-800:hover,
 html.pb-dark .hover\:bg-neutral-700:hover { background-color: #555b88; }
 
+/* Kopfzeile eines Matches (Flipper, Spiel-Nr., OCR) */
+html.pb-dark .pb-match-head { background-color: #352a1f; }
+html.pb-dark .pb-match-head .text-indigo-600 { color: #a5b4fc; }
+html.pb-dark .pb-match-head .border-\[\#e8cfae\] { border-color: #4f3d2a; }
+html.pb-dark .pb-personal .text-indigo-600 { color: #a5b4fc; }
+
 /* ── Schrift ────────────────────────────────────────────────── */
 html.pb-dark .text-black,
 html.pb-dark .text-neutral-900,

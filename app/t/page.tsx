@@ -40,6 +40,8 @@ import VersionBadge from "@/components/VersionBadge";
 import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
 import ThemeToggle from "@/components/ThemeToggle";
+import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
+import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 
@@ -5995,6 +5997,18 @@ function RoundMatchesCard({
     playersCount,
   ]);
 
+  // 🏆 Scores dieses Turniers für die Highscore-Zeile im Match-Kopf
+  const liveRecordEntries = useMemo(
+    () =>
+      liveEntriesFrom({
+        machines: Object.entries(machinesInfoById ?? {}).map(([id, info]) => ({ id, name: info?.name ?? null })),
+        matches: (matches ?? []).map((x: any) => ({ id: String(x.id), machine_id: x.machine_id ?? null })),
+        match_players: (matchPlayers ?? []).map((x: any) => ({ match_id: x.match_id, player_id: x.player_id, score: x.score ?? null })),
+        players: Object.entries(playersById ?? {}).map(([id, p]) => ({ id, name: p?.name ?? null, profile_id: p?.profile_id ?? null })),
+      }),
+    [machinesInfoById, matches, matchPlayers, playersById]
+  );
+
   const machineUsageCounts = useMemo(() => {
   const map: Record<string, number> = {};
   for (const m of matches ?? []) {
@@ -7634,7 +7648,7 @@ const scoredPlayersInMatch = (() => {
 
 
 
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-2 py-1 sm:px-3 sm:py-2">
+                              <div className="pb-match-head flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b bg-[#f8ecdc] px-2 py-1 sm:px-3 sm:py-2">
                               
                                 {/* Linke Seite: Maschine + Spiel + Hinweis */}
                                 <div className="flex flex-col gap-1">
@@ -7763,6 +7777,14 @@ disabled={
                                     ) : null}
                                     </div> */}
                                 </div>
+
+                                {/* 🏆 Highscore + 30-Tage-Highscore des Flippers (eigene Zeile im Kopf) */}
+                                <MatchRecordsLine
+                                  hidden={tournament?.status === "finished"}
+                                  code={code}
+                                  machineName={m.machine_id ? machinesInfoById[m.machine_id]?.name : null}
+                                  liveEntries={liveRecordEntries}
+                                />
                               </div>
 
                                       {/* ================================
@@ -8402,6 +8424,17 @@ return (
       })()}
     </div>
     )}
+
+    {/* 💪 Persönlicher Highscore auf diesem Flipper */}
+    <div className="pl-9">
+      <PersonalBestLine
+        hidden={tournament?.status === "finished"}
+        code={code}
+        profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
+        machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
+        liveEntries={liveRecordEntries}
+      />
+    </div>
 </div>
 </div>
 

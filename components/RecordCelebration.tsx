@@ -219,7 +219,7 @@ function SmallPersonal({ c, onClose }: { c: Extract<Celebration, { kind: "person
 
 const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
 
-export default function RecordCelebration({
+function RecordCelebrationInner({
   code,
   data,
   soundOn,
@@ -411,4 +411,13 @@ export default function RecordCelebration({
     </>,
     document.body
   );
+}
+
+/**
+ * Beendetes Turnier: gar nichts laden, prüfen oder feiern – auch nicht, wenn man es
+ * Wochen später wieder öffnet. Erst bei laufenden Turnieren startet die Jubel-Logik.
+ */
+export default function RecordCelebration(props: Parameters<typeof RecordCelebrationInner>[0]) {
+  if (props.data?.tournament?.status === "finished") return null;
+  return <RecordCelebrationInner {...props} />;
 }

@@ -22,6 +22,12 @@ import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
 import RecordCelebration from "@/components/RecordCelebration";
+import { useMachineRecords } from "@/components/MatchRecordsLine";
+import { liveEntriesFrom } from "@/lib/recordWatch";
+import { recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
+
+/** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
+type RecLookup = (machineName: string) => { best: ShownRecord | null; month: ShownRecord | null } | null;
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -111,6 +117,7 @@ const TRANSITION_CSS = `
 @keyframes tvVtOut { to { opacity: 0; transform: scale(1.015); } }
 @keyframes tvVtIn { from { opacity: 0; transform: scale(0.985); } }
 @keyframes tvFadeIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+.tv-recfade { animation: tvFadeIn 0.5s ease both; }
 `;
 
 const REFRESH_MS = 5000;
@@ -711,6 +718,16 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     for (const c of view.columns) if (!out[c.roundNo]) out[c.roundNo] = c.machineName;
     return out;
   }, [isRotation, view.columns]);
+  // 🏆 Flipper-Rekorde (beendete Turniere der Location) + Scores dieses Turniers
+  // beendetes Turnier: nichts laden, nichts zeigen
+  const machineRecords = useMachineRecords(code, !!data && !isFinished);
+  const liveRecordEntries = useMemo(() => (data && !isFinished ? liveEntriesFrom(data) : []), [data, isFinished]);
+  const recLookup: RecLookup = (machineName) => {
+    if (isFinished || !machineRecords?.enabled) return null;
+    const r = recordsForMachine(machineName, machineRecords.prior, liveRecordEntries);
+    return r.best || r.month ? r : null;
+  };
+
   const tabs: TvTab[] = useMemo(() => {
     if (!data) return [];
     if (isFinished) {
@@ -1112,6 +1129,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           ) : isMatchFormat && matchView ? (
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
+              recLookup={recLookup}
               mv={matchView}
               rows={rowsTp}
               eloOn={view.eloOn}
@@ -1144,7 +1162,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                 roundLabels={raceRoundLabels}
               />
             ) : isRotation ? (
-              <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} />
+              <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} recLookup={recLookup} />
             ) : (
               <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
             )
@@ -1259,7 +1277,27 @@ function AutoCountdown({ timer }: { timer: TabTimer }) {
   return <span className="ml-1.5 inline-block min-w-[2.2em] tabular-nums text-emerald-200/80">{left}s</span>;
 }
 
-function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[]; eloOn: boolean }) {
+function RotationTable({
+  rows,
+  columns,
+  eloOn,
+  recLookup,
+}: {
+  rows: Row[];
+  columns: Column[];
+  eloOn: boolean;
+  recLookup: RecLookup;
+}) {
+  // gemeinsamer Takt für alle Spalten (alle wechseln gleichzeitig)
+  const [recPhase, setRecPhase] = useState(0);
+  useEffect(() => {
+    const id = window.setTimeout(
+      () => setRecPhase((p) => (p + 1) % REC_PHASES.length),
+      REC_PHASE_MS[REC_PHASES[recPhase % REC_PHASES.length]]
+    );
+    return () => window.clearTimeout(id);
+  }, [recPhase]);
+
   return (
     <div className="overflow-hidden rounded-3xl bg-white/[0.04] ring-1 ring-white/10 shadow-2xl backdrop-blur">
       {/* feste Basisgröße – das Einpassen auf den Bildschirm übernimmt scale() */}
@@ -1286,25 +1324,11 @@ function RotationTable({ rows, columns, eloOn }: { rows: Row[]; columns: Column[
                   <div className="w-full truncate text-[0.95em] font-bold text-white" title={c.machineName}>
                     {c.machineName}
                   </div>
-                  <div className="text-xs uppercase tracking-wider text-white/40">
-                    Runde {c.roundNo}
-                    {c.finished ? " · fertig" : ""}
-                  </div>
-                  {/* Highscore */}
-                  {c.highscore != null ? (
-                    <div className="mt-0.5 w-full rounded-xl bg-amber-400/10 px-2 py-0.5 ring-1 ring-amber-300/30">
-                      <div className="text-[0.8em] font-bold tabular-nums text-amber-300">
-                        🏆 {scoreFmt.format(c.highscore)}
-                      </div>
-                      <div className="truncate text-xs text-amber-100/80" title={c.holder}>
-                        {c.holder}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-0.5 w-full rounded-xl bg-white/5 px-2 py-0.5 text-xs leading-[2.2] text-white/30">
-                      noch offen
-                    </div>
-                  )}
+                  {c.finished ? (
+                    <div className="text-xs uppercase tracking-wider text-white/40">✓ fertig</div>
+                  ) : null}
+                  {/* Highscore: wechselt Turnier (12 s) → Rekord (7 s) → 30 Tage (7 s) */}
+                  <ColumnScoreBox c={c} rec={recLookup(c.machineName)} phase={recPhase} />
                 </div>
               </th>
             ))}
@@ -1431,6 +1455,7 @@ const pctFmt = (v: number | null) =>
   v == null ? "–" : `${v.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
 
 function MatchTvView({
+  recLookup,
   mv,
   rows,
   eloOn,
@@ -1440,6 +1465,7 @@ function MatchTvView({
   isFinished,
   race,
 }: {
+  recLookup: RecLookup;
   mv: MatchViewData;
   rows: Row[];
   eloOn: boolean;
@@ -1496,7 +1522,7 @@ function MatchTvView({
 
             <div className={`grid gap-4 ${cur.matches.length <= 2 ? "grid-cols-2" : "grid-cols-3"}`}>
               {cur.matches.map((m) => (
-                <MatchCardView key={m.matchId} m={m} rowById={rowById} />
+                <MatchCardView key={m.matchId} m={m} rowById={rowById} rec={recLookup(m.machineName)} />
               ))}
             </div>
 
@@ -1565,7 +1591,82 @@ function MatchTvView({
   );
 }
 
-function MatchCardView({ m, rowById }: { m: MatchCard; rowById: Record<string, Row> }) {
+const REC_PHASES = ["tour", "best", "month"] as const;
+// Anzeigedauer je Kästchen: Turnier 12 s, Rekord und 30 Tage je 7 s
+const REC_PHASE_MS: Record<(typeof REC_PHASES)[number], number> = { tour: 12000, best: 7000, month: 7000 };
+
+/**
+ * Rotation-Spaltenkopf: ein Kästchen, das alle 5 s wechselt:
+ * Turnier-Highscore (gelb) → Allzeit-Rekord der Location (gold) → 30-Tage-Highscore (blau).
+ * Fehlt ein Rekord (Timeplay/DYP, ohne Location, Flipper nie gespielt), bleibt der Turnierwert stehen.
+ */
+function ColumnScoreBox({ c, rec, phase }: { c: Column; rec: ReturnType<RecLookup>; phase: number }) {
+  const kind = REC_PHASES[phase % REC_PHASES.length];
+  const r = kind === "best" ? rec?.best : kind === "month" ? rec?.month : null;
+
+  let box: { label: string; icon: string; score: number | null; holder: string; cls: string; tone: string; sub: string };
+  if (r) {
+    box =
+      kind === "best"
+        ? { label: "Rekord", icon: "👑", score: r.score, holder: r.holder ?? "", cls: "bg-yellow-300/10 ring-yellow-200/40", tone: "text-yellow-200", sub: "text-yellow-50/80" }
+        : { label: "30 Tage", icon: "📅", score: r.score, holder: r.holder ?? "", cls: "bg-sky-400/10 ring-sky-300/40", tone: "text-sky-200", sub: "text-sky-50/80" };
+  } else {
+    box = { label: "Turnier", icon: "🏆", score: c.highscore, holder: c.holder, cls: "bg-amber-400/10 ring-amber-300/30", tone: "text-amber-300", sub: "text-amber-100/80" };
+  }
+  // Beschriftung nur zeigen, wenn überhaupt gewechselt wird
+  const showLabel = !!(rec?.best || rec?.month);
+
+  return (
+    <div key={box.label} className={`tv-recfade relative mt-2.5 w-full rounded-xl px-2 py-0.5 ring-1 ${box.score != null ? box.cls : "bg-white/5 ring-white/10"}`}>
+      {showLabel ? (
+        <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#1a1d3a] px-1.5 text-[10px] font-semibold uppercase leading-4 tracking-wider text-white/60 ring-1 ring-white/15">
+          {box.label}
+        </span>
+      ) : null}
+      {box.score != null ? (
+        <>
+          <div className={`text-[0.8em] font-bold tabular-nums ${box.tone}`}>
+            {box.icon} {scoreFmt.format(box.score)}
+          </div>
+          <div className={`truncate text-xs ${box.sub}`} title={box.holder}>
+            {box.holder}
+          </div>
+        </>
+      ) : (
+        <div className="text-xs leading-[2.2] text-white/30">noch offen</div>
+      )}
+    </div>
+  );
+}
+
+/** Match-Karte: Zeile mit Allzeit-Rekord + 30-Tage-Highscore */
+function CardRecords({ rec }: { rec: ReturnType<RecLookup> }) {
+  if (!rec) return null;
+  const item = (icon: string, label: string, r: ShownRecord | null, tone: string) => (
+    <div className="flex min-w-0 items-baseline gap-1.5">
+      <span>{icon}</span>
+      <span className="text-xs uppercase tracking-wider text-white/40">{label}</span>
+      <span className={`font-bold tabular-nums ${tone}`}>{r ? scoreFmt.format(r.score) : "—"}</span>
+      {r?.holder ? <span className="truncate text-white/60">· {r.holder}</span> : null}
+    </div>
+  );
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 border-b border-white/[0.07] bg-white/[0.03] px-4 py-1.5 text-sm">
+      {item("🏆", "Rekord", rec.best, "text-amber-200")}
+      {item("📅", "30 Tage", rec.month, "text-sky-200")}
+    </div>
+  );
+}
+
+function MatchCardView({
+  m,
+  rowById,
+  rec,
+}: {
+  m: MatchCard;
+  rowById: Record<string, Row>;
+  rec: ReturnType<RecLookup>;
+}) {
   return (
     <div
       className={`overflow-hidden rounded-3xl ring-1 ${
@@ -1586,6 +1687,7 @@ function MatchCardView({ m, rowById }: { m: MatchCard; rowById: Record<string, R
           {m.finished ? "fertig" : "läuft"}
         </span>
       </div>
+      <CardRecords rec={rec} />
 
       {/* Spieler in Startreihenfolge */}
       <div className="space-y-1.5 p-3">
