@@ -102,6 +102,7 @@ export async function GET(req: Request) {
       players: pRes.data,
       personalFor,
       recentTournamentIds,
+      tournamentDates: Object.fromEntries(counted.map((o) => [String(o.id), o.created_at ?? null])),
     });
     return NextResponse.json({ ok: true, enabled: true, ...prior });
   } catch (e: unknown) {

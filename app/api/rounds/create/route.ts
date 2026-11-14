@@ -1,3 +1,4 @@
+import { rotationStartOrder } from "@/lib/rotationPlan";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 type StartOrderMode = "random" | "standings_asc" | "last_round_asc";
@@ -380,6 +381,10 @@ export async function POST(req: Request) {
 
   // ✅ Preview-Mode: UI will nur wissen, welche Maschinen "eligible" sind
   const previewOnly = Boolean(body.previewOnly);
+  // 🎰 Round the Pinball: gewünschte Anzahl Flipper (leer = wie früher: so viele wie Spieler)
+  const rotationMachineCountRaw = Number(body.rotationMachineCount);
+  const rotationMachineCount =
+    Number.isFinite(rotationMachineCountRaw) && rotationMachineCountRaw >= 1 ? Math.floor(rotationMachineCountRaw) : null;
 
   const allowedDiffs = ["easy", "medium", "hard"] as const;
   type TaskDifficulty = (typeof allowedDiffs)[number];
@@ -650,21 +655,24 @@ if (!machinesToValidate.length) {
 
 
 
-    // Rotation-Regel (wie von dir beschrieben):
-    // Es werden genau so viele Runden erzeugt wie es SPIELER gibt.
-    // Die Maschinen werden dabei zufällig aus dem Pool aktiver Maschinen gezogen,
-    // aber ohne Wiederholung (jede Runde hat einen anderen Flipper).
+    // Rotation-Regel:
+    // Standard: so viele Runden wie SPIELER. Optional (rotationMachineCount): mehr oder weniger Flipper –
+    // dann bekommt jeder je Welle zufällig einen seiner Flipper (lib/rotationTurn.ts, lib/rotationPlan.ts).
+    // Die Maschinen werden zufällig aus dem Pool aktiver Maschinen gezogen, ohne Wiederholung.
     const playerCount = (players as any[]).length;
     const allMachines = (machines as any[]) ?? [];
-    const useMachineCount = Math.min(playerCount, allMachines.length);
+    const wantedMachineCount = rotationMachineCount ?? playerCount;
+    const useMachineCount = Math.min(wantedMachineCount, allMachines.length);
     const machinesForRotation = shuffle(allMachines).slice(0, useMachineCount);
 
     if (allMachines.length > useMachineCount) {
       warnings.push(
-        `Rotation: Es sind ${allMachines.length} Maschinen aktiv, aber es werden nur ${useMachineCount} genutzt (= Spieleranzahl).`
+        rotationMachineCount != null
+          ? `Rotation: Es sind ${allMachines.length} Maschinen aktiv, genutzt werden ${useMachineCount} (wie gewählt).`
+          : `Rotation: Es sind ${allMachines.length} Maschinen aktiv, aber es werden nur ${useMachineCount} genutzt (= Spieleranzahl).`
       );
     }
-    if (allMachines.length < playerCount) {
+    if (allMachines.length < wantedMachineCount) {
       warnings.push(
         `Rotation: Es sind nur ${allMachines.length} Maschinen aktiv – es werden daher nur ${useMachineCount} Runden erzeugt.`
       );
@@ -799,10 +807,9 @@ if (!machinesToValidate.length) {
       }
 
       // Einmalige Startreihenfolge pro Runde:
-      // wir nehmen eine Basisreihenfolge (random) und verschieben sie pro Runde um i.
-      // => jede Runde hat eine andere, aber deterministisch eindeutige Reihenfolge.
-      const shift = i % baseOrder.length;
-      const playersInThisMatch = baseOrder.slice(shift).concat(baseOrder.slice(0, shift));
+      // wir nehmen eine Basisreihenfolge (random) und verschieben sie pro Runde um (i mod Spielerzahl).
+      // Bei mehr Flippern als Spielern wiederholt sich die Verschiebung (siehe lib/rotationPlan.ts).
+      const playersInThisMatch = rotationStartOrder(baseOrder, i);
 
       const mpsToInsert = playersInThisMatch.map((p: any, idx: number) => ({
         match_id: match.id,

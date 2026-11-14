@@ -12,6 +12,10 @@ import StreakFire from "@/components/StreakFire";
 import PlayerCardsSwipe from "@/components/PlayerCardsSwipe";
 import PhoneTournamentInfo from "@/components/PhoneTournamentInfo";
 import PhoneMatchInsights from "@/components/PhoneMatchInsights";
+import RotationProgressBar from "@/components/RotationProgressBar";
+import PinballScore from "@/components/PinballScore";
+import PhonePodium from "@/components/PhonePodium";
+import { rotationProgress } from "@/lib/rotationTurn";
 import { RoundPointsBars } from "@/components/charts";
 import {
   entryMode,
@@ -138,11 +142,8 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
 
       {tab === "match" ? (
         finished ? (
-          <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
-            <div className="text-4xl">🏁</div>
-            <div className="mt-2 text-lg font-bold">Das Turnier ist beendet</div>
-            <div className="mt-1 text-sm text-neutral-500">Den Endstand siehst du unter „Turnier-Infos“.</div>
-          </div>
+          // 🏆 Turnier beendet: Siegerpodest statt "Mein Match"
+          <PhonePodium data={data} meId={me.playerId} />
         ) : (
           <MatchTab code={code} token={token} me={me} data={data} reload={load} />
         )
@@ -195,11 +196,24 @@ function MatchTab({
 }) {
   const mode = entryMode(data.tournament?.format);
   const { current, last, waiting, alsoActive } = useMemo(() => findMyMatch(data, me.playerId), [data, me.playerId]);
+  // 🔵 Round the Pinball: Durchgang X von Y
+  const rotProgress = useMemo(
+    () =>
+      mode === "own" && String(data.tournament?.status ?? "") !== "finished"
+        ? rotationProgress(
+            data.matches.map((m) => String(m.id)),
+            data.match_players
+          )
+        : null,
+    [data, mode]
+  );
+  const progressBar = rotProgress ? <RotationProgressBar progress={rotProgress} /> : null;
 
   // Round the Pinball: gerade an keinem Flipper dran → warten
   if (!current && waiting) {
     return (
       <div className="space-y-3">
+        {progressBar}
         <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
           <div className="text-4xl">⏳</div>
           <div className="mt-2 text-lg font-bold">Gleich bist du dran</div>
@@ -237,6 +251,7 @@ function MatchTab({
     }
     return (
       <div className="space-y-3">
+        {progressBar}
         <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
           <div className="text-4xl">{last ? "✅" : "⏳"}</div>
           <div className="mt-2 text-lg font-bold">
@@ -255,6 +270,7 @@ function MatchTab({
 
   return (
     <div className="space-y-3">
+      {progressBar}
       <EntryCard
         key={current.match.id}
         code={code}
@@ -279,15 +295,52 @@ function nameOf(data: MmData, pid: string): string {
   return String(data.players.find((p) => String(p.id) === String(pid))?.name ?? "?");
 }
 
-function MatchHead({ info, title }: { info: MyMatchInfo; title?: string }) {
+// Round the Pinball: keine "Runde X" (dort zählt der Durchgang oben), dafür wie im Admin der
+// Highscore an diesem Flipper im Turnier (höchster eingetragener Score + Name)
+function MatchHead({
+  info,
+  data,
+  title,
+  showRound = true,
+}: {
+  info: MyMatchInfo;
+  data: MmData;
+  title?: string;
+  showRound?: boolean;
+}) {
+  let best: number | null = null;
+  for (const mp of info.players) {
+    const s = toScore(mp.score);
+    if (s != null && (best == null || s > best)) best = s;
+  }
+  const holders =
+    !showRound && best != null
+      ? info.players.filter((mp) => toScore(mp.score) === best).map((mp) => nameOf(data, mp.player_id))
+      : [];
   return (
     <div className="rounded-t-2xl border-b bg-[#f8ecdc] px-4 py-3">
       {title ? <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">{title}</div> : null}
-      <div className="flex items-center gap-2 text-lg font-black">
-        <span>{info.machine?.icon_emoji || "🎰"}</span>
-        <span className="truncate">{info.machine?.name ?? "Flipper noch offen"}</span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-lg font-black">
+            <span>{info.machine?.icon_emoji || "🎰"}</span>
+            <span className="truncate">{info.machine?.name ?? "Flipper noch offen"}</span>
+          </div>
+          {showRound ? <div className="text-xs text-neutral-600">Runde {info.round?.number ?? "?"}</div> : null}
+        </div>
+        {!showRound ? (
+          // Stil wie im Admin-Bereich (Round the Pinball → "Highscore" mit Ziffern-Kästchen)
+          <div className="flex shrink-0 flex-col items-center gap-1 px-1 text-center">
+            <div className="text-[12px] font-semibold text-neutral-500">Highscore</div>
+            <PinballScore value={best ?? 0} minDigits={7} />
+            {best != null ? (
+              <div className="max-w-[200px] truncate text-sm font-semibold text-neutral-700">🏆 {holders.join(" + ")}</div>
+            ) : (
+              <div className="text-xs font-semibold text-neutral-500">Setz deinen Highscore!</div>
+            )}
+          </div>
+        ) : null}
       </div>
-      <div className="text-xs text-neutral-600">Runde {info.round?.number ?? "?"}</div>
     </div>
   );
 }
@@ -296,7 +349,7 @@ function MatchHead({ info, title }: { info: MyMatchInfo; title?: string }) {
 function MatchCard({ info, data, meId, title }: { info: MyMatchInfo; data: MmData; meId: string; title?: string }) {
   return (
     <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      <MatchHead info={info} title={title} />
+      <MatchHead info={info} data={data} title={title} showRound={entryMode(data.tournament?.format) !== "own"} />
       <div className="divide-y">
         {info.players.map((mp, i) => {
           const s = toScore(mp.score);
@@ -539,7 +592,7 @@ function EntryCard({
   return (
     <div className="space-y-3">
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-        <MatchHead info={info} />
+        <MatchHead info={info} data={data} showRound={entryMode(data.tournament?.format) !== "own"} />
         <div className="divide-y">
           {info.players.map((mp, i) => {
             const pid = String(mp.player_id);

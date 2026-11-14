@@ -7,7 +7,8 @@
 
 import { machineKey, personalKey, type LiveEntry, type PriorRecords } from "@/lib/recordWatch";
 
-export type ShownRecord = { score: number; holder: string | null };
+/** at = Datum (ISO), an dem der Score aufgestellt wurde; null = unbekannt */
+export type ShownRecord = { score: number; holder: string | null; at?: string | null };
 
 export function recordsForMachine(
   machineName: string | null | undefined,
@@ -20,11 +21,12 @@ export function recordsForMachine(
   let liveBest: ShownRecord | null = null;
   for (const e of live) {
     if (e.machineKey !== key) continue;
-    if (!liveBest || e.score > liveBest.score) liveBest = { score: e.score, holder: e.playerName };
+    // im laufenden Turnier aufgestellt → heute
+    if (!liveBest || e.score > liveBest.score) liveBest = { score: e.score, holder: e.playerName, at: new Date().toISOString() };
   }
 
-  const pick = (p: { score: number; holder: string | null } | undefined): ShownRecord | null => {
-    const fromPrior = p ? { score: p.score, holder: p.holder } : null;
+  const pick = (p: { score: number; holder: string | null; at?: string | null } | undefined): ShownRecord | null => {
+    const fromPrior = p ? { score: p.score, holder: p.holder, at: p.at ?? null } : null;
     if (!fromPrior) return liveBest;
     if (!liveBest) return fromPrior;
     return liveBest.score > fromPrior.score ? liveBest : fromPrior;

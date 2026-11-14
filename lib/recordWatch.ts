@@ -10,7 +10,8 @@ import { machineKey } from "@/lib/machineStats";
 
 export { machineKey };
 
-export type PriorRecord = { score: number; holder: string | null; machineName: string | null };
+/** at = Datum des Turniers, in dem der Score aufgestellt wurde (ISO, optional) */
+export type PriorRecord = { score: number; holder: string | null; machineName: string | null; at?: string | null };
 export type PriorRecords = {
   /** machineKey → bisheriger Rekord */
   records: Record<string, PriorRecord>;
@@ -38,6 +39,8 @@ export function buildPriorRecords(input: {
   personalFor: readonly string[];
   /** Turniere der letzten 30 Tage (für den 30-Tage-Highscore) */
   recentTournamentIds?: readonly string[];
+  /** Turnier-ID → Datum (für "aufgestellt am") */
+  tournamentDates?: Readonly<Record<string, string | null>>;
 }): PriorRecords {
   const machineById = new Map(input.machines.map((m) => [String(m.id), m]));
   const machineIdByMatch = new Map(input.matches.map((m) => [String(m.id), m.machine_id ? String(m.machine_id) : null]));
@@ -59,7 +62,12 @@ export function buildPriorRecords(input: {
     const player = playerById.get(String(mp.player_id));
 
     const cur = records[key];
-    const rec: PriorRecord = { score, holder: player?.name ?? null, machineName: machine?.name?.trim() ?? null };
+    const rec: PriorRecord = {
+      score,
+      holder: player?.name ?? null,
+      machineName: machine?.name?.trim() ?? null,
+      at: machine?.tournament_id ? input.tournamentDates?.[String(machine.tournament_id)] ?? null : null,
+    };
     if (!cur || score > cur.score) records[key] = rec;
     if (machine?.tournament_id && recent.has(String(machine.tournament_id))) {
       const m = monthly[key];

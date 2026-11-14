@@ -2,7 +2,7 @@
 // Reine Logik, keine Datenbank (Daten kommen aus /api/public/tournament).
 
 import { matchPoints, computeProvisionalRotationPoints } from "@/lib/points";
-import { rotationActiveMap } from "@/lib/rotationTurn";
+import { rotationActiveMap, rotationNextMatchFor } from "@/lib/rotationTurn";
 
 export type MmPlayer = { id: string; name: string | null; active?: boolean | null; profile_id?: string | null };
 export type MmMachine = { id: string; name: string | null; icon_emoji?: string | null };
@@ -145,12 +145,17 @@ export function findMyMatch(
     const alsoActive = actives.slice(1);
     let waiting: { info: MyMatchInfo; ahead: number } | null = null;
     if (!current) {
-      for (const x of all) {
-        if (x.done) continue;
+      // nächster Flipper nach derselben Regel wie das Blau (Stufe + fester Zufall, lib/rotationTurn.ts)
+      const nextId = rotationNextMatchFor(
+        data.matches.map((m) => String(m.id)),
+        data.match_players,
+        String(playerId)
+      );
+      const x = nextId ? all.find((y) => !y.done && String(y.match.id) === nextId) : undefined;
+      if (x) {
         const open = x.players.filter((mp) => toScore(mp.score) == null).map((mp) => String(mp.player_id));
         const ahead = open.indexOf(String(playerId));
-        if (ahead < 0) continue;
-        if (!waiting || ahead < waiting.ahead) waiting = { info: x, ahead };
+        if (ahead >= 0) waiting = { info: x, ahead };
       }
     }
     return { current, last, count: all.length, waiting, alsoActive };

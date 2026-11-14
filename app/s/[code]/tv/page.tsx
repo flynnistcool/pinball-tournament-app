@@ -26,7 +26,9 @@ import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { liveEntriesFrom } from "@/lib/recordWatch";
-import { rotationActiveMap } from "@/lib/rotationTurn";
+import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
+import RotationProgressBar from "@/components/RotationProgressBar";
+import RotationTurnSplash from "@/components/RotationTurnSplash";
 import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 /** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
@@ -451,6 +453,17 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   }, [data, isRotation]);
 
   const tournamentName = data?.tournament?.name ?? "Turnier";
+  // 🔵 Round the Pinball: Durchgang X / Y
+  const rotProgress = useMemo(
+    () =>
+      isRotation && data
+        ? rotationProgress(
+            (data.matches ?? []).map((m) => m.id),
+            data.match_players ?? []
+          )
+        : null,
+    [data, isRotation]
+  );
   const isMatchFormat = MATCH_FORMATS.has(format);
 
   // Turnierserie (gleiche Kategorie) + Turnierpunkte von heute
@@ -953,6 +966,8 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
       ref={viewportRef}
       className="fixed inset-0 z-50 overflow-auto bg-[radial-gradient(ellipse_at_top,#1e1b4b_0%,#0b1020_55%,#05070d_100%)] text-white"
     >
+      {/* 🔵 Round the Pinball: kurze Einblendung bei neuem Durchgang / alle fertig */}
+      {isRotation ? <RotationTurnSplash progress={rotProgress} variant="tv" detectStart /> : null}
       {/* Platzhalter in skalierter Größe (für Zentrierung + Scrollen nur im Notfall) */}
       <div
         style={{
@@ -1012,6 +1027,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                     🏷️ {data.tournament.category}
                   </span>
                 ) : null}
+                {rotProgress && !isFinished ? <RotationProgressBar progress={rotProgress} variant="tv" /> : null}
               </div>
             </div>
             <div className="whitespace-nowrap pb-2 text-right text-sm text-white/50">
@@ -1340,12 +1356,12 @@ function RotationTable({
                 <div className="mx-auto flex w-[8.5em] flex-col items-center gap-0.5">
                   {/* Flipper-Icon */}
                   <span
-                    className={`flex h-10 w-10 items-center justify-center rounded-xl text-2xl ring-1 ${
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-xl ring-1 ${
                       c.finished ? "bg-white/10 ring-white/20" : "bg-indigo-500/20 ring-indigo-300/40"
                     }`}
                   >
                     {c.machineIcon ?? (
-                      <span className="text-base font-bold text-white/80">{initials(c.machineName)}</span>
+                      <span className="text-sm font-bold text-white/80">{initials(c.machineName)}</span>
                     )}
                   </span>
                   <div className="w-full truncate text-[0.95em] font-bold text-white" title={c.machineName}>
@@ -1354,7 +1370,7 @@ function RotationTable({
                   {c.finished ? (
                     <div className="text-xs uppercase tracking-wider text-white/40">✓ fertig</div>
                   ) : null}
-                  {/* Highscore: wechselt Turnier (12 s) → Rekord (7 s) → 30 Tage (7 s) */}
+                  {/* Highscore: Turnier immer, darunter Rekord ⇄ 30 Tage (je 7 s) */}
                   <ColumnScoreBox c={c} rec={recLookup(c.machineName)} phase={recPhase} />
                 </div>
               </th>
@@ -1632,33 +1648,33 @@ function MatchTvView({
   );
 }
 
-const REC_PHASES = ["tour", "best", "month"] as const;
-// Anzeigedauer je Kästchen: Turnier 12 s, Rekord und 30 Tage je 7 s
-const REC_PHASE_MS: Record<(typeof REC_PHASES)[number], number> = { tour: 12000, best: 7000, month: 7000 };
+const REC_PHASES = ["best", "month"] as const;
+// Anzeigedauer des unteren Kästchens: Rekord und 30 Tage je 7 s
+const REC_PHASE_MS: Record<(typeof REC_PHASES)[number], number> = { best: 7000, month: 7000 };
 
-/**
- * Rotation-Spaltenkopf: ein Kästchen, das alle 5 s wechselt:
- * Turnier-Highscore (gelb) → Allzeit-Rekord der Location (gold) → 30-Tage-Highscore (blau).
- * Fehlt ein Rekord (Timeplay/DYP, ohne Location, Flipper nie gespielt), bleibt der Turnierwert stehen.
- */
-function ColumnScoreBox({ c, rec, phase }: { c: Column; rec: ReturnType<RecLookup>; phase: number }) {
-  const kind = REC_PHASES[phase % REC_PHASES.length];
-  const r = kind === "best" ? rec?.best : kind === "month" ? rec?.month : null;
+type ScoreBox = {
+  label: string;
+  icon: string;
+  score: number | null;
+  holder: string;
+  cls: string;
+  tone: string;
+  sub: string;
+  /** Rekord/30 Tage: Halter + Datum nur beim Drüberfahren mit der Maus */
+  hoverOnly?: boolean;
+  at?: string | null;
+};
 
-  let box: { label: string; icon: string; score: number | null; holder: string; cls: string; tone: string; sub: string };
-  if (r) {
-    box =
-      kind === "best"
-        ? { label: "Rekord", icon: "👑", score: r.score, holder: r.holder ?? "", cls: "bg-yellow-300/10 ring-yellow-200/40", tone: "text-yellow-200", sub: "text-yellow-50/80" }
-        : { label: "30 Tage", icon: "📅", score: r.score, holder: r.holder ?? "", cls: "bg-sky-400/10 ring-sky-300/40", tone: "text-sky-200", sub: "text-sky-50/80" };
-  } else {
-    box = { label: "Turnier", icon: "🏆", score: c.highscore, holder: c.holder, cls: "bg-amber-400/10 ring-amber-300/30", tone: "text-amber-300", sub: "text-amber-100/80" };
-  }
-  // Beschriftung nur zeigen, wenn überhaupt gewechselt wird
-  const showLabel = !!(rec?.best || rec?.month);
+const recDateFmt = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 
+function ScoreBoxView({ box, showLabel, fade }: { box: ScoreBox; showLabel: boolean; fade?: boolean }) {
+  const date = box.at && Number.isFinite(new Date(box.at).getTime()) ? recDateFmt.format(new Date(box.at)) : null;
+  const hoverText = [box.holder, date ? `am ${date}` : null].filter(Boolean).join(" · ");
   return (
-    <div key={box.label} className={`tv-recfade relative mt-2.5 w-full rounded-xl px-2 py-0.5 ring-1 ${box.score != null ? box.cls : "bg-white/5 ring-white/10"}`}>
+    <div
+      className={`${fade ? "tv-recfade " : ""}group relative mt-2.5 w-full rounded-xl px-2 py-0.5 ring-1 ${box.score != null ? box.cls : "bg-white/5 ring-white/10"}`}
+      title={box.hoverOnly && hoverText ? hoverText : undefined}
+    >
       {showLabel ? (
         <span className="absolute -top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#1a1d3a] px-1.5 text-[10px] font-semibold uppercase leading-4 tracking-wider text-white/60 ring-1 ring-white/15">
           {box.label}
@@ -1666,17 +1682,57 @@ function ColumnScoreBox({ c, rec, phase }: { c: Column; rec: ReturnType<RecLooku
       ) : null}
       {box.score != null ? (
         <>
-          <div className={`text-[0.8em] font-bold tabular-nums ${box.tone}`}>
+          {/* Allzeit / 30 Tage bewusst mager, damit der Turnier-Highscore heraussticht */}
+          <div className={`tabular-nums ${box.hoverOnly ? "text-[0.7em] font-normal" : "text-[0.95em] font-extrabold"} ${box.tone}`}>
             {box.icon} {scoreFmt.format(box.score)}
           </div>
-          <div className={`truncate text-xs ${box.sub}`} title={box.holder}>
-            {box.holder}
-          </div>
+          {box.hoverOnly ? (
+            hoverText ? (
+              <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-1 hidden -translate-x-1/2 whitespace-nowrap rounded-full bg-[#1a1d3a] px-2.5 py-0.5 text-xs font-semibold text-white ring-1 ring-white/25 shadow-lg group-hover:block">
+                {hoverText}
+              </span>
+            ) : null
+          ) : (
+            <div className={`truncate text-xs font-semibold ${box.sub}`} title={box.holder}>
+              {box.holder}
+            </div>
+          )}
         </>
       ) : (
         <div className="text-xs leading-[2.2] text-white/30">noch offen</div>
       )}
     </div>
+  );
+}
+
+/**
+ * Rotation-Spaltenkopf:
+ * oben immer der Turnier-Highscore (gelb), darunter im Wechsel (je 7 s)
+ * Allzeit-Rekord der Location (gold) und 30-Tage-Highscore (blau).
+ * Fehlt einer davon, bleibt der andere stehen; fehlen beide (Timeplay/DYP, ohne Location,
+ * Flipper nie gespielt), gibt es nur das Turnier-Kästchen.
+ */
+function ColumnScoreBox({ c, rec, phase }: { c: Column; rec: ReturnType<RecLookup>; phase: number }) {
+  const tour: ScoreBox = { label: "Turnier Highscore", icon: "🏆", score: c.highscore, holder: c.holder, cls: "bg-amber-400/20 ring-2 ring-amber-300/70 shadow-[0_0_14px_rgba(251,191,36,0.25)]", tone: "text-amber-200", sub: "text-amber-50/90" };
+
+  const want = REC_PHASES[phase % REC_PHASES.length];
+  const kind = want === "best" ? (rec?.best ? "best" : "month") : rec?.month ? "month" : "best";
+  const r = kind === "best" ? rec?.best : rec?.month;
+  const lower: ScoreBox | null = r
+    ? kind === "best"
+      ? { label: "Allzeit Highscore", icon: "👑", score: r.score, holder: r.holder ?? "", cls: "bg-white/[0.03] ring-white/10", tone: "text-yellow-100/60", sub: "text-yellow-50/60", hoverOnly: true, at: r.at ?? null }
+      : { label: "30 Tage Highscore", icon: "📅", score: r.score, holder: r.holder ?? "", cls: "bg-white/[0.03] ring-white/10", tone: "text-sky-100/60", sub: "text-sky-50/60", hoverOnly: true, at: r.at ?? null }
+    : null;
+
+  return (
+    <>
+      <ScoreBoxView box={tour} showLabel />
+      {lower ? (
+        <div key={lower.label} className="w-full">
+          <ScoreBoxView box={lower} showLabel fade />
+        </div>
+      ) : null}
+    </>
   );
 }
 

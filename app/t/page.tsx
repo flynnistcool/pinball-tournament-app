@@ -25,7 +25,11 @@ import { BarChart, Sparkline, RoundPointsBars, CumulativePointsLine } from "@/co
 import QRCode from "qrcode";
 import PlayerQrButton from "@/components/PlayerQrButton";
 import EntryLogMatchLine from "@/components/EntryLogLine";
-import { rotationActiveMap } from "@/lib/rotationTurn";
+import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
+import RotationProgressBar from "@/components/RotationProgressBar";
+import RotationTurnSplash from "@/components/RotationTurnSplash";
+import RefreshCountdown from "@/components/RefreshCountdown";
+import RotationRoundsDialog from "@/components/RotationRoundsDialog";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
 import PlayersTab from "./PlayersTab";
@@ -4929,12 +4933,12 @@ function CurrentRoundSticky({
   if (!currentRound || currentMatches.length === 0) {
     return (
       <Card>
-        <CardHeader>
+        <div className="px-2.5 pt-4 pb-2.5 border-b">
           <div className="text-sm font-semibold">Aktuelle Runde</div>
-        </CardHeader>
-        <CardBody>
+        </div>
+        <div className="px-2.5 py-3">
           <div className="text-sm text-neutral-500">Keine aktive Runde.</div>
-        </CardBody>
+        </div>
       </Card>
     );
   }
@@ -4942,11 +4946,11 @@ function CurrentRoundSticky({
   return (
     <Card className="mt-2">
      
-<div className="p-5 cursor-pointer select-none">
+<div className="cursor-pointer select-none">
   <button
     type="button"
     onClick={() => setWinrateOpen((v) => !v)}
-    className="w-full text-[14px] font-semibold pb-2 border-b border-gray-200"
+    className={"w-full px-2.5 pt-4 pb-2.5 text-sm font-semibold " + (winrateOpen ? "border-b" : "")}
   >
     <span className="flex items-center justify-between w-full">
       <span className="text-sm font-semibold">
@@ -4967,7 +4971,7 @@ function CurrentRoundSticky({
       {winrateOpen && (
 
         
-        <div className="space-y-2 pb-5 px-5 ">
+        <div className="space-y-2 px-2.5 py-3">
 
           {currentMatches.map((m: any, idx: number) => {
             const machineName = machinesInfoById?.[String(m.machine_id)]?.name ?? "Maschine";
@@ -5165,10 +5169,11 @@ function RotationGlobalTimerSticky({
 
   return (
     <Card className="mt-2">
-      <CardHeader>
+      {/* Kopf-Abstände wie "Leaderboard (live)" */}
+      <div className="px-2.5 pt-4 pb-2.5 border-b">
         <div className="text-sm font-semibold">Rotation Timer</div>
-      </CardHeader>
-      <CardBody>
+      </div>
+      <div className="px-2.5 py-3">
         <div className="flex items-center justify-between gap-3">
           
 
@@ -5176,7 +5181,7 @@ function RotationGlobalTimerSticky({
             <Select
               value={String(minutes)}
               onChange={(e) => setMinutes(Number(e.target.value) || 10)}
-              className="h-12 w-full text-xs"
+              className="h-10 w-full text-xs"
               title="Dauer (Minuten)"
               disabled={locked || running || paused}
             >
@@ -5247,7 +5252,7 @@ function RotationGlobalTimerSticky({
             </Button>
           </div>
         </div>
-      </CardBody>
+      </div>
     </Card>
   );
 }
@@ -5888,7 +5893,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
 
   return (
     <>
-      <div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
+      <div className={"mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm"}>
       <div
         role="button"
         tabIndex={0}
@@ -5899,7 +5904,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
             setOpenProgress((v) => !v);
           }
         }}
-        className={`${compact ? "text-[14px] font-semibold pb-2 border-b border-gray-200" : "text-[13px]"} text-neutral-900 cursor-pointer select-none flex items-start justify-between gap-2`}
+        className={`${compact ? "px-2.5 pt-4 pb-2.5 text-sm font-semibold" : "px-3 pt-3 pb-2 text-[13px]"} ${openProgress ? "border-b" : ""} text-neutral-900 cursor-pointer select-none flex items-start justify-between gap-2`}
       >
         <div>
         <span className="flex items-center gap-2">
@@ -5915,7 +5920,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
       </div>
 
       {openProgress && (
-        <div className={`mt-2 ${compact ? "space-y-1.5" : "space-y-2"}`}>
+        <div className={`px-2.5 py-3 ${compact ? "space-y-1.5" : "space-y-2"}`}>
         {shownBars.map((b, idx) => {
           const frac = b.total > 0 ? b.done / b.total : 0;
           return (
@@ -5945,16 +5950,16 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
 
       {/* Info-Block unter Fortschritt Hauptrunden */}
       {hasBye && (
-        <div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
-          <div className="text-gray-900 text-[14px] font-semibold pb-2 border-b border-gray-200">Aussetzer<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
-          <div className="mt-1 text-sm text-gray-800">
+        <div className={"mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm"}>
+          <div className="px-2.5 pt-4 pb-2.5 border-b text-gray-900 text-sm font-semibold">Aussetzer<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
+          <div className="px-2.5 py-3 text-sm text-gray-800">
             <span className="text-[13px] text-gray-900">{(byeName && String(byeName).toLowerCase() !== "ghost") ? byeName : "Ghost"}</span>
           </div>
         </div>
       )}
 
 {/* Paarungen (gesamt im Turnier) */}
-<div className={`mt-2 p-5 rounded-xl border bg-white ${compact ? "p-2" : "p-3"}`}>
+<div className={"mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm"}>
   <div
     role="button"
     tabIndex={0}
@@ -5965,7 +5970,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
         setPairingsOpen((v) => !v);
       }
     }}
-    className="text-gray-900 text-[14px] font-semibold pb-2 border-b border-gray-200 flex items-center justify-between gap-2 cursor-pointer select-none"
+    className={"px-2.5 pt-4 pb-2.5 text-gray-900 text-sm font-semibold flex items-center justify-between gap-2 cursor-pointer select-none " + (pairingsOpen ? "border-b" : "")}
   >
     <span className="flex items-center gap-2">
       <span>Paarungen</span>
@@ -5975,9 +5980,9 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
   </div>
 
   {pairingsOpen && ((pairingRowsAll?.length ?? 0) === 0 ? (
-    <div className="mt-2 text-sm text-gray-600">Noch keine Paarungen.</div>
+    <div className="px-2.5 py-3 text-sm text-gray-600">Noch keine Paarungen.</div>
   ) : (
-    <div className="mt-2 max-h-[260px] overflow-auto pr-1">
+    <div className="max-h-[260px] overflow-auto px-2.5 py-3">
       <div className="flex flex-col gap-2">
         {(pairingRowsAll ?? []).map((row) => (
           <div key={row.key} className="flex items-center justify-between gap-3">
@@ -10895,13 +10900,21 @@ async function registerFinalWin(playerId: string, winnerName: string, tvWin: Win
   }, []);
 
 
+// 🔄 Anzeige "Update in X s" (rechte Spalte): letzter Abruf + gerade am Laden + "jetzt aktualisieren"
+const POLL_MS = 16000;
+const [pollLastAt, setPollLastAt] = useState<number | null>(null);
+const [pollBusy, setPollBusy] = useState(false);
+const pollNowRef = useRef<(() => void) | null>(null);
+
 useEffect(() => {
   if (!code) return;
 
   let cancelled = false;
+  let t: number | undefined;
 
 async function tick() {
   if (cancelled) return;
+  setPollBusy(true);
 
   // ✅ HIER EINSETZEN – Snapshot für Elo-Δ (auch für Zuschauer)
   if (profiles?.length) {
@@ -10926,19 +10939,31 @@ async function tick() {
   ]);
   } catch (e) {
     // optional
+  } finally {
+    if (!cancelled) {
+      setPollBusy(false);
+      setPollLastAt(Date.now());
+    }
   }
 }
 
-
+  // "jetzt aktualisieren": sofort laden und den 16-s-Takt neu starten
+  pollNowRef.current = () => {
+    if (cancelled) return;
+    window.clearInterval(t);
+    t = window.setInterval(tick, POLL_MS);
+    void tick();
+  };
 
   // sofort laden
   tick();
 
   // alle 16 Sekunden für Besucher & Admin
-  const t = window.setInterval(tick, 16000);
+  t = window.setInterval(tick, POLL_MS);
 
   return () => {
     cancelled = true;
+    pollNowRef.current = null;
     clearInterval(t);
   };
 }, [code]);
@@ -12533,8 +12558,17 @@ if (rotEndTimeoutRef.current != null) {
 
 
 
-  async function createRound() {
+  // 🎰 Round the Pinball: Fenster "Anzahl Flipper" vor dem Erzeugen (components/RotationRoundsDialog.tsx)
+  const [rotRoundsDialogOpen, setRotRoundsDialogOpen] = useState(false);
+  const [rotStartSignal, setRotStartSignal] = useState<number | null>(null);
+  const rotDialogPlayers = (data?.players ?? []).filter((p: any) => p?.active).length;
+  const rotDialogMachines = (data?.machines ?? []).filter((m: any) => m?.active).length;
+
+  // opts kommt nur vom Rotation-Fenster; beim Klick auf den Knopf ist das erste Argument das Klick-Ereignis
+  async function createRound(opts?: any) {
     if (locked) return;
+    const rotationMachineCount: number | null =
+      typeof opts?.rotationMachineCount === "number" ? opts.rotationMachineCount : null;
 
     // Rotation erzeugt alle Runden (1 pro Maschine) auf einmal.
     // Danach darf dieser Button nichts mehr erzeugen.
@@ -12560,6 +12594,12 @@ if (rotEndTimeoutRef.current != null) {
       return;
     }
 
+    // Rotation: erst nach der Anzahl Flipper fragen (Fenster ruft createRound danach mit der Zahl auf)
+    if (isRotationFormat && rotationMachineCount == null) {
+      setRotRoundsDialogOpen(true);
+      return;
+    }
+
     setBusy(true);
     setNotice(null);
 
@@ -12577,6 +12617,8 @@ if (rotEndTimeoutRef.current != null) {
         code,
         startOrderMode,
         useElo,      // Elo-Flag für die Runde
+        // 🎰 Round the Pinball: gewählte Anzahl Flipper
+        rotationMachineCount: isRotationFormat ? rotationMachineCount : undefined,
 
         // ✅ Timeplay: Difficulty-Filter für Tasks/Maschinen
         taskDifficulties: isTimeplayFormat ? taskDifficulties : undefined,
@@ -12593,6 +12635,8 @@ if (rotEndTimeoutRef.current != null) {
     // NACH reloadAll(), wenn die neuen Runden/Matches schon im DOM sind.
 const next = await reloadAll();
 setScrollToMatchesNext(true);
+// 🎰 Round the Pinball: Start-Meldung "Runden generiert – los geht's mit dem 1. Durchgang"
+if (isRotationFormat) setRotStartSignal(Date.now());
 
 if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
   try {
@@ -12839,6 +12883,18 @@ const tasksById = useMemo(() => {
 
 
 
+
+      <RotationRoundsDialog
+        open={rotRoundsDialogOpen}
+        players={rotDialogPlayers}
+        maxMachines={rotDialogMachines}
+        busy={busy}
+        onCancel={() => setRotRoundsDialogOpen(false)}
+        onConfirm={(n) => {
+          setRotRoundsDialogOpen(false);
+          void createRound({ rotationMachineCount: n });
+        }}
+      />
 
       <ShareModal
         open={shareOpen}
@@ -13599,9 +13655,39 @@ const tasksById = useMemo(() => {
   (() => {
     const preLeftMs = rotPrestartLeftMs();
     const displayMs = preLeftMs != null ? preLeftMs : rotTimeLeftMs();
+    const rotProgressNow = rotationProgress(
+      (matches ?? []).map((x: any) => String(x.id)),
+      (matchPlayers ?? []) as any[]
+    );
 
     return (
   <>
+    {/* 🔵 Durchgang X von Y (eine Vergabe der blauen Felder) */}
+    {/* 🔵 kurze Einblendung bei neuem Durchgang / alle fertig */}
+    <RotationTurnSplash progress={rotProgressNow} startSignal={rotStartSignal} />
+    <RotationProgressBar
+      variant="admin"
+      progress={rotProgressNow}
+      activeItems={(() => {
+        // 🔵 wer gerade blau ist → Klick springt zum Flipper (jede Runde = ein Flipper)
+        const active = rotationActiveMap(
+          (matches ?? []).map((x: any) => String(x.id)),
+          (matchPlayers ?? []) as any[]
+        );
+        const roundNo = (rid: any) =>
+          Number((rounds ?? []).find((r: any) => String(r.id) === String(rid))?.number ?? 0);
+        return (matches ?? [])
+          .filter((m: any) => active[String(m.id)])
+          .slice()
+          .sort((a: any, b: any) => roundNo(a.round_id) - roundNo(b.round_id))
+          .map((m: any) => ({
+            key: String(m.id),
+            player: playersById?.[String(active[String(m.id)])]?.name ?? "?",
+            machine: machinesInfoById?.[String(m.machine_id)]?.name ?? "Flipper",
+            onClick: () => scrollToRound(String(m.round_id)),
+          }));
+      })()}
+    />
     <RotationGlobalTimerSticky
       locked={locked}
       timeLeftLabel={rotFmt(displayMs)}
@@ -13646,6 +13732,12 @@ const tasksById = useMemo(() => {
   tasksById={tasksById}
   />
 )}
+    <RefreshCountdown
+      lastAt={pollLastAt}
+      intervalMs={POLL_MS}
+      busy={pollBusy}
+      onRefreshNow={() => pollNowRef.current?.()}
+    />
 
 
 
