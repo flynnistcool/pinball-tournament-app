@@ -284,6 +284,7 @@ function RecordCelebrationInner({
   const priorRef = useRef<PriorRecords | null>(null);
   const enabledRef = useRef(false);
   const priorWinsRef = useRef<Record<string, number> | null>(null);
+  const excludedWinsRef = useRef<Set<string>>(new Set());
   // Matchsiege neu laden, wenn ein Spieler in der geladenen Liste fehlt (z. B. später hinzugefügt)
   const reloadWinsRef = useRef<() => void>(() => {});
   const lastWinsReloadRef = useRef(0);
@@ -306,7 +307,12 @@ function RecordCelebrationInner({
         const j = await res.json().catch(() => null);
         if (disposed || !res.ok || !j?.ok) return;
         setEnabled(!!j.enabled);
-        setPrior({ records: j.records ?? {}, monthly: j.monthly ?? {}, personal: j.personal ?? {} });
+        setPrior({
+          records: j.records ?? {},
+          monthly: j.monthly ?? {},
+          personal: j.personal ?? {},
+          excludedProfiles: j.excludedProfiles ?? [], // 🤖/🚫 kein Rekord-Jubel für Bots/Platzhalter
+        });
       } catch {
         /* nächster Versuch beim nächsten Intervall */
       }
@@ -319,6 +325,7 @@ function RecordCelebrationInner({
         const j = await res.json().catch(() => null);
         if (disposed || !res.ok || !j?.ok) return;
         setPriorWins(j.wins ?? {});
+        excludedWinsRef.current = new Set((j.excluded ?? []).map(String)); // 🤖/🚫 keine Meilensteine
       } catch {
         /* nächster Versuch beim nächsten Intervall */
       }
@@ -410,6 +417,7 @@ function RecordCelebrationInner({
         pendingWins.delete(w.key);
         seenWins.set(w.key, w.profileId);
         if (finished) continue;
+        if (excludedWinsRef.current.has(String(w.profileId))) continue; // 🤖/🚫 Bots + Platzhalter
         let liveCount = 0;
         for (const pid of Array.from(seenWins.values())) if (pid === w.profileId) liveCount++;
         const n = (pw[w.profileId] ?? 0) + liveCount;

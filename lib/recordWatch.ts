@@ -19,6 +19,8 @@ export type PriorRecords = {
   monthly: Record<string, PriorRecord>;
   /** `${profileId}|${machineKey}` → bisheriger persönlicher Bestwert */
   personal: Record<string, number>;
+  /** 🤖/🚫 Profile im laufenden Turnier, die keine Allzeit-/30-Tage-Rekorde halten dürfen (Bots, Platzhalter) */
+  excludedProfiles?: string[];
 };
 
 export const personalKey = (profileId: string, mKey: string) => `${profileId}|${mKey}`;
@@ -120,7 +122,12 @@ export type Celebration =
  * - Es gibt nur eine Einblendung: Rekord vor Monat vor persönlich.
  */
 export function evaluateEntry(entry: LiveEntry, prior: PriorRecords, liveEntries: readonly LiveEntry[]): Celebration | null {
-  const others = liveEntries.filter((e) => e.key !== entry.key && e.machineKey === entry.machineKey);
+  // 🤖/🚫 Bots und Platzhalter: kein Jubel, und sie zählen auch nicht als "bisheriger Rekord"
+  const excluded = new Set(prior.excludedProfiles ?? []);
+  if (entry.profileId && excluded.has(entry.profileId)) return null;
+  const others = liveEntries.filter(
+    (e) => e.key !== entry.key && e.machineKey === entry.machineKey && !(e.profileId && excluded.has(e.profileId))
+  );
 
   const priorRec = prior.records[entry.machineKey];
   if (priorRec) {

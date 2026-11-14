@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import type { LiveEntry, PriorRecords } from "@/lib/recordWatch";
 import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
-type Loaded = { enabled: boolean; prior: Pick<PriorRecords, "records" | "monthly">; personal: PriorRecords["personal"] };
+type Loaded = { enabled: boolean; prior: Pick<PriorRecords, "records" | "monthly" | "excludedProfiles">; personal: PriorRecords["personal"] };
 
 const REFRESH_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; value: Loaded | null; promise: Promise<Loaded | null> | null }>();
@@ -27,7 +27,7 @@ function loadRecords(code: string): Promise<Loaded | null> {
       if (!res.ok || !j?.ok) return hit?.value ?? null;
       return {
         enabled: !!j.enabled,
-        prior: { records: j.records ?? {}, monthly: j.monthly ?? {} },
+        prior: { records: j.records ?? {}, monthly: j.monthly ?? {}, excludedProfiles: j.excludedProfiles ?? [] },
         personal: j.personal ?? {},
       };
     })

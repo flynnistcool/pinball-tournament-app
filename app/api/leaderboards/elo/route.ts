@@ -1,6 +1,7 @@
 // app/api/leaderboards/elo/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 
 // Sorgt dafür, dass Next diese Route nicht statisch cached
 export const dynamic = "force-dynamic";
@@ -157,8 +158,11 @@ for (const r of ratingRows ?? []) {
 
 
 
+    // 🛡️ Statistik-Schutz: Bots und Platzhalter nicht in der Elo-Rangliste
+    const ex = await loadStatsExclusions(supabase);
+
     // 4) Alles zusammenbauen
-    const rows: EloLeaderboardEntry[] = profiles.map((p: any) => {
+    const rows: EloLeaderboardEntry[] = profiles.filter((p: any) => !isExcludedProfile(ex, p.id)).map((p: any) => {
       const profileId = p.id as string;
       const rating = typeof p.rating === "number" ? p.rating : 0;
 

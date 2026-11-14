@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { botsAllowedInFormat, BOT_BLOCKED_MESSAGE } from "@/lib/botRules";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -8,11 +9,16 @@ export async function POST(req: Request) {
   if (!code || !profileId) return NextResponse.json({ error: "Fehlende Daten" }, { status: 400 });
 
   const sb = supabaseAdmin();
-  const { data: t } = await sb.from("tournaments").select("id").eq("code", code).single();
+  const { data: t } = await sb.from("tournaments").select("id, format").eq("code", code).single();
   if (!t) return NextResponse.json({ error: "Turnier nicht gefunden" }, { status: 404 });
 
-  const { data: prof } = await sb.from("profiles").select("id, name").eq("id", profileId).single();
+  const { data: prof } = await sb.from("profiles").select("id, name, is_bot").eq("id", profileId).single();
   if (!prof) return NextResponse.json({ error: "Profil nicht gefunden" }, { status: 404 });
+
+  // 🤖 Bots dürfen in manchen Formaten (Elimination, Timeplay, DYP) nie mitspielen
+  if ((prof as any).is_bot && !botsAllowedInFormat((t as any).format)) {
+    return NextResponse.json({ ok: false, error: BOT_BLOCKED_MESSAGE }, { status: 400 });
+  }
 
   const { data: existing } = await sb.from("players").select("id").eq("tournament_id", t.id).eq("profile_id", prof.id).maybeSingle();
   if (existing) return NextResponse.json({ error: "Spieler ist bereits im Turnier" }, { status: 400 });

@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -39,26 +40,33 @@ export async function GET(req: Request) {
     const others = apRes.data.filter((p) => String(p.tournament_id) !== String(t.id));
     const profileByPlayer = new Map(others.map((p) => [String(p.id), String(p.profile_id)]));
 
-    const wRes = await fetchAllIn<{ match_id: string; player_id: string }>(
+    // alle gewerteten Matches laden (nicht nur Siege): in Matches mit 🤖 Bots zählt der Platz nur unter Menschen
+    const wRes = await fetchAllIn<{ match_id: string; player_id: string; position: number | null }>(
       others.map((p) => String(p.id)),
       (chunk) =>
         sb
           .from("match_players")
-          .select("match_id, player_id")
+          .select("match_id, player_id, position")
           .in("player_id", chunk)
-          .eq("position", 1)
+          .not("position", "is", null)
           .order("match_id")
           .order("player_id")
     );
     if (wRes.error) return fail(`Siege laden fehlgeschlagen: ${wRes.error.message}`, 500);
 
+    const ex = await loadStatsExclusions(sb);
+    const hc = await loadHumanMatchContext(sb, ex, Array.from(new Set(wRes.data.map((r) => String(r.match_id)))));
+
     const wins: Record<string, number> = {};
     for (const pid of profileIds) wins[pid] = 0;
     for (const w of wRes.data) {
       const pid = profileByPlayer.get(String(w.player_id));
-      if (pid) wins[pid] = (wins[pid] ?? 0) + 1;
+      if (!pid) continue;
+      if (hc.position(String(w.match_id), String(w.player_id), w.position) === 1) wins[pid] = (wins[pid] ?? 0) + 1;
     }
-    return NextResponse.json({ ok: true, wins });
+    // 🤖/🚫 Bots + Platzhalter: keine Matchsieg-Meilensteine
+    const excluded = profileIds.filter((id) => isExcludedProfile(ex, id));
+    return NextResponse.json({ ok: true, wins, excluded });
   } catch (e: unknown) {
     console.error("player-wins crash:", e);
     return fail(String((e as Error)?.message ?? e), 500);

@@ -12,15 +12,18 @@ export type ShownRecord = { score: number; holder: string | null; at?: string | 
 
 export function recordsForMachine(
   machineName: string | null | undefined,
-  prior: Pick<PriorRecords, "records" | "monthly">,
+  prior: Pick<PriorRecords, "records" | "monthly" | "excludedProfiles">,
   live: readonly LiveEntry[]
 ): { best: ShownRecord | null; month: ShownRecord | null } {
   const key = machineKey(machineName);
   if (!key) return { best: null, month: null };
+  // 🤖/🚫 Bots + Platzhalter halten nie Allzeit-/30-Tage-Rekorde
+  const excluded = new Set(prior.excludedProfiles ?? []);
 
   let liveBest: ShownRecord | null = null;
   for (const e of live) {
     if (e.machineKey !== key) continue;
+    if (e.profileId && excluded.has(e.profileId)) continue;
     // im laufenden Turnier aufgestellt → heute
     if (!liveBest || e.score > liveBest.score) liveBest = { score: e.score, holder: e.playerName, at: new Date().toISOString() };
   }

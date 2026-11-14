@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@/components/ui";
+import BotLab from "@/components/BotLab";
 
 /**
  * Admin-only tab content.
@@ -31,6 +32,18 @@ export default function AdminTab() {
           Hier kommen Admin-Aktionen rein (z.B. neues Punktesystem übernehmen).
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="text-sm font-semibold">🔬 Bot-Labor</div>
+          <div className="text-xs text-neutral-500">
+            Was würde welcher KI-Bot an einem Flipper würfeln – und warum? Probe-Rechnung, es wird nichts gespeichert.
+          </div>
+        </CardHeader>
+        <CardBody>
+          <BotLab />
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader>

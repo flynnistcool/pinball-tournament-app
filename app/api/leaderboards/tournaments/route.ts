@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { humanTournamentResults, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -187,14 +188,18 @@ export async function GET(req: Request) {
 
   let selection: TopSelection[] = [];
 
+  // 🛡️ Statistik-Schutz: Bots/Platzhalter raus, 🤖 Training-Turniere raus, Plätze nur unter Menschen
+  const ex = await loadStatsExclusions(sb);
+  const humanRows: TournamentResultRow[] = humanTournamentResults(rows, ex, (pid) => playersById[pid]?.profile_id ?? null);
+
   // Welche Zeilen werden wirklich aggregiert?
-  let rowsForAgg: TournamentResultRow[] = rows;
+  let rowsForAgg: TournamentResultRow[] = humanRows;
 
   if (topN > 0) {
     // 1) Key je Spieler (profileId oder name:...)
     const grouped: Record<string, TournamentResultRow[]> = {};
 
-    for (const r of rows) {
+    for (const r of humanRows) {
       const player = playersById[r.player_id];
       const profileId: string | null = player?.profile_id ?? null;
       const key = profileId ?? `name:${r.player_name ?? ""}`;

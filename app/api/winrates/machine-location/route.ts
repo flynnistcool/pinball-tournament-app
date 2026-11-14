@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -52,6 +53,8 @@ export async function POST(req: Request) {
     .from("match_players")
     .select(
       `
+      match_id,
+      player_id,
       position,
       players!inner(profile_id),
       matches!inner(
@@ -79,7 +82,15 @@ export async function POST(req: Request) {
     { profileId: string; machineName: string; locationId: string; matchesPlayed: number; wins: number }
   > = {};
 
-  for (const row of data ?? []) {
+  // 🛡️ Statistik-Schutz: Siege nur gegen Menschen (Bots/Platzhalter selbst ohne Winrate)
+  const ex = await loadStatsExclusions(sb);
+  const hc = await loadHumanMatchContext(sb, ex, Array.from(new Set((data ?? []).map((r: any) => String(r.match_id)))));
+
+  for (const raw of data ?? []) {
+    if (isExcludedProfile(ex, (raw as any)?.players?.profile_id) || hc.isExcludedPlayer(String((raw as any).player_id))) continue;
+    const pos = hc.position(String((raw as any).match_id), String((raw as any).player_id), (raw as any).position);
+    if (pos == null) continue; // nur gegen Bots gespielt → zählt nicht
+    const row: any = { ...(raw as any), position: pos };
     const profileId = row?.players?.profile_id ? String(row.players.profile_id) : "";
     const machineName = row?.matches?.machines?.name ? String(row.matches.machines.name) : "";
     if (!profileId || !machineName) continue;

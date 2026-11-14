@@ -38,6 +38,11 @@ export async function POST(req: Request) {
       ? iconRaw.trim()
       : null;
 
+  // 🤖 KI-Bot (feste Elo) – optional
+  const isBot = body.isBot === true;
+  // 🚫 Platzhalter/Testprofil – optional
+  const excludeFromStats = body.excludeFromStats === true;
+
   const sb = supabaseAdmin();
   const { data, error } = await sb
     .from("profiles")
@@ -48,9 +53,11 @@ export async function POST(req: Request) {
       matches_played: 0,
       color, // 🆕
       icon,  // 🆕
+      ...(isBot ? { is_bot: true, bot_kind: "fixed", provisional_matches: 0 } : {}),
+      ...(excludeFromStats ? { exclude_from_stats: true } : {}),
     })
     .select(
-      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, created_at"
+      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, created_at, is_bot, bot_kind, exclude_from_stats"
     )
     .single();
 

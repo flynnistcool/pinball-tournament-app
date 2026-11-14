@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseServer";
 // Lange ID-Listen in Paketen + seitenweise laden (sonst "fetch failed" / 1000-Zeilen-Limit)
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { machineKey } from "@/lib/machineStats";
+import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -90,10 +91,10 @@ export async function POST(req: Request) {
   }
 
   // 4) match_players für diese Matches (für Turnier-Highscores)
-  const { data: mpRows, error: mpErr } = await fetchAllIn<any>(matchIds, (chunk) =>
+  const { data: mpRowsRaw, error: mpErr } = await fetchAllIn<any>(matchIds, (chunk) =>
     sb
       .from("match_players")
-      .select("match_id, player_id, score")
+      .select("match_id, player_id, score, stats_ignored")
       .in("match_id", chunk)
       .not("score", "is", null)
       .order("match_id")
@@ -101,6 +102,8 @@ export async function POST(req: Request) {
   );
 
   if (mpErr) return noStoreJson({ error: mpErr.message }, { status: 500 });
+  // 🛡️ als falsch markierte Scores zählen nicht (Turnier-Highscores dürfen Bots im Turnier halten)
+  const mpRows = (mpRowsRaw ?? []).filter((r: any) => r.stats_ignored !== true);
 
   const uniquePlayerIds = Array.from(new Set((mpRows ?? []).map((x: any) => x.player_id))) as string[];
   const { data: allPlayers, error: apErr } = await fetchAllIn<any>(uniquePlayerIds, (chunk) =>
@@ -236,12 +239,12 @@ export async function POST(req: Request) {
     if (key) machineLocKeyByMatchIdAll.set(m.id, key);
   }
 
-  const { data: mpAll, error: mpAllErr } = await fetchAllIn<any>(
+  const { data: mpAllRaw, error: mpAllErr } = await fetchAllIn<any>(
     Array.from(machineLocKeyByMatchIdAll.keys()),
     (chunk) =>
       sb
         .from("match_players")
-        .select("match_id, player_id, score")
+        .select("match_id, player_id, score, stats_ignored")
         .in("match_id", chunk)
         .not("score", "is", null)
         .order("match_id")
@@ -249,7 +252,7 @@ export async function POST(req: Request) {
   );
   if (mpAllErr) return noStoreJson({ error: mpAllErr.message }, { status: 500 });
 
-  const uniquePlayerIdsAll = Array.from(new Set((mpAll ?? []).map((x: any) => x.player_id))) as string[];
+  const uniquePlayerIdsAll = Array.from(new Set((mpAllRaw ?? []).map((x: any) => x.player_id))) as string[];
   const { data: playersAll, error: paErr } = await fetchAllIn<any>(uniquePlayerIdsAll, (chunk) =>
     sb.from("players").select("id, profile_id").in("id", chunk).order("id")
   );
@@ -259,6 +262,15 @@ export async function POST(req: Request) {
   for (const p of playersAll ?? []) {
     if (p.profile_id) profileByPlayerAll.set(p.id, p.profile_id);
   }
+
+  // 🛡️ Statistik-Schutz: Location-Bestwerte ohne Bots/Platzhalter und ohne falsch markierte Scores
+  // (das eigene Profil bleibt immer drin, auch wenn es selbst ein Bot ist)
+  const exAll = await loadStatsExclusions(sb);
+  const mpAll = (mpAllRaw ?? []).filter((r: any) => {
+    if (r.stats_ignored === true) return false;
+    const prof = profileByPlayerAll.get(r.player_id);
+    return prof === profileId || !isExcludedProfile(exAll, prof);
+  });
 
   type GlobalBest = { score: number; winners: Set<string> }; // winners = profile_id
   const globalBestByMachineLoc = new Map<string, GlobalBest>();

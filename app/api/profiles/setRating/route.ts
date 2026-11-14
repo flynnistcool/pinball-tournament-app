@@ -14,6 +14,8 @@ export async function POST(req: Request) {
     resetMatchesPlayed,
     color,
     icon,
+    isBot,
+    excludeFromStats,
   }: {
     id?: string;
     rating?: number;
@@ -21,6 +23,8 @@ export async function POST(req: Request) {
     resetMatchesPlayed?: boolean;
     color?: string | null;
     icon?: string | null;
+    isBot?: boolean;
+    excludeFromStats?: boolean;
   } = body;
 
   if (!id) {
@@ -62,6 +66,17 @@ export async function POST(req: Request) {
     icon: iconStr,
   };
 
+  // 🤖 KI-Bot-Schalter nur ändern, wenn er mitgeschickt wird (alte Aufrufer bleiben unverändert)
+  if (typeof isBot === "boolean") {
+    update.is_bot = isBot;
+    update.bot_kind = isBot ? "fixed" : null;
+  }
+
+  // 🚫 Platzhalter-Schalter nur ändern, wenn mitgeschickt
+  if (typeof excludeFromStats === "boolean") {
+    update.exclude_from_stats = excludeFromStats;
+  }
+
   if (resetMatchesPlayed) {
     update.matches_played = 0;
   }
@@ -71,7 +86,7 @@ export async function POST(req: Request) {
     .update(update)
     .eq("id", id)
     .select(
-      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon"
+      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, is_bot, bot_kind, exclude_from_stats"
     )
     .single();
 

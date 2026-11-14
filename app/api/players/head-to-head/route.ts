@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadHumanResultsContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 
 export const dynamic = "force-dynamic";
@@ -78,6 +79,10 @@ export async function POST(req: Request) {
 
   const payload = emptyPayload(profileAId, profileBId);
 
+  // 🛡️ Statistik-Schutz: Bots/Platzhalter sind keine Head-to-Head-Gegner
+  const ex = await loadStatsExclusions(sb);
+  if (isExcludedProfile(ex, profileAId) || isExcludedProfile(ex, profileBId)) return noStoreJson(payload);
+
   // ✅ Wichtig: Ein Profil hat pro Turnier eine players-Zeile.
   // match_players referenziert players.id (nicht profiles.id).
   const { data: pMap, error: pErr } = await sb
@@ -142,8 +147,12 @@ export async function POST(req: Request) {
     return noStoreJson({ ok: false, error: mpErr.message }, { status: 500 });
   }
 
+  // 🛡️ Plätze nur unter Menschen; Bots/Platzhalter zählen nicht als Mitspieler
+  const hc = await loadHumanMatchContext(sb, ex, matchIdsBoth);
   const mpByMatch = new Map<string, any[]>();
-  for (const r of allMp ?? []) {
+  for (const raw of allMp ?? []) {
+    if (hc.isExcludedPlayer(String(raw.player_id))) continue;
+    const r = { ...raw, position: hc.position(String(raw.match_id), String(raw.player_id), raw.position) };
     const mid = String(r.match_id);
     if (!mpByMatch.has(mid)) mpByMatch.set(mid, []);
     mpByMatch.get(mid)!.push(r);
@@ -231,7 +240,12 @@ export async function POST(req: Request) {
     return noStoreJson({ ok: false, error: trErr.message }, { status: 500 });
   }
 
-  const trRows = (trByPlayer ?? []) as any[];
+  // 🛡️ Turnierplätze nur unter Menschen
+  const rc = await loadHumanResultsContext(sb, ex, allowedTids);
+  const trRows = ((trByPlayer ?? []) as any[]).map((r) => ({
+    ...r,
+    final_rank: rc.rank(String(r.tournament_id), String(r.player_id), r.final_rank),
+  }));
 
   // Map: tournament_id -> rows
   const byTid = new Map<string, any[]>();
@@ -273,7 +287,11 @@ export async function POST(req: Request) {
 
     if (psErr || !ps?.length) continue;
 
-    const profSet = new Set((ps ?? []).map((p) => String((p as any).profile_id)).filter(Boolean));
+    const profSet = new Set(
+      (ps ?? [])
+        .map((p) => String((p as any).profile_id))
+        .filter((id) => !!id && !isExcludedProfile(ex, id)) // 🤖 Bots/Platzhalter wegdenken
+    );
     const onlyTwo =
       profSet.size === 2 &&
       profSet.has(String(profileAId)) &&

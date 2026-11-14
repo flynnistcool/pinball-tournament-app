@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -49,6 +50,8 @@ export async function POST(req: Request) {
       .from("match_players")
       .select(
         `
+        match_id,
+        player_id,
         position,
         matches!inner(
           id,
@@ -70,7 +73,23 @@ export async function POST(req: Request) {
       );
     }
 
-    const rows = (data ?? []) as MPRow[];
+    // 🛡️ Statistik-Schutz: Siege/Plätze nur gegen Menschen; Matches nur gegen Bots zählen nicht
+    // (Bot-/Platzhalter-Profil selbst: unverändert)
+    const ex = await loadStatsExclusions(sb);
+    const selfExcluded = isExcludedProfile(ex, profileId);
+    const baseCtx = await loadHumanMatchContext(
+      sb,
+      ex,
+      selfExcluded ? [] : Array.from(new Set(((data ?? []) as any[]).map((r) => String(r.match_id))))
+    );
+    const rows = (((data ?? []) as any[])
+      .map((r) => {
+        if (selfExcluded) return r;
+        const pos = baseCtx.position(String(r.match_id), String(r.player_id), r.position);
+        if (r.position != null && pos == null) return null; // nur gegen Bots gespielt
+        return { ...r, position: pos };
+      })
+      .filter(Boolean)) as MPRow[];
 
     const matchesPlayed = rows.length;
 
@@ -146,10 +165,18 @@ export async function POST(req: Request) {
       playerByTournament
     )) {
       // alle Spieler dieses Turniers
-      const { data: playersInTournament, error: ptErr } = await sb
+      const { data: playersInTournamentRaw, error: ptErr } = await sb
         .from("players")
-        .select("id, name, active")
+        .select("id, name, active, profile_id")
         .eq("tournament_id", tournamentId);
+
+      // 🛡️ Bots/Platzhalter nicht mitzählen; 🤖 Training (Bots + höchstens 1 Mensch) überspringen
+      const tHasBot =
+        !selfExcluded && (playersInTournamentRaw ?? []).some((p: any) => ex.botProfileIds.has(String(p.profile_id ?? "")));
+      const playersInTournament = selfExcluded
+        ? playersInTournamentRaw
+        : (playersInTournamentRaw ?? []).filter((p: any) => !isExcludedProfile(ex, p.profile_id));
+      if (tHasBot && (playersInTournament ?? []).length <= 1) continue;
 
       if (ptErr) {
         console.error(
@@ -168,9 +195,17 @@ export async function POST(req: Request) {
       const { data: matchRows, error: mpErr2 } = await sb
         .from("match_players")
         .select(
-          "player_id, position, matches!inner(round_id, rounds!inner(tournament_id))"
+          "match_id, player_id, position, matches!inner(round_id, rounds!inner(tournament_id))"
         )
         .eq("matches.rounds.tournament_id", tournamentId);
+
+      const tCtx = tHasBot
+        ? await loadHumanMatchContext(
+            sb,
+            ex,
+            Array.from(new Set(((matchRows ?? []) as any[]).map((r) => String(r.match_id))))
+          )
+        : null;
 
       if (mpErr2) {
         console.error(
@@ -187,7 +222,7 @@ export async function POST(req: Request) {
       }
 
       for (const r of (matchRows ?? []) as any[]) {
-        const pos = r.position as number | null;
+        const pos = (tCtx ? tCtx.position(String(r.match_id), String(r.player_id), r.position) : r.position) as number | null;
         if (!pos) continue;
         // gleiches Mapping wie im Standings-Endpoint
         const map4 = { 1: 4, 2: 2, 3: 1, 4: 0 } as any;

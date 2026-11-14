@@ -96,11 +96,12 @@ export async function POST(req: Request) {
     if (winnerPlayer?.profile_id) {
       const { data: winnerProfile } = await sb
         .from("profiles")
-        .select("rating")
+        .select("rating, is_bot")
         .eq("id", winnerPlayer.profile_id)
         .single();
 
-      if (winnerProfile?.rating != null) {
+      // 🤖 Bots haben eine feste Elo → kein Bonus
+      if (winnerProfile?.rating != null && !(winnerProfile as any)?.is_bot) {
         await sb
           .from("profiles")
           .update({ rating: Number(winnerProfile.rating) + 8 })

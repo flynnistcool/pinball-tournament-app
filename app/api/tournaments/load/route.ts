@@ -11,7 +11,7 @@ async function handle(codeRaw: string) {
   const { data: t, error: tErr } = await sb
     .from("tournaments")
     .select(
-      "id, code, name, created_at, category, match_size, format, location_id, locations(name), status, speech_round_enabled"
+      "id, code, name, created_at, category, match_size, format, location_id, locations(name), status, speech_round_enabled, extraball"
     )
 
     .eq("code", code)
@@ -86,13 +86,13 @@ async function handle(codeRaw: string) {
 
   let profilesById: Record<
     string,
-    { id: string; color: string | null; icon: string | null; avatar_url: string | null }
+    { id: string; color: string | null; icon: string | null; avatar_url: string | null; is_bot?: boolean | null }
   > = {};
 
   if (profileIds.length > 0) {
     const { data: profiles, error: pErr } = await sb
       .from("profiles")
-      .select("id, color, icon, avatar_url")
+      .select("id, color, icon, avatar_url, is_bot")
       .in("id", profileIds);
 
     if (!pErr && profiles) {
@@ -110,6 +110,7 @@ async function handle(codeRaw: string) {
       color: (p as any).color ?? prof?.color ?? null,
       icon: (p as any).icon ?? prof?.icon ?? null,
       avatar_url: (p as any).avatar_url ?? prof?.avatar_url ?? null,
+      is_bot: prof?.is_bot === true, // 🤖 KI-Bot
     };
   });
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -27,9 +28,11 @@ export async function GET() {
     .from("match_players")
     .select(`
       score,
+      stats_ignored,
       player:players (
         id,
-        name
+        name,
+        profile_id
       ),
       match:matches!inner (
         id,
@@ -58,7 +61,11 @@ export async function GET() {
     );
   }
 
-  const rows = (data ?? []) as any[];
+  // 🛡️ Statistik-Schutz: Bots, Platzhalter und als falsch markierte Scores raus
+  const ex = await loadStatsExclusions(sb);
+  const rows = ((data ?? []) as any[]).filter(
+    (r) => r.stats_ignored !== true && !isExcludedProfile(ex, first(r.player)?.profile_id)
+  );
 
   // Locations sammeln (robust, weil match/round/tournament evtl. Arrays sind)
   const locationIds = Array.from(

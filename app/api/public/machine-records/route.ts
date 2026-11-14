@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { buildPriorRecords } from "@/lib/recordWatch";
+import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -76,12 +77,17 @@ export async function GET(req: Request) {
     );
     if (mRes.error) return fail(`Matches laden fehlgeschlagen: ${mRes.error.message}`, 500);
 
-    const mpRes = await fetchAllIn<{ match_id: string; player_id: string; score: number | string | null }>(
+    const mpRes = await fetchAllIn<{
+      match_id: string;
+      player_id: string;
+      score: number | string | null;
+      stats_ignored?: boolean | null;
+    }>(
       mRes.data.map((m) => String(m.id)),
       (chunk) =>
         sb
           .from("match_players")
-          .select("match_id, player_id, score")
+          .select("match_id, player_id, score, stats_ignored")
           .in("match_id", chunk)
           .not("score", "is", null)
           .order("match_id")
@@ -95,16 +101,24 @@ export async function GET(req: Request) {
     );
     if (pRes.error) return fail(`Spieler laden fehlgeschlagen: ${pRes.error.message}`, 500);
 
+    // 🛡️ Statistik-Schutz: Bots, Platzhalter und als falsch markierte Scores zählen nicht
+    const ex = await loadStatsExclusions(sb);
+    const profileOfPlayer = new Map(pRes.data.map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
+    const countedMps = mpRes.data.filter(
+      (r) => r.stats_ignored !== true && !isExcludedProfile(ex, profileOfPlayer.get(String(r.player_id)))
+    );
+
     const prior = buildPriorRecords({
       machines: maRes.data,
       matches: mRes.data,
-      matchPlayers: mpRes.data,
+      matchPlayers: countedMps,
       players: pRes.data,
       personalFor,
       recentTournamentIds,
       tournamentDates: Object.fromEntries(counted.map((o) => [String(o.id), o.created_at ?? null])),
     });
-    return NextResponse.json({ ok: true, enabled: true, ...prior });
+    const excludedProfiles = personalFor.filter((id) => isExcludedProfile(ex, id));
+    return NextResponse.json({ ok: true, enabled: true, ...prior, excludedProfiles });
   } catch (e: unknown) {
     console.error("machine-records crash:", e);
     return fail(String((e as Error)?.message ?? e), 500);

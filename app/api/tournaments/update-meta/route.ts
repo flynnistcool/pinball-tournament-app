@@ -1,14 +1,16 @@
-// Admin (Login über middleware.ts): NUR Name und Kategorie eines Turniers ändern.
+// Admin (Login über middleware.ts): NUR Name, Kategorie und 🎱 Extraball-Schalter eines Turniers ändern.
 // Gedacht für beendete Turniere (falscher Name / falsche Serie). Alle anderen Felder
 // werden bewusst ignoriert – Ergebnisse, Elo, Turnierpunkte usw. bleiben unverändert.
 //
 // Name/Kategorie stehen nur in tournaments.name / tournaments.category; alle anderen
 // Tabellen verweisen per tournament_id -> eine Änderung wirkt überall automatisch.
 //
-// POST { code, name, category } -> { ok: true, tournament: { code, name, category } }
+// POST { code, name, category, extraball? } -> { ok: true, tournament: { code, name, category, extraball } }
+// extraball wird nur geändert, wenn es als true/false mitgeschickt wird.
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { extraballForced } from "@/lib/botRules";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -28,12 +30,24 @@ export async function POST(req: Request) {
   }
 
   const sb = supabaseAdmin();
+
+  // 🎱 Extraball nur ändern, wenn mitgeschickt; bei Round the Pinball / Timeplay immer an
+  let extraballUpdate: { extraball: boolean } | null = null;
+  if (typeof body?.extraball === "boolean") {
+    const { data: tf } = await sb.from("tournaments").select("format").eq("code", code).maybeSingle();
+    extraballUpdate = { extraball: extraballForced((tf as any)?.format) ? true : body.extraball };
+  }
+
   const { data, error } = await sb
     .from("tournaments")
-    // ⚠️ nur diese zwei Spalten – nichts anderes
-    .update({ name, category: category || null })
+    // ⚠️ nur diese Spalten – nichts anderes
+    .update({
+      name,
+      category: category || null,
+      ...(extraballUpdate ?? {}),
+    })
     .eq("code", code)
-    .select("code, name, category")
+    .select("code, name, category, extraball")
     .maybeSingle();
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

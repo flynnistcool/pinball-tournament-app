@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -13,7 +14,7 @@ export async function GET(req: Request) {
 
   const { data: rows, error } = await sb
     .from("match_players")
-    .select("position, matches!inner(id, machine_id, rounds!inner(tournament_id)), players!inner(profile_id)")
+    .select("match_id, player_id, position, matches!inner(id, machine_id, rounds!inner(tournament_id)), players!inner(profile_id)")
     .eq("players.profile_id", profileId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -31,8 +32,15 @@ export async function GET(req: Request) {
 
   const perMachine: Record<string, { plays: number; wins: number; posSum: number; posCount: number }> = {};
 
+  // 🛡️ Statistik-Schutz: Siege/Plätze nur gegen Menschen (Bot-/Platzhalter-Profil selbst: unverändert)
+  const ex = await loadStatsExclusions(sb);
+  const selfExcluded = isExcludedProfile(ex, profileId);
+  const hc = selfExcluded
+    ? null
+    : await loadHumanMatchContext(sb, ex, Array.from(new Set((rows ?? []).map((r: any) => String(r.match_id)))));
+
   for (const r of (rows ?? []) as any[]) {
-    const pos = r.position as number | null;
+    const pos = (hc ? hc.position(String(r.match_id), String(r.player_id), r.position) : r.position) as number | null;
     if (!pos) continue;
     matches += 1;
     if (pos === 1) wins += 1;

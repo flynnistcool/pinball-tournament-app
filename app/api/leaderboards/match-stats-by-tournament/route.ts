@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -67,7 +68,20 @@ export async function GET(req: Request) {
       return jsonNoStore({ error: mpRes.error.message }, 500);
     }
 
-    const mps = mpRes.data ?? [];
+    // 🛡️ Statistik-Schutz: Plätze nur unter Menschen; Matches nur gegen Bots zählen nicht
+    // (Bot-/Platzhalter-Profil selbst: unverändert)
+    const exBt = await loadStatsExclusions(supabase);
+    const selfExcludedBt = isExcludedProfile(exBt, profileId);
+    const hcBt = await loadHumanMatchContext(
+      supabase,
+      exBt,
+      selfExcludedBt ? [] : Array.from(new Set((mpRes.data ?? []).map((x: any) => String(x.match_id))))
+    );
+    const mps = (mpRes.data ?? [])
+      .map((x: any) =>
+        selfExcludedBt ? x : { ...x, position: hcBt.position(String(x.match_id), String(x.player_id), x.position) }
+      )
+      .filter((x: any) => x.position != null);
     if (mps.length === 0) {
       return jsonNoStore({ rows: [] });
     }

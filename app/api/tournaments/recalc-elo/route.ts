@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { eloAllowedInFormat } from "@/lib/botRules";
 
 // ✅ no-store (verhindert Next/Vercel Caching)
 export const dynamic = "force-dynamic";
@@ -81,6 +82,22 @@ export async function POST(req: Request) {
     });
   }
 
+  // 🤖 KI-Bots: feste Elo. Bots werden nie aktualisiert, und Spiele gegen Bots
+  // ändern auch die Elo der Menschen nicht (nur Mensch-gegen-Mensch zählt).
+  const botProfileIds = new Set<string>();
+  {
+    const { data: botRows, error: botErr } = await sb
+      .from("profiles")
+      .select("id")
+      .in("id", trRows.map((r: any) => r.profile_id))
+      .eq("is_bot", true);
+    if (botErr) {
+      return json({ error: botErr.message ?? "Fehler beim Laden der Bot-Profile" }, 500);
+    }
+    for (const b of botRows ?? []) botProfileIds.add(String((b as any).id));
+  }
+  const isBotProfile = (profileId: string) => botProfileIds.has(String(profileId));
+
   // 3) Runden laden, die Elo beeinflussen sollen
   const { data: rounds, error: rErr } = await sb
     .from("rounds")
@@ -99,6 +116,7 @@ export async function POST(req: Request) {
   // Wenn keine fertigen Elo-Runden: auf Startwerte zurücksetzen und fertig
   if (!roundIds.length) {
     for (const row of trRows) {
+      if (isBotProfile(row.profile_id)) continue; // 🤖 Bot-Elo bleibt fest
       await sb
         .from("profiles")
         .update({
@@ -206,6 +224,13 @@ console.log("[recalc-elo] applyMatchElo called", {
 
       // wir erwarten GENAU 1 Loser
       if (losers.length === 1 && winners.length >= 1) {
+        // 🤖 Bots: ist der Verlierer ein Bot, ändert sich für niemanden etwas;
+        // Bots unter den Siegern bekommen nichts (nur Menschen teilen den Pot).
+        if (isBotProfile(losers[0].profile_id)) return;
+        const humanWinners = winners.filter((w) => !isBotProfile(w.profile_id));
+        if (!humanWinners.length) return;
+        winners.splice(0, winners.length, ...humanWinners);
+
         const L = losers[0];
         const LState = stateByProfile.get(L.profile_id);
         if (!LState) return;
@@ -251,8 +276,8 @@ console.log("[recalc-elo] applyMatchElo called", {
           wState.rating = wState.rating + perWinner;
         }
 
-        // Matches/Provisional count (1 Match pro Spieler)
-        for (const p of players) {
+        // Matches/Provisional count (1 Match pro Spieler) – 🤖 nur Menschen mit Elo-Wertung
+        for (const p of [L, ...winners]) {
           const st = stateByProfile.get(p.profile_id);
           if (!st) continue;
           st.matches_played += 1;
@@ -267,10 +292,16 @@ console.log("[recalc-elo] applyMatchElo called", {
     }
 
     // Standard: jeder gegen jeden
+    // 🤖 Paare mit einem Bot zählen nicht; ein Mensch zählt das Match nur,
+    // wenn er mindestens einen menschlichen Gegner hatte.
+    const ratedProfiles = new Set<string>();
     for (let i = 0; i < players.length; i++) {
       for (let j = i + 1; j < players.length; j++) {
         const A = players[i];
         const B = players[j];
+        if (isBotProfile(A.profile_id) || isBotProfile(B.profile_id)) continue;
+        ratedProfiles.add(A.profile_id);
+        ratedProfiles.add(B.profile_id);
 
         const sA =
           A.position! < B.position!
@@ -310,6 +341,7 @@ console.log("[recalc-elo] applyMatchElo called", {
 
     // Matches/Provisional count (1 Match pro Spieler)
     for (const p of players) {
+      if (!ratedProfiles.has(p.profile_id)) continue; // 🤖 nur gegen Bots gespielt → zählt nicht
       const st = stateByProfile.get(p.profile_id);
       if (!st) continue;
       st.matches_played += 1;
@@ -332,6 +364,8 @@ for (const r of rounds ?? []) {
   const shieldedThisRound: Record<string, boolean> = {}; // ✅ reset pro Runde
 
   const roundFormatLower = String((r as any)?.format ?? tournamentFormat ?? "").toLowerCase();
+  // 🚫 DYP zählt nie für die Elo
+  if (!eloAllowedInFormat(roundFormatLower) || !eloAllowedInFormat(tournamentFormat)) continue;
 
   const mids = matchesByRound.get(r.id) ?? [];
   for (const mid of mids) {
@@ -345,6 +379,7 @@ for (const r of rounds ?? []) {
 
   // 6) Profile aktualisieren
   for (const [profileId, st] of stateByProfile.entries()) {
+    if (isBotProfile(profileId)) continue; // 🤖 Bot-Elo bleibt fest
     await sb
       .from("profiles")
       .update({

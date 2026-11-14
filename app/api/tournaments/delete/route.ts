@@ -48,8 +48,17 @@ export async function POST(req: Request) {
     }
 
     if (trRows && trRows.length > 0) {
+      // 🤖 Bots haben eine feste Elo → nicht zurücksetzen
+      const { data: botRows } = await sb
+        .from("profiles")
+        .select("id")
+        .in("id", trRows.map((r: any) => r.profile_id))
+        .eq("is_bot", true);
+      const botIds = new Set((botRows ?? []).map((b: any) => String(b.id)));
+
       // Profile auf Startzustand zurücksetzen
       for (const row of trRows) {
+        if (botIds.has(String(row.profile_id))) continue;
         await sb
           .from("profiles")
           .update({

@@ -39,6 +39,9 @@ import Image from "next/image";
 import PinballScore from "@/components/PinballScore";
 import AnnouncerAvatar from "@/components/AnnouncerAvatar";
 import CreateTournamentForm from "@/components/CreateTournamentForm";
+import ExtraballToggle, { ExtraballBadge } from "@/components/ExtraballToggle";
+import { botsAllowedInFormat, extraballForced, effectiveExtraball, eloAllowedInFormat } from "@/lib/botRules";
+import BotScoreButtons from "@/components/BotScoreButtons";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
@@ -221,6 +224,8 @@ function EditTournamentMetaDialog({
   code,
   initialName,
   initialCategory,
+  initialExtraball = false,
+  format,
   onClose,
   onSaved,
 }: {
@@ -228,11 +233,15 @@ function EditTournamentMetaDialog({
   code: string;
   initialName: string;
   initialCategory: string;
+  initialExtraball?: boolean;
+  /** Turnierformat – bei RtP / Timeplay ist Extraball fest an */
+  format?: string | null;
   onClose: () => void;
   onSaved: (t: { name: string; category: string | null }) => void;
 }) {
   const [name, setName] = useState(initialName);
   const [cat, setCat] = useState(initialCategory);
+  const [xb, setXb] = useState(!!initialExtraball);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const { cats } = useExistingCategories(open);
@@ -241,13 +250,17 @@ function EditTournamentMetaDialog({
     if (open) {
       setName(initialName);
       setCat(initialCategory);
+      setXb(!!initialExtraball);
       setErr(null);
     }
-  }, [open, initialName, initialCategory]);
+  }, [open, initialName, initialCategory, initialExtraball]);
 
   if (!open) return null;
 
-  const changed = name.trim() !== initialName.trim() || cat.trim() !== initialCategory.trim();
+  const changed =
+    name.trim() !== initialName.trim() ||
+    cat.trim() !== initialCategory.trim() ||
+    (!extraballForced(format) && xb !== !!initialExtraball);
   const catIsNew =
     cat.trim().length > 0 && !cats.some((c) => c.name.toLowerCase() === cat.trim().toLowerCase());
 
@@ -260,6 +273,7 @@ function EditTournamentMetaDialog({
     if (name.trim() !== initialName.trim()) lines.push(`Name: „${initialName}“ → „${name.trim()}“`);
     if (cat.trim() !== initialCategory.trim())
       lines.push(`Kategorie: „${initialCategory || "—"}“ → „${cat.trim() || "—"}“`);
+    if (!extraballForced(format) && xb !== !!initialExtraball) lines.push(`Extraball: ${initialExtraball ? "mit" : "ohne"} → ${xb ? "mit" : "ohne"}`);
     if (!confirm(`Turnier ${code} wirklich ändern?\n\n${lines.join("\n")}\n\nErgebnisse, Elo und Turnierpunkte bleiben unverändert.`))
       return;
 
@@ -269,7 +283,7 @@ function EditTournamentMetaDialog({
       const res = await fetch("/api/tournaments/update-meta", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, name, category: cat }),
+        body: JSON.stringify({ code, name, category: cat, extraball: xb }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j?.ok) {
@@ -293,7 +307,7 @@ function EditTournamentMetaDialog({
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-lg font-semibold">✏️ Name / Kategorie ändern</div>
+            <div className="text-lg font-semibold">✏️ Name / Kategorie / Extraball ändern</div>
             <div className="text-xs text-neutral-500">
               Turnier <span className="font-mono">{code}</span> · Ergebnisse, Elo und Turnierpunkte bleiben unverändert.
             </div>
@@ -318,6 +332,7 @@ function EditTournamentMetaDialog({
               </div>
             ) : null}
           </div>
+          <ExtraballToggle checked={xb} onChange={setXb} disabled={saving} locked={extraballForced(format)} />
           {err ? <div className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{err}</div> : null}
         </div>
 
@@ -462,6 +477,8 @@ type PlayerVisual = {
   color?: string | null;
   icon?: string | null;
   avatarUrl?: string | null;
+  /** 🤖 KI-Bot */
+  isBot?: boolean;
 };
 
 type EloLeaderboardEntry = {
@@ -8850,6 +8867,27 @@ return (
       }}
     />
 
+    {/* 🤖 KI-Bot: würfeln + Rechenzettel (Round the Pinball) */}
+    {isRotationFormat && playersById?.[mp.player_id]?.isBot ? (
+      <BotScoreButtons
+        code={code}
+        matchId={String(mp.match_id)}
+        playerId={String(mp.player_id)}
+        hasScore={getScore(mp) != null}
+        currentScore={getScore(mp)}
+        disabled={locked}
+        onRolled={async (score) => {
+          const key = k(mp.match_id, mp.player_id);
+          setScoreOverride((prev) => ({ ...prev, [key]: String(score) }));
+          await setScore(mp.match_id, mp.player_id, score);
+          const patched = (mps ?? []).map((x: any) =>
+            String(x.player_id) === String(mp.player_id) ? { ...x, score } : x
+          );
+          await autoAssignPositionsByScore(m.id, patched);
+        }}
+      />
+    ) : null}
+
     {savingScore[k(mp.match_id, mp.player_id)] ? (
       <span className="text-[10px] sm:text-xs text-neutral-500">
         speichere…
@@ -9297,6 +9335,7 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   const [name, setName] = useState("");
   const [category, setCategory] = useState<string>("");
   const [matchSize, setMatchSize] = useState<2 | 3 | 4>(2); // Standard: 1 vs 1
+  const [newExtraball, setNewExtraball] = useState(false); // 🎱 neues Turnier mit Extraball?
 
   const [tournamentFormat, setTournamentFormat] =
     useState<"matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation">("matchplay");
@@ -9334,6 +9373,8 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
     code: string;
     name: string;
     category: string;
+    extraball?: boolean;
+    format?: string | null;
   } | null>(null);
 
   const [locations, setLocations] = useState<Location[]>([]);
@@ -9396,6 +9437,7 @@ async function loadArchive() {
         format: tournamentFormat,
         templateTournamentId: templateTournamentId || null,
         locationId: locationId || null,
+        extraball: newExtraball,
       }),
     });
 
@@ -9859,6 +9901,8 @@ if (joined)
               locations={locations}
               busy={busy}
               onCreate={createTournament}
+              extraball={newExtraball}
+              onExtraballChange={setNewExtraball}
             />
           ) : tab === "archive" ? (
             <div className="space-y-2">
@@ -9893,6 +9937,8 @@ if (joined)
                               code: t.code,
                               name: t.name ?? "",
                               category: t.category ?? "",
+                              extraball: t.extraball === true,
+                              format: t.format ?? null,
                             });
                           }}
                           className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700"
@@ -10001,6 +10047,8 @@ if (joined)
                 code={editArchiveTournament?.code ?? ""}
                 initialName={editArchiveTournament?.name ?? ""}
                 initialCategory={editArchiveTournament?.category ?? ""}
+                initialExtraball={editArchiveTournament?.extraball === true}
+                format={editArchiveTournament?.format ?? null}
                 onClose={() => setEditArchiveTournament(null)}
                 onSaved={() => {
                   loadArchive();
@@ -10458,6 +10506,8 @@ async function setSpeechRoundEnabled(next: boolean) {
   const superFinalRunning = !!(finalState && finalState.status !== "finished");
 
   const [useElo, setUseElo] = useState(true);
+  // 🚫 DYP: nie Elo (Spaßturniere – würde die Flipper-Elo verfälschen)
+  const eloBlocked = !eloAllowedInFormat(data?.tournament?.format);
   // ✏️ Name/Kategorie eines beendeten Turniers ändern (Dialog)
   const [editMetaOpen, setEditMetaOpen] = useState(false);
 
@@ -10465,16 +10515,20 @@ async function setSpeechRoundEnabled(next: boolean) {
   // Zustand aus den Runden übernehmen (sonst springt er beim Neuladen fälschlich auf "an").
   // Gibt es noch keine Runden, bleibt die lokale Einstellung (gilt dann für neue Runden).
   useEffect(() => {
+    if (eloBlocked) {
+      setUseElo(false);
+      return;
+    }
     const rs = (data?.rounds ?? []) as any[];
     if (rs.length === 0) return;
     setUseElo(rs.some((r) => r?.elo_enabled !== false));
-  }, [data?.rounds]);
+  }, [data?.rounds, eloBlocked]);
 
   // An/Aus für alle Runden setzen. Die automatische Elo-Neuberechnung
   // (siehe eloBasis) bemerkt die Änderung und rechnet neu bzw. setzt bei "aus"
   // alle Spieler auf ihren Elo-Stand vor dem Turnier zurück.
   async function toggleTournamentElo() {
-    if (busy || locked) return;
+    if (busy || locked || eloBlocked) return;
     const next = !useElo;
     setUseElo(next);
 
@@ -10670,6 +10724,11 @@ const matchSize =
 
   async function startSuperFinal() {
     if (locked) return;
+    // 🤖 Mit KI-Bots im Turnier gibt es kein Super-Finale
+    if ((data?.players ?? []).some((p: any) => p?.is_bot)) {
+      setNotice("🤖 Mit KI-Bots im Turnier gibt es kein Super-Finale.");
+      return;
+    }
 
 if (!hasAtLeastOneFinishedRound) {
   alert('Super-Finale kann erst gestartet werden, wenn eine Runde "finished" ist.');
@@ -11448,6 +11507,12 @@ async function reloadAll() {
     if (errors.length) setNotice(errors.join(" · "));
     await reloadAll();
   }
+
+  // 🤖 Bots in Formaten, in denen sie nicht mitspielen dürfen (Elimination, Timeplay, DYP) → nicht wählbar
+  const botBlockedIds = useMemo(() => {
+    if (botsAllowedInFormat(data?.tournament?.format)) return undefined;
+    return new Set<string>((profiles ?? []).filter((p: any) => p?.is_bot).map((p: any) => String(p.id)));
+  }, [profiles, data?.tournament?.format]);
 
   // Profile, die schon im Turnier sind (in der Auswahl grau + "schon dabei")
   const profileIdsInTournament = useMemo(
@@ -12833,6 +12898,7 @@ const tasksById = useMemo(() => {
               color: p.color ?? prof?.color ?? null,
               icon: p.icon ?? prof?.icon ?? null,
               avatarUrl: p.avatar_url ?? prof?.avatar_url ?? null,
+              isBot: p.is_bot === true,
             } as PlayerVisual,
           ];
         })
@@ -13118,6 +13184,7 @@ const tasksById = useMemo(() => {
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
         <span>🏷️ {cat || <span className="italic">keine Kategorie</span>}</span>
+        {effectiveExtraball(data?.tournament?.format, data?.tournament?.extraball) ? <ExtraballBadge /> : null}
         {data?.tournament?.locations?.name ? <span>📍 {data.tournament.locations.name}</span> : null}
       </div>
     </div>
@@ -13211,6 +13278,8 @@ const tasksById = useMemo(() => {
   code={code}
   initialName={String(data?.tournament?.name ?? "")}
   initialCategory={String(data?.tournament?.category ?? "")}
+  initialExtraball={data?.tournament?.extraball === true}
+  format={data?.tournament?.format ?? null}
   onClose={() => setEditMetaOpen(false)}
   onSaved={() => {
     reloadAll();
@@ -13285,6 +13354,8 @@ const tasksById = useMemo(() => {
     onChange={(ids) => setSelectedProfileIds(ids)}
     disabled={busy || locked}
     disabledIds={profileIdsInTournament}
+    blockedIds={botBlockedIds}
+    blockedLabel="🤖 nicht in diesem Format"
   />
 
   <Button
@@ -13551,16 +13622,18 @@ const tasksById = useMemo(() => {
         <button
           type="button"
           onClick={toggleTournamentElo}
-          disabled={busy || locked}
+          disabled={busy || locked || eloBlocked}
+          title={eloBlocked ? "Bei DYP gibt es keine Elo" : undefined}
           className={`relative inline-flex h-5 w-9 items-center rounded-full transition
             ${useElo ? "bg-emerald-500" : "bg-neutral-300"}
-            ${(busy || locked) ? "opacity-50 cursor-not-allowed" : ""}`}
+            ${(busy || locked || eloBlocked) ? "opacity-50 cursor-not-allowed" : ""}`}
         >
           <span
             className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition
               ${useElo ? "translate-x-4" : "translate-x-1"}`}
           />
         </button>
+        {eloBlocked ? <span className="text-xs text-neutral-400">🚫 bei DYP nie Elo</span> : null}
       </div>
     </div>
   </div>
@@ -13782,11 +13855,20 @@ const tasksById = useMemo(() => {
                 Wer zuerst 4 Punkte erreicht, wird{" "}
                 <b>Super Grand Champion</b>.
               </p>
+              {(data?.players ?? []).some((p: any) => p?.is_bot) ? (
+                <div className="rounded-xl bg-violet-50 px-3 py-2 text-sm text-violet-800">
+                  🤖 In diesem Turnier spielen KI-Bots mit – deshalb gibt es kein Super-Finale.
+                </div>
+              ) : null}
               <div>
                 <Button
-                  disabled={busy || locked || !hasAtLeastOneFinishedRound}
+                  disabled={
+                    busy || locked || !hasAtLeastOneFinishedRound || (data?.players ?? []).some((p: any) => p?.is_bot)
+                  }
                       title={
-                  !hasAtLeastOneFinishedRound
+                  (data?.players ?? []).some((p: any) => p?.is_bot)
+                    ? "Mit KI-Bots im Turnier gibt es kein Super-Finale"
+                    : !hasAtLeastOneFinishedRound
                     ? 'Erst eine Runden abschließen (Status "finished")'
                     : ""
                 }
@@ -14194,9 +14276,9 @@ const tasksById = useMemo(() => {
 
   <button
     type="button"
-    disabled={busy || locked}
+    disabled={busy || locked || eloBlocked}
     onClick={toggleTournamentElo}
-    title="Elo für das ganze Turnier an/aus"
+    title={eloBlocked ? "Bei DYP gibt es keine Elo" : "Elo für das ganze Turnier an/aus"}
     className={`text-xs sm:text-sm font-medium ${
       useElo ? "text-green-400" : "text-gray-500"
     }`}

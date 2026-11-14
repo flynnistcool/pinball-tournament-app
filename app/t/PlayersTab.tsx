@@ -199,6 +199,7 @@ import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/
 import { EloSparkline, WinrateSparkline } from "@/components/charts";
 import { SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { joinTournamentByCode } from "@/lib/joinTournament";
+import BotToggle, { BotBadge, PlaceholderToggle, PlaceholderBadge } from "@/components/BotToggle";
 import {Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
 const ACTION_COLORS = [
   "#ef4444",
@@ -233,6 +234,9 @@ type Profile = {
   icon?: string | null;
   total_tournament_points?: number;
   info?: string | null;
+  is_bot?: boolean | null;
+  bot_kind?: string | null;
+  exclude_from_stats?: boolean | null;
 };
 
 type Draft = {
@@ -242,6 +246,8 @@ type Draft = {
   resetMatchesPlayed: boolean;
   color: string;
   icon: string;
+  isBot: boolean;
+  excludeFromStats: boolean;
 };
 
 type EloPoint = {
@@ -874,6 +880,9 @@ const [spSaveDrainDetailFilter, setSpSaveDrainDetailFilter] = useState<Record<st
             color: p.color ?? null,
             icon: p.icon ?? null,
             total_tournament_points: p.total_tournament_points ?? 0,
+            is_bot: p.is_bot === true, // 🤖 KI-Bot
+            exclude_from_stats: p.exclude_from_stats === true, // 🚫 Platzhalter
+            bot_kind: p.bot_kind ?? null,
             info: p.info ?? null,
           }))
         );
@@ -1520,6 +1529,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
               resetMatchesPlayed: false,
               color: profile.color ?? "",
               icon: profile.icon ?? "",
+              isBot: profile.is_bot === true,
+              excludeFromStats: profile.exclude_from_stats === true,
             }
           : {
               name: profile?.name ?? "",
@@ -1528,6 +1539,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
               resetMatchesPlayed: false,
               color: profile?.color ?? "",
               icon: profile?.icon ?? "",
+              isBot: profile?.is_bot === true,
+              excludeFromStats: profile?.exclude_from_stats === true,
             };
       return { ...prev, [key]: base };
     });
@@ -1544,6 +1557,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
         resetMatchesPlayed: false,
         color: profile?.color ?? "",
         icon: profile?.icon ?? "",
+        isBot: profile?.is_bot === true,
+        excludeFromStats: profile?.exclude_from_stats === true,
       } as Draft)
     );
   }
@@ -1815,6 +1830,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
           resetMatchesPlayed: false,
           color: "",
           icon: "",
+          isBot: false,
+          excludeFromStats: false,
         };
       return {
         ...prev,
@@ -1850,6 +1867,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
           provisionalMatches,
           color: draft.color || null,
           icon: draft.icon || null,
+          isBot: draft.isBot === true,
+          excludeFromStats: draft.excludeFromStats === true,
         }),
       });
       const j = await res.json().catch(() => ({}));
@@ -1890,6 +1909,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
           resetMatchesPlayed,
           color: draft.color || null,
           icon: draft.icon || null,
+          isBot: draft.isBot === true,
+          excludeFromStats: draft.excludeFromStats === true,
         }),
       });
       const j = await res.json().catch(() => ({}));
@@ -2606,6 +2627,21 @@ const headToHeadPanel =
                 </div>
               </div>
 
+              <div className="mt-3">
+                <BotToggle
+                  checked={drafts["new"]?.isBot === true}
+                  onChange={(v) => updateDraftField("new", "isBot", v)}
+                  disabled={savingKey === "new" || !isAdmin}
+                />
+                <div className="mt-2">
+                  <PlaceholderToggle
+                    checked={drafts["new"]?.excludeFromStats === true}
+                    onChange={(v) => updateDraftField("new", "excludeFromStats", v)}
+                    disabled={savingKey === "new" || !isAdmin}
+                  />
+                </div>
+              </div>
+
               <div className="mt-3 flex justify-end gap-2">
                 <Button
                   size="sm"
@@ -2928,6 +2964,8 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                     <div>
   <div className="text-base font-medium flex items-center gap-2 min-w-0">
     <span className="truncate">{p.name}</span>
+    {p.is_bot ? <BotBadge /> : null}
+    {p.exclude_from_stats ? <PlaceholderBadge /> : null}
 
     <span className="shrink-0 text-sm text-amber-600">
       {Number(p.total_tournament_points)} TP{" "}
@@ -2958,7 +2996,12 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                       </span>
                     )}
 
-                    {/* Zeile 2: Matches / provisional */}
+                    {/* Zeile 2: Matches / provisional – 🤖 bei Bots: feste Elo */}
+                    {p.is_bot ? (
+                      <div className="text-[13px] font-semibold text-violet-700">
+                        🤖 KI-Bot · feste Elo
+                      </div>
+                    ) : (
                     <div className="text-[13px] text-neutral-700 font-medium">
                       🎮{" "}
                       <span className="tabular-nums font-semibold text-neutral-900">
@@ -2971,6 +3014,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                       </span>{" "}
                       provisional{" "}
                     </div>
+                    )}
 
                     {/* Zeile 3: Vergleich-Toggle + Details */}
                     <div className="flex items-center gap-2">
@@ -3210,6 +3254,17 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                             </div>
                           </div>
                         </div>
+
+                        <BotToggle
+                          checked={draft.isBot === true}
+                          onChange={(v) => updateDraftField(p.id, "isBot", v)}
+                          disabled={savingKey === p.id || !isAdmin}
+                        />
+                        <PlaceholderToggle
+                          checked={draft.excludeFromStats === true}
+                          onChange={(v) => updateDraftField(p.id, "excludeFromStats", v)}
+                          disabled={savingKey === p.id || !isAdmin}
+                        />
                      
                         {/* Aktionen: Löschen / Abbrechen / Speichern */}
                         <div className="mt-3 flex items-center justify-between gap-2">

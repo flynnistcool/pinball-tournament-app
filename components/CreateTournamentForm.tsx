@@ -6,6 +6,8 @@
 
 import type { ReactNode } from "react";
 import { Button, Input, Select } from "@/components/ui";
+import ExtraballToggle from "@/components/ExtraballToggle";
+import { extraballForced } from "@/lib/botRules";
 
 export type TournamentFormat =
   | "matchplay"
@@ -64,6 +66,8 @@ export default function CreateTournamentForm({
   locations,
   busy,
   onCreate,
+  extraball = false,
+  onExtraballChange,
 }: {
   name: string;
   onNameChange: (v: string) => void;
@@ -82,8 +86,12 @@ export default function CreateTournamentForm({
   locations: { id: string; name: string }[];
   busy: boolean;
   onCreate: () => void;
+  /** 🎱 mit Extraball gespielt? */
+  extraball?: boolean;
+  onExtraballChange?: (v: boolean) => void;
 }) {
   const sizeLocked = format === "dyp_round_robin" || format === "elimination";
+  const xbLocked = extraballForced(format); // 🎱 RtP / Timeplay: immer mit Extraball
   const fmt = FORMATS.find((f) => f.value === format);
   const locName = locations.find((l) => l.id === locationId)?.name;
 
@@ -91,6 +99,7 @@ export default function CreateTournamentForm({
     fmt ? `${fmt.icon} ${fmt.label}` : null,
     format === "elimination" ? "alle in einem Match" : format === "dyp_round_robin" ? "2 vs 2" : `${matchSize} Spieler pro Maschine`,
     locName ? `📍 ${locName}` : "ohne Location-Import",
+    extraball || xbLocked ? "🎱 mit Extraball" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -180,6 +189,12 @@ export default function CreateTournamentForm({
             <div className="mt-1.5 text-xs text-neutral-500">DYP ist immer 2 vs 2 (4 Spieler pro Maschine).</div>
           )}
         </div>
+
+        {onExtraballChange ? (
+          <div className="sm:max-w-md">
+            <ExtraballToggle checked={extraball} onChange={onExtraballChange} disabled={busy} locked={xbLocked} />
+          </div>
+        ) : null}
       </Section>
 
       <Section icon="📍" title="Maschinen">

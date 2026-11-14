@@ -1,4 +1,5 @@
 import { rotationStartOrder } from "@/lib/rotationPlan";
+import { eloAllowedInFormat } from "@/lib/botRules";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 type StartOrderMode = "random" | "standings_asc" | "last_round_asc";
@@ -377,7 +378,7 @@ export async function POST(req: Request) {
       ? "last_round_asc"
       : "random";
 
-  const useElo = Boolean(body.useElo);
+  const useEloRequested = Boolean(body.useElo);
 
   // ✅ Preview-Mode: UI will nur wissen, welche Maschinen "eligible" sind
   const previewOnly = Boolean(body.previewOnly);
@@ -458,6 +459,9 @@ export async function POST(req: Request) {
   // ✅✅✅ NEU: effective format (Override > DB)
   const format: "matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
     requestedFormat ?? tournamentFormat;
+
+  // 🚫 DYP: nie Elo (Spaßturniere – würde die Flipper-Elo verfälschen)
+  const useElo = useEloRequested && eloAllowedInFormat(tournamentFormat) && eloAllowedInFormat(format);
 
 const groupSizeAny =
   format === "dyp_round_robin"

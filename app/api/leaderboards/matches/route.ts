@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 type MPRow = {
   player_id: string;
@@ -40,7 +41,30 @@ export async function GET() {
     return NextResponse.json({ rows: [] });
   }
 
-  const rows = mps as MPRow[];
+  // 🛡️ Statistik-Schutz: Siege nur gegen Menschen.
+  // - Sieger-Zeilen von Bots/Platzhaltern fliegen raus
+  // - in Matches mit Bots zählt als Sieger der beste MENSCH (nur wenn mind. 2 Menschen dabei waren)
+  const exW = await loadStatsExclusions(sb);
+  const hcW = await loadHumanMatchContext(
+    sb,
+    exW,
+    Array.from(new Set((mps as any[]).map((r) => String(r.matches?.id ?? ""))))
+  );
+  const rows: MPRow[] = [];
+  const doneBotMatch = new Set<string>();
+  for (const r of mps as any[]) {
+    const mid = String(r.matches?.id ?? "");
+    const human = hcW.humanPositionsInBotMatches.get(mid);
+    if (!human) {
+      if (!hcW.isExcludedPlayer(String(r.player_id))) rows.push(r);
+      continue;
+    }
+    if (doneBotMatch.has(mid)) continue;
+    doneBotMatch.add(mid);
+    for (const [pid, pos] of Array.from(human.entries())) {
+      if (pos === 1) rows.push({ ...r, player_id: pid, position: 1 });
+    }
+  }
 
   // 2) IDs sammeln für Spieler, Maschinen, Turniere
   const playerIds = new Set<string>();

@@ -336,6 +336,44 @@ export async function POST(req: Request) {
 }
 
 
+  // 🤖 KI-Bots: Turnierpunkte der MENSCHEN ohne Bots berechnen.
+  // - Bots behalten ihre Turnierpunkte nach echtem Platz (nur fürs Bot-Profil).
+  // - 1 Mensch + Bots = "Training": der Mensch bekommt keine Turnierpunkte.
+  // - ≥ 2 Menschen: Bots "wegdenken" – Rang + Teilnehmerzahl nur unter Menschen
+  //   (Bsp. Flo 9, Bot 7, Thomas 5 → Thomas bekommt die TP eines Zweiten von 2).
+  // final_rank (echter Platz im Turnier) bleibt unverändert.
+  {
+    const profileIds = Array.from(new Set((players ?? []).map((p: any) => p.profile_id).filter(Boolean)));
+    const { data: botProfiles } = profileIds.length
+      ? await sb.from("profiles").select("id").in("id", profileIds).eq("is_bot", true)
+      : { data: [] as any[] };
+    const botProfileIds = new Set((botProfiles ?? []).map((b: any) => String(b.id)));
+    const botPlayerIds = new Set(
+      (players ?? []).filter((p: any) => p.profile_id && botProfileIds.has(String(p.profile_id))).map((p: any) => String(p.id))
+    );
+
+    if (botPlayerIds.size > 0) {
+      const humans = resultRows.filter((r) => !botPlayerIds.has(String(r.player_id))); // schon nach points sortiert
+      if (humans.length <= 1) {
+        for (const r of humans) r.tournament_points = 0; // 🤖 Training
+      } else {
+        const nHumans = humans.length;
+        let k = 0;
+        while (k < humans.length) {
+          const start = k;
+          const pts = Number(humans[k].points ?? 0);
+          while (k < humans.length && Number(humans[k].points ?? 0) === pts) k++;
+          const rankStart = start + 1; // Competition Ranking unter Menschen
+          const rankEnd = k; // inkl.
+          let sum = 0;
+          for (let place = rankStart; place <= rankEnd; place++) sum += tournamentPointsForRank(place, nHumans);
+          const avg = sum / (rankEnd - rankStart + 1);
+          for (let j = start; j < k; j++) humans[j].tournament_points = avg; // kein Superfinale mit Bots
+        }
+      }
+    }
+  }
+
   // 6) In tournament_results speichern (Upsert nach tournament_id + player_id)
   if (resultRows.length > 0) {
     const { error: insErr } = await sb

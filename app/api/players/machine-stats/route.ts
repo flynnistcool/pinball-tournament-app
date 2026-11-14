@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -57,6 +58,8 @@ export async function POST(req: Request) {
       .from("match_players")
       .select(
         `
+        match_id,
+        player_id,
         position,
         matches!inner(
           id,
@@ -94,7 +97,23 @@ export async function POST(req: Request) {
       });
     }
 
-    const rows = (data ?? []) as Row[];
+    // 🛡️ Statistik-Schutz: Siege/Plätze nur gegen Menschen; Matches nur gegen Bots zählen nicht
+    // (Bot-/Platzhalter-Profil selbst: unverändert)
+    const ex = await loadStatsExclusions(sb);
+    const selfExcluded = isExcludedProfile(ex, profileId);
+    const hc = await loadHumanMatchContext(
+      sb,
+      ex,
+      selfExcluded ? [] : Array.from(new Set(((data ?? []) as any[]).map((r) => String(r.match_id))))
+    );
+    const rows = (((data ?? []) as any[])
+      .map((r) => {
+        if (selfExcluded) return r;
+        const pos = hc.position(String(r.match_id), String(r.player_id), r.position);
+        if (r.position != null && pos == null) return null; // nur gegen Bots gespielt
+        return { ...r, position: pos };
+      })
+      .filter(Boolean)) as Row[];
 
 
     // Aggregation pro (LocationNameNormalized + MachineNameNormalized)

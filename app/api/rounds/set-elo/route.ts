@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { eloAllowedInFormat } from "@/lib/botRules";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -20,6 +21,30 @@ export async function POST(req: Request) {
     }
 
     const sb = supabaseAdmin();
+
+    // 🚫 DYP: nie Elo (Ausschalten ist immer erlaubt)
+    if (eloEnabled) {
+      const { data: rd } = await sb
+        .from("rounds")
+        .select("format, tournament_id")
+        .eq("id", roundId)
+        .maybeSingle();
+      let tFormat: string | null = null;
+      if ((rd as any)?.tournament_id) {
+        const { data: tt } = await sb
+          .from("tournaments")
+          .select("format")
+          .eq("id", (rd as any).tournament_id)
+          .maybeSingle();
+        tFormat = (tt as any)?.format ?? null;
+      }
+      if (!eloAllowedInFormat((rd as any)?.format) || !eloAllowedInFormat(tFormat)) {
+        return NextResponse.json(
+          { ok: false, error: "Bei DYP gibt es keine Elo" },
+          { status: 400, headers: NO_STORE }
+        );
+      }
+    }
 
     const { error } = await sb
       .from("rounds")

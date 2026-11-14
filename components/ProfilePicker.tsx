@@ -5,6 +5,7 @@ type Profile = {
   name: string;
   icon?: string | null; // z.B. "😎"
   color?: string | null; // z.B. "#0ea5e9"
+  is_bot?: boolean | null; // 🤖 KI-Bot
 };
 
 function initials(name: string) {
@@ -28,6 +29,7 @@ function Avatar({ p }: { p: Profile }) {
  * Profil-Auswahl mit Mehrfachauswahl (Häkchen).
  * - Klick auf einen Eintrag setzt/entfernt das Häkchen, die Liste bleibt offen.
  * - `disabledIds`: Profile, die schon im Turnier sind → grau, "schon dabei", nicht wählbar.
+ * - `blockedIds` + `blockedLabel`: Profile, die hier nicht mitspielen dürfen (z. B. 🤖 Bots in Elimination).
  */
 export function ProfilePicker({
   profiles,
@@ -35,12 +37,16 @@ export function ProfilePicker({
   onChange,
   disabled,
   disabledIds,
+  blockedIds,
+  blockedLabel = "nicht möglich",
 }: {
   profiles: Profile[];
   value: string[];
   onChange: (ids: string[]) => void;
   disabled?: boolean;
   disabledIds?: Set<string>;
+  blockedIds?: Set<string>;
+  blockedLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -115,7 +121,9 @@ export function ProfilePicker({
         <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border bg-white shadow-lg">
           <div className="max-h-64 overflow-y-auto py-1">
             {profiles.map((p) => {
-              const already = disabledIds?.has(p.id) ?? false;
+              const isAlready = disabledIds?.has(p.id) ?? false;
+              const isBlocked = !isAlready && (blockedIds?.has(p.id) ?? false);
+              const already = isAlready || isBlocked;
               const checked = value.includes(p.id);
               return (
                 <button
@@ -146,7 +154,9 @@ export function ProfilePicker({
                   </span>
                   <Avatar p={p} />
                   <span className="truncate">{p.name}</span>
-                  {already && <span className="ml-auto shrink-0 text-xs text-neutral-500">schon dabei</span>}
+                  {p.is_bot ? <span className="shrink-0 text-xs" title="KI-Bot">🤖</span> : null}
+                  {isAlready && <span className="ml-auto shrink-0 text-xs text-neutral-500">schon dabei</span>}
+                  {isBlocked && <span className="ml-auto shrink-0 text-xs text-neutral-500">{blockedLabel}</span>}
                 </button>
               );
             })}

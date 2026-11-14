@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
+import { loadHumanMatchContext, loadHumanResultsContext, loadStatsExclusions } from "@/lib/statsExclusions";
 import { buildPlayerCards, type CardInput, type CardProfile } from "@/lib/playerCards";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +93,7 @@ export async function GET(req: Request) {
         fetchAllIn<CardInput["matchPlayers"][number]>(allPlayerIds, (chunk) =>
           sb
             .from("match_players")
-            .select("match_id, player_id, position, score")
+            .select("match_id, player_id, position, score, stats_ignored")
             .in("player_id", chunk)
             .order("match_id")
             .order("player_id")
@@ -107,10 +108,39 @@ export async function GET(req: Request) {
         ),
       ]);
       if (mpRes.error) return fail(`Matches laden fehlgeschlagen: ${mpRes.error.message}`, 500);
-      matchPlayers = mpRes.data;
       // Ergebnisse sind nur für Turniersiege nötig – fehlen sie, zählen wir 0 statt abzubrechen
       if (resRes.error) console.error("player-cards results error:", resRes.error);
-      else results = resRes.data;
+
+      // 🛡️ Statistik-Schutz (Nutzer-Regel): Scores der Menschen zählen immer (außer als falsch markiert),
+      // Siege/Plätze nur gegen Menschen. Karten von Bots/Platzhaltern selbst bleiben unverändert.
+      const ex = await loadStatsExclusions(sb);
+      const ownExcluded = new Set(
+        allPlayers.filter((p: any) => p.profile_id && ex.excludedProfileIds.has(String(p.profile_id))).map((p: any) => String(p.id))
+      );
+      const hc = await loadHumanMatchContext(
+        sb,
+        ex,
+        Array.from(new Set(mpRes.data.map((r) => String(r.match_id))))
+      );
+      matchPlayers = mpRes.data.map((r: any) => {
+        if (ownExcluded.has(String(r.player_id))) return r;
+        const pos = hc.position(String(r.match_id), String(r.player_id), r.position);
+        return { ...r, position: pos, score: r.stats_ignored === true ? null : r.score };
+      });
+      if (!resRes.error) {
+        const rc = await loadHumanResultsContext(
+          sb,
+          ex,
+          Array.from(new Set(resRes.data.map((r: any) => String(r.tournament_id))))
+        );
+        results = resRes.data
+          .map((r: any) =>
+            ownExcluded.has(String(r.player_id))
+              ? r
+              : { ...r, final_rank: rc.rank(String(r.tournament_id), String(r.player_id), r.final_rank) }
+          )
+          .filter((r: any) => ownExcluded.has(String(r.player_id)) || r.final_rank != null);
+      }
 
       const matchIds = Array.from(new Set(matchPlayers.map((m) => String(m.match_id))));
       const mRes = await fetchAllIn<CardInput["matches"][number]>(matchIds, (chunk) =>

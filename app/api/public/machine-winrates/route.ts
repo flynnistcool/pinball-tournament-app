@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ function noStoreJson(data: unknown, init?: ResponseInit) {
 }
 
 type Row = {
+  match_id: string;
+  player_id: string;
   position: number | null;
   players: { profile_id: string | null } | null;
   matches: { machines: { name: string | null } | null } | null;
@@ -66,6 +69,8 @@ export async function GET(req: Request) {
       .from("match_players")
       .select(
         `
+        match_id,
+        player_id,
         position,
         players!inner(profile_id),
         matches!inner(
@@ -85,8 +90,16 @@ export async function GET(req: Request) {
   );
   if (error) return noStoreJson({ error: error.message, rows: [] }, { status: 500 });
 
+  // 🛡️ Statistik-Schutz: Siege nur gegen Menschen (Bots/Platzhalter selbst ohne Winrate)
+  const ex = await loadStatsExclusions(sb);
+  const hc = await loadHumanMatchContext(sb, ex, Array.from(new Set(data.map((r) => String(r.match_id)))));
+
   const acc: Record<string, { profileId: string; machineName: string; matchesPlayed: number; wins: number }> = {};
-  for (const row of data) {
+  for (const raw of data) {
+    if (isExcludedProfile(ex, raw?.players?.profile_id) || hc.isExcludedPlayer(String(raw.player_id))) continue;
+    const pos = hc.position(String(raw.match_id), String(raw.player_id), raw.position);
+    if (pos == null) continue; // nur gegen Bots gespielt → zählt nicht
+    const row = { ...raw, position: pos };
     const profileId = String(row?.players?.profile_id ?? "");
     const machineName = String(row?.matches?.machines?.name ?? "");
     if (!profileId || !machineName) continue;

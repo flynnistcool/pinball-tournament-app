@@ -9,6 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import {
   computeMachineStats,
@@ -69,7 +70,7 @@ export async function GET(req: Request) {
   const mpRes = await fetchAllIn<MsMatchPlayer>(matchRes.data.map((m) => m.id), (chunk) =>
     sb
       .from("match_players")
-      .select("match_id, player_id, position, score")
+      .select("match_id, player_id, position, score, stats_ignored")
       .in("match_id", chunk)
       .order("match_id")
       .order("player_id") as any
@@ -98,12 +99,19 @@ export async function GET(req: Request) {
   );
   if (runRes.error) return json({ ok: false, error: runRes.error.message }, 500);
 
+  // 🛡️ Statistik-Schutz: Bots/Platzhalter raus; als falsch markierte Scores zählen nur ohne Score
+  const ex = await loadStatsExclusions(sb);
+  const profileOfPlayer = new Map(pRes.data.map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
+  const countedMps = mpRes.data
+    .filter((r) => !isExcludedProfile(ex, profileOfPlayer.get(String(r.player_id))))
+    .map((r) => ((r as any).stats_ignored === true ? { ...r, score: null } : r));
+
   const stats = computeMachineStats({
     locationMachines,
     tournaments: tRes.data,
     machines: mRes.data,
     matches: matchRes.data,
-    matchPlayers: mpRes.data,
+    matchPlayers: countedMps,
     players: pRes.data,
     profiles: profRes.data,
     tasks: taskRes.data,

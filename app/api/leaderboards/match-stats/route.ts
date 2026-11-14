@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { humanMatchRows, loadStatsExclusions } from "@/lib/statsExclusions";
 
 // Sorgt dafür, dass Next diese Route nicht statisch cached
 export const dynamic = "force-dynamic";
@@ -149,7 +150,15 @@ type Acc = {
 
 const statsByKey: Record<string, Acc> = {};
 
-for (const r of rows) {
+// 🛡️ Statistik-Schutz: Bots/Platzhalter raus, Plätze nur unter Menschen, Matches nur gegen Bots zählen nicht
+const exMs = await loadStatsExclusions(sb);
+const humanRows = humanMatchRows(
+  rows.map((r: any) => ({ ...r, match_id: String(r.matches?.id ?? "") })),
+  exMs,
+  (pid) => playersById[pid]?.profile_id ?? null
+);
+
+for (const r of humanRows) {
   const match = r.matches;
   const round = match?.rounds;
   if (!match || !round) continue;

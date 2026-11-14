@@ -30,6 +30,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Keine Spieler im Turnier" }, { status: 400 });
   }
 
+  // 🤖 Mit KI-Bots im Turnier gibt es kein Super-Finale
+  {
+    const { data: pl } = await sb.from("players").select("profile_id").eq("tournament_id", t.id);
+    const profileIds = Array.from(new Set((pl ?? []).map((x: any) => x.profile_id).filter(Boolean)));
+    const { data: botProfiles } = profileIds.length
+      ? await sb.from("profiles").select("id").in("id", profileIds).eq("is_bot", true).limit(1)
+      : { data: [] as any[] };
+    if (botProfiles && botProfiles.length > 0) {
+      return NextResponse.json(
+        { ok: false, error: "🤖 Mit KI-Bots im Turnier gibt es kein Super-Finale." },
+        { status: 400 }
+      );
+    }
+  }
+
   const { data: rows } = await sb
     .from("match_players")
     .select(

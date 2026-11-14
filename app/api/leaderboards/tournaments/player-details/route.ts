@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { humanTournamentResults, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -92,13 +93,35 @@ export async function GET(req: Request) {
     );
   }
 
-  const rows = (data ?? []).map((r: any) => ({
+  // 🛡️ Statistik-Schutz: 🤖 Training-Turniere raus, Plätze nur unter Menschen (wie in der Rangliste)
+  const tIds = Array.from(new Set((data ?? []).map((r: any) => String(r.tournament_id))));
+  const keep = new Map<string, number | null>(); // `${tournament_id}|${player_id}` → Platz unter Menschen
+  if (tIds.length) {
+    const ex = await loadStatsExclusions(sb);
+    const { data: allRes } = await sb
+      .from("tournament_results")
+      .select("tournament_id, player_id, final_rank")
+      .in("tournament_id", tIds);
+    const allPlayerIds = Array.from(new Set((allRes ?? []).map((r: any) => String(r.player_id))));
+    const { data: pl } = allPlayerIds.length
+      ? await sb.from("players").select("id, profile_id").in("id", allPlayerIds)
+      : { data: [] as any[] };
+    const prof = new Map((pl ?? []).map((x: any) => [String(x.id), x.profile_id ? String(x.profile_id) : null]));
+    for (const r of humanTournamentResults((allRes ?? []) as any[], ex, (pid) => prof.get(pid) ?? null)) {
+      keep.set(`${r.tournament_id}|${r.player_id}`, r.final_rank ?? null);
+    }
+  }
+
+  // Bot-/Platzhalter-Profil selbst: eigene Ergebnisse unverändert zeigen (echter Platz)
+  const exSelf = profileId ? await loadStatsExclusions(sb) : null;
+  const showRaw = !!(profileId && exSelf && exSelf.excludedProfileIds.has(String(profileId)));
+  const rows = (data ?? []).filter((r: any) => showRaw || keep.has(`${r.tournament_id}|${r.player_id}`)).map((r: any) => ({
     tournament_id: r.tournament_id,
     tournament_code: r.tournaments?.code ?? null,
     tournament_name: r.tournaments?.name ?? null,
     tournament_category: r.tournaments?.category ?? null,
     created_at: r.tournaments?.created_at ?? null,
-    final_rank: r.final_rank ?? null,
+    final_rank: showRaw ? r.final_rank ?? null : keep.get(`${r.tournament_id}|${r.player_id}`) ?? r.final_rank ?? null,
     tournament_points: r.tournament_points ?? 0,
     super_final_rank: r.super_final_rank ?? null, // für Aufschlüsselung "6 TP + 2 🔥"
   }));

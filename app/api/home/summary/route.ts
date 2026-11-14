@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
+import { humanTournamentResults, isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 import { currentRoundByTournament, pickTopScore, pickWinners, type ResultRow, type ScoreRow } from "@/lib/homeSummary";
 
 export const dynamic = "force-dynamic";
@@ -55,16 +56,23 @@ async function loadRunning(sb: Sb, tournaments: TournamentRow[]) {
 async function loadLastWinner(sb: Sb, tournaments: TournamentRow[]) {
   // die letzten beendeten Turniere durchgehen, bis eines Ergebnisse hat
   const finished = tournaments.filter((t) => t.status === "finished").slice(0, 5);
+  const ex = await loadStatsExclusions(sb); // 🛡️ Bots/Platzhalter/🤖 Training nicht als "letzter Sieger"
   for (const t of finished) {
     const { data, error } = await sb
       .from("tournament_results")
-      .select("player_name, final_rank, super_final_rank")
+      .select("tournament_id, player_id, player_name, final_rank, super_final_rank")
       .eq("tournament_id", t.id);
     if (error) {
       console.error("home/summary results error:", error);
       return null;
     }
-    const { names, viaSuperFinal } = pickWinners((data ?? []) as ResultRow[]);
+    const pIds = Array.from(new Set((data ?? []).map((r: any) => String(r.player_id))));
+    const { data: pl } = pIds.length
+      ? await sb.from("players").select("id, profile_id").in("id", pIds)
+      : { data: [] as any[] };
+    const prof = new Map((pl ?? []).map((x: any) => [String(x.id), x.profile_id ? String(x.profile_id) : null]));
+    const humanRows = humanTournamentResults((data ?? []) as any[], ex, (pid) => prof.get(pid) ?? null);
+    const { names, viaSuperFinal } = pickWinners(humanRows as ResultRow[]);
     if (!names.length) continue;
     return {
       names,
@@ -100,7 +108,7 @@ async function loadWeekTop(sb: Sb, tournaments: TournamentRow[]) {
     (chunk) =>
       sb
         .from("match_players")
-        .select("match_id, player_id, score")
+        .select("match_id, player_id, score, stats_ignored")
         .in("match_id", chunk)
         .not("score", "is", null)
         .order("match_id")
@@ -108,7 +116,18 @@ async function loadWeekTop(sb: Sb, tournaments: TournamentRow[]) {
   );
   if (mpRes.error) return null;
 
-  const top = pickTopScore(mpRes.data);
+  // 🛡️ Statistik-Schutz: Bots, Platzhalter und als falsch markierte Scores nicht als "Top-Score der Woche"
+  const ex = await loadStatsExclusions(sb);
+  const wkPlayerIds = Array.from(new Set(mpRes.data.map((r) => String(r.player_id))));
+  const wkPl = await fetchAllIn<{ id: string; profile_id: string | null }>(wkPlayerIds, (chunk) =>
+    sb.from("players").select("id, profile_id").in("id", chunk).order("id")
+  );
+  const wkProf = new Map(wkPl.data.map((x) => [String(x.id), x.profile_id ? String(x.profile_id) : null]));
+  const counted = mpRes.data.filter(
+    (r) => (r as any).stats_ignored !== true && !isExcludedProfile(ex, wkProf.get(String(r.player_id)))
+  );
+
+  const top = pickTopScore(counted);
   if (!top) return null;
 
   const match = mRes.data.find((m) => String(m.id) === String(top.match_id));
