@@ -22,21 +22,77 @@ function initials(name: string): string {
   );
 }
 
+// 🎨 Farben: dunkel (Infobildschirm, Standard) oder hell (Handy-Seite)
+type Theme = {
+  card: string;
+  box: string;
+  label: string;
+  muted: string;
+  faint: string;
+  text: string;
+  here: string;
+  dotOn: string;
+  dotOff: string;
+  elo: string;
+  ring: string;
+  pct: string;
+  neutralBadge: string;
+  initials: string;
+  bestLabel: string;
+  shimmer: number;
+};
+const DARK: Theme = {
+  card: "bg-gradient-to-b from-slate-800 to-slate-950 text-white",
+  box: "bg-white/[0.06] ring-1 ring-white/10",
+  label: "text-white/45",
+  muted: "text-white/50",
+  faint: "text-white/40",
+  text: "text-white",
+  here: "text-sky-300/80",
+  dotOn: "bg-white/80",
+  dotOff: "bg-white/20",
+  elo: "bg-black/40 text-white/90 ring-1 ring-white/15",
+  ring: "ring-white/80",
+  pct: "text-emerald-300",
+  neutralBadge: "bg-white/15 text-white",
+  initials: "text-white/90",
+  bestLabel: "text-white/55",
+  shimmer: 0.4,
+};
+const LIGHT: Theme = {
+  card: "bg-white text-neutral-900",
+  box: "bg-neutral-50 ring-1 ring-neutral-200",
+  label: "text-neutral-500",
+  muted: "text-neutral-500",
+  faint: "text-neutral-400",
+  text: "text-neutral-900",
+  here: "text-sky-600",
+  dotOn: "bg-neutral-700",
+  dotOff: "bg-neutral-300",
+  elo: "bg-white/80 text-neutral-800 ring-1 ring-neutral-200",
+  ring: "ring-white",
+  pct: "text-emerald-600",
+  neutralBadge: "bg-white/80 text-neutral-700 ring-1 ring-neutral-200",
+  initials: "text-white",
+  bestLabel: "text-neutral-600",
+  shimmer: 0.3,
+};
+
 // frame: Rahmenfarbe der Karte (Favorit/Außenseiter wie ihr Abzeichen, sonst Spielerfarbe)
-function rankBadge(c: PlayerCard): { text: string; cls: string; frame?: string } | null {
+function rankBadge(c: PlayerCard, t: Theme): { text: string; cls: string; frame?: string } | null {
   if (c.eloRank == null || c.eloRankOf < 2) return null;
   if (c.eloRank === 1) return { text: "⭐ Favorit", cls: "bg-amber-300 text-amber-950", frame: "#fcd34d" };
   if (c.eloRankOf >= 3 && c.eloRank === c.eloRankOf)
     return { text: "🎲 Außenseiter", cls: "bg-fuchsia-400 text-fuchsia-950", frame: "#e879f9" };
-  return { text: `#${c.eloRank} von ${c.eloRankOf}`, cls: "bg-white/15 text-white" };
+  return { text: `#${c.eloRank} von ${c.eloRankOf}`, cls: t.neutralBadge };
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({ label, value, sub, t }: { label: string; value: string; sub?: string; t: Theme }) {
   return (
-    <div className="rounded-xl bg-white/[0.06] px-3 py-2 ring-1 ring-white/10">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">{label}</div>
-      <div className="text-2xl font-extrabold tabular-nums text-white">{value}</div>
-      {sub ? <div className="text-xs text-white/50">{sub}</div> : null}
+    <div className={`rounded-xl px-3 py-2 ${t.box}`}>
+      <div className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>{label}</div>
+      <div className={`text-2xl font-extrabold tabular-nums ${t.text}`}>{value}</div>
+      {sub ? <div className={`text-xs ${t.muted}`}>{sub}</div> : null}
     </div>
   );
 }
@@ -46,11 +102,11 @@ const BEST_SWITCH_MS = 5000;
 
 /** Bester / zweit- / drittbester Flipper (Siegquote), wechselt alle 5 s */
 /** kleiner Hinweis hinter der Überschrift: Wert gilt nur für die Location des Turniers */
-function Here({ on }: { on: boolean }) {
-  return on ? <span className="ml-1 normal-case tracking-normal text-sky-300/80">· 📍 hier</span> : null;
+function Here({ on, t }: { on: boolean; t: Theme }) {
+  return on ? <span className={`ml-1 normal-case tracking-normal ${t.here}`}>· 📍 hier</span> : null;
 }
 
-function BestMachinesBox({ list, local }: { list: BestMachine[]; local: boolean }) {
+function BestMachinesBox({ list, local, t }: { list: BestMachine[]; local: boolean; t: Theme }) {
   const [idx, setIdx] = useState(0);
   useEffect(() => {
     setIdx(0);
@@ -61,16 +117,16 @@ function BestMachinesBox({ list, local }: { list: BestMachine[]; local: boolean 
   const m = list[idx % Math.max(1, list.length)];
 
   return (
-    <div className="relative mt-2 rounded-xl bg-white/[0.06] px-3 py-2 ring-1 ring-white/10">
+    <div className={`relative mt-2 rounded-xl px-3 py-2 ${t.box}`}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">
+        <div className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>
           {BEST_LABELS[idx] ?? BEST_LABELS[0]}
-          <Here on={local} />
+          <Here on={local} t={t} />
         </div>
         {list.length > 1 ? (
           <div className="flex gap-1">
             {list.map((_, i) => (
-              <span key={i} className={`h-1.5 w-1.5 rounded-full ${i === idx ? "bg-white/80" : "bg-white/20"}`} />
+              <span key={i} className={`h-1.5 w-1.5 rounded-full ${i === idx ? t.dotOn : t.dotOff}`} />
             ))}
           </div>
         ) : null}
@@ -82,32 +138,36 @@ function BestMachinesBox({ list, local }: { list: BestMachine[]; local: boolean 
             <span className="min-w-0 flex-1 truncate text-lg font-bold">
               {m.icon ?? "🎰"} {m.name}
             </span>
-            <span className="shrink-0 text-lg font-extrabold tabular-nums text-emerald-300">{m.winrate} %</span>
+            <span className={`shrink-0 text-lg font-extrabold tabular-nums ${t.pct}`}>{m.winrate} %</span>
           </div>
-          <div className="text-xs text-white/50">
+          <div className={`text-xs ${t.muted}`}>
             {m.wins} / {m.matches} Matches gewonnen
           </div>
         </div>
       ) : (
-        <div className="text-lg font-bold text-white/40">noch keiner</div>
+        <div className={`text-lg font-bold ${t.faint}`}>noch keiner</div>
       )}
     </div>
   );
 }
 
-export function PlayerTradingCard({ card }: { card: PlayerCard }) {
+/** light = helle Variante für die Handy-Seite (Infobildschirm: dunkel) */
+export function PlayerTradingCard({ card, light = false }: { card: PlayerCard; light?: boolean }) {
+  const t = light ? LIGHT : DARK;
   const accent = card.color || "#818cf8";
-  const badge = rankBadge(card);
+  const badge = rankBadge(card, t);
   const frame = badge?.frame ?? accent;
   return (
     <div
-      className="relative flex w-[340px] flex-col overflow-hidden rounded-3xl bg-gradient-to-b from-slate-800 to-slate-950 p-5 text-white"
-      style={{ boxShadow: `0 0 0 3px ${frame}, 0 0 36px ${frame}66` }}
+      className={`relative flex w-[340px] max-w-full flex-col overflow-hidden rounded-3xl p-5 ${t.card}`}
+      style={{
+        boxShadow: light ? `0 0 0 3px ${frame}, 0 6px 20px ${frame}40` : `0 0 0 3px ${frame}, 0 0 36px ${frame}66`,
+      }}
     >
       {/* farbiger Schimmer oben */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-0 h-40 opacity-40"
-        style={{ background: `radial-gradient(120% 100% at 50% 0%, ${accent}, transparent 70%)` }}
+        className="pointer-events-none absolute inset-x-0 top-0 h-40"
+        style={{ opacity: t.shimmer, background: `radial-gradient(120% 100% at 50% 0%, ${accent}, transparent 70%)` }}
       />
 
       <div className="relative flex items-center justify-between">
@@ -116,7 +176,7 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
         ) : (
           <span />
         )}
-        <span className="rounded-full bg-black/40 px-3 py-1 font-mono text-sm font-bold text-white/90 ring-1 ring-white/15">
+        <span className={`rounded-full px-3 py-1 font-mono text-sm font-bold ${t.elo}`}>
           Elo {card.elo != null ? Math.round(card.elo) : "–"}
         </span>
       </div>
@@ -124,7 +184,7 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
       {/* Avatar */}
       <div className="relative mx-auto mt-4">
         <div
-          className="flex h-36 w-36 items-center justify-center overflow-hidden rounded-full text-7xl ring-4 ring-white/80"
+          className={`flex h-36 w-36 items-center justify-center overflow-hidden rounded-full text-7xl ring-4 ${t.ring}`}
           style={{ backgroundColor: accent }}
         >
           {card.avatarUrl ? (
@@ -133,7 +193,7 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
           ) : card.icon ? (
             <span>{card.icon}</span>
           ) : (
-            <span className="text-5xl font-black text-white/90">{initials(card.name)}</span>
+            <span className={`text-5xl font-black ${t.initials}`}>{initials(card.name)}</span>
           )}
         </div>
       </div>
@@ -147,46 +207,48 @@ export function PlayerTradingCard({ card }: { card: PlayerCard }) {
           label="🏆 Turniersiege"
           value={String(card.tournamentWins)}
           sub={`${card.tournaments} Turnier${card.tournaments === 1 ? "" : "e"}`}
+          t={t}
         />
         <Stat
           label="⚔️ Siegquote"
           value={card.winrate != null ? `${card.winrate} %` : "–"}
           sub={`${card.matchWins} / ${card.matches} Matches`}
+          t={t}
         />
       </div>
 
-      <div className="relative mt-2 rounded-xl bg-white/[0.06] px-3 py-2 ring-1 ring-white/10">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">❤️ Lieblingsflipper<Here on={!!card.localScope} /></div>
+      <div className={`relative mt-2 rounded-xl px-3 py-2 ${t.box}`}>
+        <div className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>❤️ Lieblingsflipper<Here on={!!card.localScope} t={t} /></div>
         <div className="truncate text-lg font-bold">
           {card.favoriteMachine ? (
             <>
               {card.favoriteMachine.icon ?? "🎰"} {card.favoriteMachine.name}
-              <span className="ml-1.5 text-sm font-normal text-white/50">{card.favoriteMachine.count}×</span>
+              <span className={`ml-1.5 text-sm font-normal ${t.muted}`}>{card.favoriteMachine.count}×</span>
             </>
           ) : (
-            <span className="text-white/40">noch keiner</span>
+            <span className={t.faint}>noch keiner</span>
           )}
         </div>
       </div>
 
-      <BestMachinesBox list={card.bestMachines ?? []} local={!!card.localScope} />
+      <BestMachinesBox list={card.bestMachines ?? []} local={!!card.localScope} t={t} />
 
       <div
         className="relative mt-2 rounded-xl px-3 py-2 ring-1"
         style={{ backgroundColor: `${accent}22`, borderColor: accent, boxShadow: `inset 0 0 0 1px ${accent}55` }}
       >
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/55">🔥 Bestscore<Here on={!!card.localScope} /></div>
+        <div className={`text-[11px] font-semibold uppercase tracking-wider ${t.bestLabel}`}>🔥 Bestscore<Here on={!!card.localScope} t={t} /></div>
         {card.bestScore ? (
           <>
             <div className="truncate font-mono text-2xl font-extrabold tabular-nums">
               {card.bestScore.score.toLocaleString("de-DE")}
             </div>
-            <div className="truncate text-xs text-white/60">
+            <div className={`truncate text-xs ${t.muted}`}>
               {card.bestScore.icon ?? "🎰"} {card.bestScore.machine ?? "unbekannter Flipper"}
             </div>
           </>
         ) : (
-          <div className="text-lg font-bold text-white/40">noch keiner</div>
+          <div className={`text-lg font-bold ${t.faint}`}>noch keiner</div>
         )}
       </div>
     </div>

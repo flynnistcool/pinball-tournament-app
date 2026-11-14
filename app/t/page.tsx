@@ -8370,6 +8370,46 @@ disabled={
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
     <StreakFire n={winStreaks[String(mp.player_id)]} mode={winStreakMode} />
+    {/* ★ Favorit: wer in diesem Match die meisten "grünen" Winrates hat (gleiche Regel wie früher der Stern) */}
+    {!isTimeplayFormat && String((m as any)?.status ?? "").toLowerCase() !== "finished" && (() => {
+      const machineName = machinesInfoById?.[String(m?.machine_id ?? "")]?.name ? String(machinesInfoById[String(m.machine_id)].name) : "";
+      const profOf = (raw: any) => {
+        const p = raw ? String(raw) : "";
+        return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
+      };
+      const vals = (mps ?? [])
+        .map((o: any) => profOf(o?.player_id))
+        .filter(Boolean)
+        .map((prof: string) => {
+          const t = tWinrateByPlayerId?.[prof];
+          const mw = machineName && locationId ? mWinrateByKey?.[`${prof}__${machineName}__${locationId}`]?.winrate : null;
+          return {
+            prof,
+            t: typeof t === "number" && Number.isFinite(t) ? t : null,
+            m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
+          };
+        });
+      const tNums = vals.map((v: any) => v.t).filter((x: any) => x != null);
+      const mNums = vals.map((v: any) => v.m).filter((x: any) => x != null);
+      const maxT = tNums.length ? Math.max(...tNums) : null;
+      const maxM = mNums.length ? Math.max(...mNums) : null;
+      const counts = vals.map((v: any) => ({
+        prof: v.prof,
+        n: (v.t != null && v.t === maxT ? 1 : 0) + (v.m != null && v.m === maxM ? 1 : 0),
+      }));
+      const maxCount = counts.length ? Math.max(...counts.map((c: any) => c.n)) : 0;
+      const best = counts.filter((c: any) => c.n === maxCount);
+      const myProf = profOf(mp?.player_id);
+      const fav = maxCount > 0 && best.length === 1 && !!myProf && best[0].prof === myProf;
+      return fav ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
+          title="Favorit – beste Winrates in diesem Match"
+        >
+          ★ Favorit
+        </span>
+      ) : null;
+    })()}
     {isActiveAtMachine ? (
       <span className="inline-flex items-center rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-semibold text-white animate-pulse">
         ▶ spielt
@@ -8473,9 +8513,6 @@ return (
               Flipper-Winrate <span className={mCls}>{fmtPct(mwr?.winrate)}</span>
               {mpCount > 0 ? ` (${mpCount})` : ""}
             </span>
-            {isRoundActive && isFavorite ? (
-              <span className="text-yellow-500 text-sm" title="Favorit">★</span>
-            ) : null}
             {winrateLoading ? <span className="text-neutral-400">lädt…</span> : null}
           </>
         );

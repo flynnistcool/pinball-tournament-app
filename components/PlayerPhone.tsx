@@ -2,12 +2,16 @@
 
 // 📱 Handy-Seite eines Spielers (/s/<CODE>/spieler/<token>), erreichbar per QR-Code aus der Spielerliste.
 // Reiter 1 "Mein Match": aktuelles Match + Eintragen (Regeln siehe lib/myMatch.ts → entryMode)
-// Reiter 2 "Leaderboard": Live-Stand (gleiche Rechnung wie der Infobildschirm)
+// Reiter 2 "Turnier-Infos": Abschnitte untereinander zum Scrollen – Leaderboard (gleiche Rechnung wie der
+//   Infobildschirm), Spielerkarten zum Wischen, später weitere. Die Reiter-Leiste bleibt oben kleben.
 // Aktualisiert sich alle paar Sekunden selbst (nur solange die Seite sichtbar ist).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ScoreInput from "@/components/ScoreInput";
 import StreakFire from "@/components/StreakFire";
+import PlayerCardsSwipe from "@/components/PlayerCardsSwipe";
+import PhoneTournamentInfo from "@/components/PhoneTournamentInfo";
+import PhoneMatchInsights from "@/components/PhoneMatchInsights";
 import { RoundPointsBars } from "@/components/charts";
 import {
   entryMode,
@@ -35,7 +39,12 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
   const [meError, setMeError] = useState<string | null>(null);
   const [data, setData] = useState<MmData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"match" | "board">("match");
+  const [tab, setTabState] = useState<"match" | "board">("match");
+  // Reiter wechseln → nach oben springen (falls man in den Turnier-Infos weit unten war)
+  const setTab = (t: "match" | "board") => {
+    setTabState(t);
+    if (typeof window !== "undefined" && window.scrollY > 0) window.scrollTo({ top: 0 });
+  };
 
   // Prüfen, wer ich bin
   useEffect(() => {
@@ -116,10 +125,10 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
 
       <div className="sticky top-[env(safe-area-inset-top,0px)] z-20 mb-3 grid grid-cols-2 gap-1 rounded-2xl bg-neutral-200/80 p-1 backdrop-blur">
         <TabBtn active={tab === "match"} onClick={() => setTab("match")}>
-          🎯 Mein Match
+          🕹️ Mein Match
         </TabBtn>
         <TabBtn active={tab === "board"} onClick={() => setTab("board")}>
-          🏆 Leaderboard
+          📊 Turnier-Infos
         </TabBtn>
       </div>
 
@@ -132,13 +141,13 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
           <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
             <div className="text-4xl">🏁</div>
             <div className="mt-2 text-lg font-bold">Das Turnier ist beendet</div>
-            <div className="mt-1 text-sm text-neutral-500">Den Endstand siehst du unter „Leaderboard“.</div>
+            <div className="mt-1 text-sm text-neutral-500">Den Endstand siehst du unter „Turnier-Infos“.</div>
           </div>
         ) : (
           <MatchTab code={code} token={token} me={me} data={data} reload={load} />
         )
       ) : (
-        <BoardTab data={data} meId={me.playerId} />
+        <InfoTab code={code} data={data} meId={me.playerId} />
       )}
 
       <div className="mt-6 text-center text-[11px] text-neutral-400">aktualisiert sich automatisch</div>
@@ -203,6 +212,7 @@ function MatchTab({
           <div className="mt-1 text-xs text-neutral-400">Die Seite springt von selbst um, sobald du dran bist.</div>
         </div>
         <MatchCard info={waiting.info} data={data} meId={me.playerId} title="Dein nächster Flipper" />
+        <PhoneMatchInsights code={code} data={data} info={waiting.info} meId={me.playerId} />
       </div>
     );
   }
@@ -260,6 +270,7 @@ function MatchTab({
           ℹ️ Danach bist du auch an <b>{alsoActive.map((x) => x.machine?.name ?? "?").join(", ")}</b> dran.
         </div>
       ) : null}
+      <PhoneMatchInsights code={code} data={data} info={current} meId={me.playerId} />
     </div>
   );
 }
@@ -762,6 +773,35 @@ function EloText({ start, now, eloOn }: { start: number | null; now: number | nu
           </span>
         </>
       ) : null}
+    </div>
+  );
+}
+
+// ───────────────────────── Reiter "Turnier-Infos" ─────────────────────────
+// Neue Abschnitte einfach unten als weitere <InfoSection> anhängen.
+
+function InfoSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-5">
+      <h2 className="mb-2 px-1 text-sm font-black uppercase tracking-wide text-neutral-500">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function InfoTab({ code, data, meId }: { code: string; data: MmData; meId: string }) {
+  const order = useMemo(() => liveLeaderboard(data).rows.map((r) => r.id), [data]);
+  return (
+    <div>
+      <InfoSection title="🏆 Leaderboard">
+        <BoardTab data={data} meId={meId} />
+      </InfoSection>
+      <InfoSection title="🃏 Spielerkarten">
+        <PlayerCardsSwipe code={code} meId={meId} order={order} />
+      </InfoSection>
+      <InfoSection title="ℹ️ Turnier-Info">
+        <PhoneTournamentInfo data={data} />
+      </InfoSection>
     </div>
   );
 }
