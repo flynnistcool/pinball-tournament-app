@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { realDbError } from "@/lib/dbErrors";
 
 async function handle(codeRaw: string) {
   const code = String(codeRaw ?? "").trim().toUpperCase();
@@ -17,6 +18,8 @@ async function handle(codeRaw: string) {
     .eq("code", code)
     .single();
 
+  const tDbErr = realDbError(tErr, "Turnier laden");
+  if (tDbErr) return NextResponse.json({ error: tDbErr }, { status: 500 });
   if (tErr || !t) {
     return NextResponse.json(
       { error: "Turnier nicht gefunden" },
@@ -25,18 +28,25 @@ async function handle(codeRaw: string) {
   }
 
   // 2) Runden laden
-  const { data: rounds } = await sb
+  const { data: rounds, error: rErr } = await sb
     .from("rounds")
     .select("id, tournament_id, number, format, status, elo_enabled")
     .eq("tournament_id", t.id)
     .order("format")
     .order("number");
 
+  // 🧯 Fehler NICHT als leere Liste ausgeben (sonst zeigt das Tablet ein leeres Turnier)
+  const rDbErr = realDbError(rErr, "Runden laden");
+  if (rDbErr) return NextResponse.json({ error: rDbErr }, { status: 500 });
+
   const roundIds = (rounds ?? []).map((r: any) => r.id);
 
   // 3) Spieler, Maschinen, Matches parallel laden
-  const [{ data: players }, { data: machines }, { data: matches }] =
-    await Promise.all([
+  const [
+    { data: players, error: plErr },
+    { data: machines, error: maErr },
+    { data: matches, error: mtErr },
+  ] = await Promise.all([
       sb
         .from("players")
         .select("id, name, active, profile_id")
@@ -55,8 +65,12 @@ async function handle(codeRaw: string) {
             )
             .in("round_id", roundIds)
             .order("created_at")
-        : Promise.resolve({ data: [] as any[] }),
+        : Promise.resolve({ data: [] as any[], error: null }),
     ]);
+
+  const listErr =
+    realDbError(plErr, "Spieler laden") ?? realDbError(maErr, "Flipper laden") ?? realDbError(mtErr, "Matches laden");
+  if (listErr) return NextResponse.json({ error: listErr }, { status: 500 });
 
     // 3b) Tasks für Matches laden (für Beschreibung)
     const taskIds = Array.from(
@@ -117,14 +131,17 @@ async function handle(codeRaw: string) {
   // 5) Match-Players
   const matchIds = (matches ?? []).map((m: any) => m.id);
 
-  const { data: match_players } = matchIds.length
+  const { data: match_players, error: mpErr } = matchIds.length
     ? await sb
         .from("match_players")
         // 👇 team ist wichtig für DYP (2vs2)
         .select("match_id, player_id, position, start_position, score, time_ms, team")
         .in("match_id", matchIds)
         .order("start_position", { ascending: true })
-    : { data: [] as any[] };
+    : { data: [] as any[], error: null };
+
+  const mpDbErr = realDbError(mpErr, "Scores/Plätze laden");
+  if (mpDbErr) return NextResponse.json({ error: mpDbErr }, { status: 500 });
 
   // 6) Response in der Struktur, die deine page.tsx erwartet
   return NextResponse.json({

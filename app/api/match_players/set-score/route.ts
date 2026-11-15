@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { realDbError } from "@/lib/dbErrors";
 import { entryAuthor, recordEntryChange } from "@/lib/entryLogServer";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,8 @@ export async function POST(req: Request) {
     .eq("code", code)
     .single();
 
+  const tDbErr = realDbError(tErr, "Turnier laden");
+  if (tDbErr) return NextResponse.json({ error: tDbErr }, { status: 500 });
   if (tErr || !t) return NextResponse.json({ error: "Turnier nicht gefunden" }, { status: 404 });
 
   // Match muss zu diesem Turnier gehören (via rounds)
@@ -53,6 +56,8 @@ export async function POST(req: Request) {
 
     
 
+  const mDbErr = realDbError(mErr, "Match laden");
+  if (mDbErr) return NextResponse.json({ error: mDbErr }, { status: 500 });
   if (mErr || !m) {
     return NextResponse.json(
       { error: "Match nicht gefunden (oder gehört nicht zum Turnier)" },
