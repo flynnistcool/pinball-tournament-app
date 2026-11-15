@@ -10331,6 +10331,9 @@ useEffect(() => {
 }, []);
 
   const [data, setData] = useState<any>(null);
+  // 🛡️ letzte vollständig geladene Turnierdaten + Hinweis, wenn ein Laden fehlschlägt
+  const lastGoodDataRef = useRef<any>(null);
+  const [loadWarning, setLoadWarning] = useState<{ text: string; at: number } | null>(null);
   const rounds = data?.rounds ?? [];
 
   const hasAtLeastOneFinishedRound = rounds.length > 0 && rounds.some((r: any) => r.status === "finished");
@@ -11563,19 +11566,37 @@ useEffect(() => {
 
 
 async function reload() {
-  const res = await fetch(`/api/tournaments/load?t=${Date.now()}`, {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    },
-    body: JSON.stringify({ code, _ts: Date.now() }),
-  });
+  // 🛡️ Fehlerantwort/Netzwerkfehler NICHT als Turnierdaten übernehmen (sonst Absturz der Seite):
+  // letzte gute Daten behalten und oben einen Hinweis zeigen.
+  let problem = "";
+  let next: any = null;
+  try {
+    const res = await fetch(`/api/tournaments/load?t=${Date.now()}`, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+      body: JSON.stringify({ code, _ts: Date.now() }),
+    });
+    const j = await res.json().catch(() => null);
+    next = j?.data ?? j;
+    const complete =
+      !!next?.tournament &&
+      ["players", "machines", "rounds", "matches", "match_players"].every((f) => Array.isArray(next?.[f]));
+    if (!res.ok || !complete) problem = String(j?.error ?? `Fehler ${res.status}`);
+  } catch {
+    problem = "keine Verbindung";
+  }
 
-  const j = await res.json();
-  const next = j.data ?? j;
+  if (problem) {
+    setLoadWarning({ text: problem, at: Date.now() });
+    return lastGoodDataRef.current;
+  }
 
+  lastGoodDataRef.current = next;
+  setLoadWarning(null);
   setData(next);
   return next;
 }
@@ -13202,7 +13223,14 @@ const tasksById = useMemo(() => {
 
   if (!data)
     return (
-      <div className="p-6 text-sm text-neutral-500">Lade Turnier…</div>
+      <div className="p-6 text-sm text-neutral-500">
+        Lade Turnier…
+        {loadWarning ? (
+          <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-red-700">
+            ⚠️ Turnier konnte nicht geladen werden ({loadWarning.text}) – neuer Versuch läuft automatisch.
+          </div>
+        ) : null}
+      </div>
     );
 
   const tournamentName = tournament?.name ?? name;
@@ -13236,6 +13264,14 @@ const tasksById = useMemo(() => {
 
   return (
     <div className="space-y-4">
+      {/* 🛡️ Laden fehlgeschlagen → letzte Ansicht bleibt stehen, Hinweis oben */}
+      {loadWarning ? (
+        <div className="fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+8px)] z-[90] w-[min(92vw,560px)] -translate-x-1/2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 shadow-lg">
+          ⚠️ Turnierdaten konnten gerade nicht geladen werden ({loadWarning.text}). Du siehst weiter den letzten
+          Stand – neuer Versuch läuft automatisch.
+          <span className="ml-1 text-xs text-red-500">({new Date(loadWarning.at).toLocaleTimeString("de-DE")})</span>
+        </div>
+      ) : null}
       {/* 🏆 Highscore-Jubel wie am TV – hier ohne Ton, Antippen schließt */}
       <RecordCelebration code={code} data={data} soundOn={false} dismissOnTap />
 

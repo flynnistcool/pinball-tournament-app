@@ -31,8 +31,8 @@ import BotEloBadge from "@/components/BotEloBadge";
 import { botEloOf } from "@/lib/myMatch";
 
 const POLL_MS = 6000;
-/** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 16 s → danach haben es alle gesehen) */
-const SAVE_COOLDOWN_MS = 20_000;
+/** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 12 s) */
+const SAVE_COOLDOWN_MS = 10_000;
 const fmt = new Intl.NumberFormat("de-DE");
 
 type Me = { playerId: string; name: string };

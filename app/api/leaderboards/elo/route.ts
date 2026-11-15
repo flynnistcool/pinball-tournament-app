@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
+import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 
 // Sorgt dafür, dass Next diese Route nicht statisch cached
 export const dynamic = "force-dynamic";
@@ -56,9 +57,9 @@ export async function GET() {
     const {
       data: players,
       error: playersError,
-    } = await supabase
-      .from("players")
-      .select("id, profile_id, tournament_id");
+    } = await fetchAllRows<{ id: string; profile_id: string | null; tournament_id: string | null }>(() =>
+      supabase.from("players").select("id, profile_id, tournament_id").order("id")
+    ); // >1000 Zeilen: seitenweise
 
     if (playersError) {
       console.error("playersError", playersError);
@@ -91,9 +92,9 @@ export async function GET() {
     const {
       data: matchPlayers,
       error: mpError,
-    } = await supabase
-      .from("match_players")
-      .select("match_id, player_id");
+    } = await fetchAllRows<{ match_id: string; player_id: string }>(() =>
+      supabase.from("match_players").select("match_id, player_id").order("match_id").order("player_id")
+    ); // >1000 Zeilen: seitenweise
 
     if (mpError) {
       console.error("matchPlayersError", mpError);
@@ -122,11 +123,19 @@ export async function GET() {
         // 3b) Start-Elo pro Profil über tournament_ratings bestimmen
     const profileIds = (profiles ?? []).map((p: any) => p.id as string);
 
-    const { data: ratingRows, error: ratingErr } = await supabase
-      .from("tournament_ratings")
-      .select("profile_id, rating_before, created_at")
-      .in("profile_id", profileIds)
-      .order("created_at", { ascending: false });
+    const { data: ratingRows, error: ratingErr } = await fetchAllIn<{
+      profile_id: string;
+      rating_before: number | null;
+      created_at: string;
+    }>(profileIds, (chunk) =>
+      supabase
+        .from("tournament_ratings")
+        .select("profile_id, rating_before, created_at")
+        .in("profile_id", chunk)
+        .order("created_at", { ascending: false })
+        .order("profile_id")
+        .order("tournament_id")
+    ); // >1000 Zeilen: seitenweise, je Profil bleibt die Reihenfolge (neueste zuerst)
 
     if (ratingErr) {
       console.error(

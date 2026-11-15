@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllRows } from "@/lib/supabaseChunks";
 
 // Sorgt dafür, dass Next diese Route NICHT vor-rendered/cached
 export const dynamic = "force-dynamic";
@@ -20,9 +21,14 @@ export async function GET() {
   }
 
   // 🔹 2) Turnierpunkte aus tournament_results laden
-  const { data: trRows, error: trError } = await sb
-    .from("tournament_results")
-    .select("tournament_points, players!inner(profile_id)");
+  //    (>1000 Zeilen: seitenweise laden, sonst fehlen still Turniere)
+  const { data: trRows, error: trError } = await fetchAllRows(() =>
+    sb
+      .from("tournament_results")
+      .select("tournament_points, players!inner(profile_id)")
+      .order("tournament_id")
+      .order("player_id")
+  );
 
   if (trError) {
     return NextResponse.json({ error: trError.message }, { status: 500 });

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllRows } from "@/lib/supabaseChunks";
 import { humanTournamentResults, loadStatsExclusions } from "@/lib/statsExclusions";
 import { loadTournamentPlayerCounts } from "@/lib/tournamentCounts";
 
@@ -42,6 +43,8 @@ export async function GET(req: Request) {
 
   // 1) Alle gespeicherten Turnier-Endergebnisse holen
   //    Nur für Turniere, die es noch gibt (inner join auf tournaments)
+  // (Filter-Aufbau als Funktion, damit seitenweise geladen werden kann – >1000 Zeilen)
+  const buildQuery = () => {
   let query = sb
     .from("tournament_results")
     .select(
@@ -91,7 +94,10 @@ export async function GET(req: Request) {
     query = query.lte("tournaments.created_at", `${to}T23:59:59`);
   }
 
-  const { data: results, error } = await query;
+  return query.order("tournament_id").order("player_id");
+  };
+
+  const { data: results, error } = await fetchAllRows(buildQuery);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
