@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { checkOwnerOrAdmin } from "@/lib/ownerAuth";
 
 // ✅ nicht cachen
 export const dynamic = "force-dynamic";
@@ -16,6 +17,10 @@ export async function POST(req: Request) {
   const value = info.length ? info : null;
 
   const sb = supabaseAdmin();
+
+  // 🔐 nur Admin oder das eigene verknüpfte Profil
+  const own = await checkOwnerOrAdmin(sb, id);
+  if (!own.ok) return NextResponse.json({ ok: false, error: own.error }, { status: own.status });
 
   const { data, error } = await sb
     .from("profiles")

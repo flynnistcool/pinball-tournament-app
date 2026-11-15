@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { checkOwnerOrAdmin, profileOfRun } from "@/lib/ownerAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,6 +20,12 @@ export async function POST(req: Request) {
 
     const ballNo = Number(ballNoRaw);
     if (!runId) return noStoreJson({ error: "runId fehlt" }, { status: 400 });
+
+    // 🔐 nur Admin oder das eigene verknüpfte Profil
+    {
+      const own = await checkOwnerOrAdmin(supabaseAdmin(), await profileOfRun(supabaseAdmin(), runId));
+      if (!own.ok) return noStoreJson({ error: own.error }, { status: own.status });
+    }
     if (!Number.isFinite(ballNo) || ballNo < 1) return noStoreJson({ error: "ballNo ungueltig" }, { status: 400 });
 
     const drainZone = body?.drainZone ? String(body.drainZone) : null;

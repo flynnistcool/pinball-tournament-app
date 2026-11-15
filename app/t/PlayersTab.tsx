@@ -1919,6 +1919,30 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
     const draft = drafts[id];
     if (!draft) return;
 
+    // ⭐ eigenes Profil (kein Admin): nur Farbe & Emoji speichern
+    if (!isAdmin) {
+      if (!isOwnerOfProfile(id)) return;
+      setSavingKey(id);
+      setError(null);
+      try {
+        const res = await fetch("/api/profiles/set-style", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, color: draft.color || null, icon: draft.icon || null }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok || !j?.ok) {
+          setError(j?.error ?? "Konnte Profil nicht speichern");
+          return;
+        }
+        await load();
+        setOpenId(null);
+      } finally {
+        setSavingKey(null);
+      }
+      return;
+    }
+
     const rating = Number(draft.rating || 1500);
     const provisionalMatches = Number(draft.provisional || 10);
     const resetMatchesPlayed = draft.resetMatchesPlayed === true;
@@ -1957,7 +1981,7 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
   // Info/Notizen speichern
   // ─────────────────────────────────────────────────────────
   async function saveInfo(profileId: string) {
-    if (!isAdmin) return;
+    if (!isAdmin && !isOwnerOfProfile(profileId)) return; // 🔐 Admin oder eigenes Profil
 
     const info = String(infoDraft[profileId] ?? "").trimEnd(); // End-Whitespace behalten wir nicht unnötig
     setInfoSaving((prev) => ({ ...prev, [profileId]: true }));
@@ -2539,6 +2563,22 @@ const headToHeadPanel =
     />
 
     <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2">
+      {myProfileId && profiles.some((x) => x.id === myProfileId) ? (
+        <Button
+          variant="secondary"
+          className="w-full sm:w-auto"
+          onClick={() => {
+            // ⭐ zum eigenen (verknüpften) Profil springen und aufklappen
+            setQ("");
+            if (openId !== myProfileId) openRow(myProfileId);
+            setTimeout(() => {
+              document.getElementById(`profile-card-${myProfileId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 50);
+          }}
+        >
+          ⭐ Mein Profil
+        </Button>
+      ) : null}
       <Button variant="secondary" disabled={busy} onClick={load} className="w-full sm:w-auto">
         Neu laden
       </Button>
@@ -3029,7 +3069,11 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
             return (
               <div
                 key={p.id}
-                className="rounded-xl border bg-white overflow-hidden"
+                id={`profile-card-${p.id}`}
+                className={
+                  "rounded-xl border bg-white overflow-hidden scroll-mt-24 " +
+                  (myProfileId === p.id ? "ring-2 ring-indigo-300" : "")
+                }
               >
                 {/* Kopfzeile */}
                 <button
@@ -3050,6 +3094,9 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
     <span className="truncate">{p.name}</span>
     {p.is_bot ? <BotBadge /> : null}
     {p.exclude_from_stats ? <PlaceholderBadge /> : null}
+    {myProfileId === p.id ? (
+      <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[11px] font-bold text-indigo-700">⭐ du</span>
+    ) : null}
 
     <span className="shrink-0 text-sm text-amber-600">
       {Number(p.total_tournament_points)} TP{" "}
@@ -3207,6 +3254,12 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                     {/* Tab: EDIT */}
                     {currentDetailTab === "edit" && (
                       <div className="space-y-3">
+                        {!isAdmin ? (
+                          <div className="rounded-xl bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                            ⭐ Dein Profil: Farbe und Emoji kannst du selbst ändern. Elo & Co. pflegt der Admin.
+                          </div>
+                        ) : null}
+                        {isAdmin ? (
                         <div className="grid gap-3 sm:grid-cols-3">
                           <div>
                             <label className="block text-xs font-medium text-neutral-600 mb-1">
@@ -3274,6 +3327,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                             </span>
                           </label>
                         </div>
+                        ) : null}
 
                         {/* Farbe & Icon Edit */}
                         <div className="grid gap-3 sm:grid-cols-3">
@@ -3346,19 +3400,24 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                           </div>
                         </div>
 
-                        <BotToggle
-                          checked={draft.isBot === true}
-                          onChange={(v) => updateDraftField(p.id, "isBot", v)}
-                          disabled={savingKey === p.id || !isAdmin}
-                        />
-                        <PlaceholderToggle
-                          checked={draft.excludeFromStats === true}
-                          onChange={(v) => updateDraftField(p.id, "excludeFromStats", v)}
-                          disabled={savingKey === p.id || !isAdmin}
-                        />
+                        {isAdmin ? (
+                          <>
+                            <BotToggle
+                              checked={draft.isBot === true}
+                              onChange={(v) => updateDraftField(p.id, "isBot", v)}
+                              disabled={savingKey === p.id || !isAdmin}
+                            />
+                            <PlaceholderToggle
+                              checked={draft.excludeFromStats === true}
+                              onChange={(v) => updateDraftField(p.id, "excludeFromStats", v)}
+                              disabled={savingKey === p.id || !isAdmin}
+                            />
+                          </>
+                        ) : null}
                      
                         {/* Aktionen: Löschen / Abbrechen / Speichern */}
                         <div className="mt-3 flex items-center justify-between gap-2">
+                          {isAdmin ? (
                           <Button
                             size="sm"
                             variant="secondary"
@@ -3368,6 +3427,9 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                           >
                             Löschen
                           </Button>
+                          ) : (
+                            <span />
+                          )}
                        
 
                           <div className="flex gap-2">
@@ -3403,7 +3465,8 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                     
                     {/* Tab: INFO */}
 {currentDetailTab === "info" && !p.is_bot && (() => {
-  const mode = infoMode[p.id] ?? (isAdmin ? "edit" : "preview");
+  const canEditInfo = isAdmin || isOwnerOfProfile(p.id); // 🔐 Admin oder eigenes Profil
+  const mode = infoMode[p.id] ?? (canEditInfo ? "edit" : "preview");
   const currentText = infoDraft[p.id] ?? (p.info ?? "");
   return (
     <div className="space-y-3">
@@ -3417,7 +3480,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
           </div>
 
           <div className="flex items-center gap-2">
-            {!isAdmin ? (
+            {!canEditInfo ? (
               <div className="text-[11px] text-neutral-400">nur Admin kann bearbeiten</div>
             ) : null}
 
@@ -3455,7 +3518,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
             Vorschau
           </div>
           {mdRender(currentText)}
-          {isAdmin ? (
+          {canEditInfo ? (
             <div className="mt-3 text-[11px] text-neutral-400">
               Tipp: Überschrift mit <span className="font-mono">##</span>, Liste mit <span className="font-mono">-</span>, fett mit <span className="font-mono">**text**</span>, Link mit <span className="font-mono">[text](url)</span>.
             </div>
@@ -3473,15 +3536,15 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
             onChange={(e) =>
               setInfoDraft((prev) => ({ ...prev, [p.id]: e.target.value }))
             }
-            disabled={!isAdmin || infoSaving[p.id]}
+            disabled={!canEditInfo || infoSaving[p.id]}
           />
           <div className="flex items-center justify-between gap-2">
             <div className="text-[11px] text-neutral-500">
-              {isAdmin ? "Wird im Profil gespeichert." : "Du kannst es lesen, aber nicht ändern."}
+              {canEditInfo ? "Wird im Profil gespeichert." : "Du kannst es lesen, aber nicht ändern."}
             </div>
             <Button
               size="sm"
-              disabled={!isAdmin || infoSaving[p.id]}
+              disabled={!canEditInfo || infoSaving[p.id]}
               onClick={() => saveInfo(p.id)}
             >
               {infoSaving[p.id] ? "Speichert…" : "Speichern"}

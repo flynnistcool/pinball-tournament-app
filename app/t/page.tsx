@@ -43,6 +43,8 @@ import ExtraballToggle, { ExtraballBadge } from "@/components/ExtraballToggle";
 import { botsAllowedInFormat, extraballForced, effectiveExtraball, eloAllowedInFormat } from "@/lib/botRules";
 import { formatAndPlayers, formatLabel as tournamentFormatLabel, participantsText } from "@/lib/formatLabel";
 import EloHistoryPanel from "@/components/EloHistoryPanel";
+import { useMyProfileId } from "@/components/useMyProfileId";
+import MyEntryButton from "@/components/MyEntryButton";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
 import { favoriteTitle, pickFavorite } from "@/lib/favorite";
@@ -868,6 +870,7 @@ function PlayersList({
   eloDeltas,
   eloShieldedByProfile, // ✅ NEU
   code, // 📱 für den QR-Knopf (Handy-Eingabe)
+  isAdmin, // 🔐 QR-Codes nur für Admins; Zuschauer sehen beim eigenen Spieler "Meine Eingabe"
 }: any) {
   const active = (players ?? []).filter((p: any) => p.active);
   const inactive = (players ?? []).filter((p: any) => !p.active);
@@ -992,8 +995,15 @@ const kBadgeClass =
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {code && !locked ? (
-                    <PlayerQrButton code={code} playerId={String(p.id)} name={String(p.name ?? "?")} />
+                  {code ? (
+                    isAdmin ? (
+                      !locked ? (
+                        <PlayerQrButton code={code} playerId={String(p.id)} name={String(p.name ?? "?")} />
+                      ) : null
+                    ) : (
+                      // 📱 Zuschauer (Seite ist für sie immer "gesperrt"): beim eigenen Spieler die eigene Handy-Eingabe
+                      <MyEntryButton code={code} variant="row" onlyPlayerId={String(p.id)} />
+                    )
                   ) : null}
 
                   <button
@@ -1272,6 +1282,7 @@ type TournamentSortKey =
 
 
 function MatchPlacementLeaderboard() {
+  const myProfileId = useMyProfileId(); // ⭐ eigene Zeile hervorheben
   const [rows, setRows] = useState<MatchPlacementRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1595,7 +1606,7 @@ function toggleOpen(profileId: string) {
                       <tr
                         className={
                           "border-b last:border-0 hover:bg-neutral-50/70 " +
-                          (id ? "cursor-pointer" : "cursor-default")
+                          (id ? "cursor-pointer" : "cursor-default") + (myProfileId && row.profileId === myProfileId ? " bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "")
                         }
                         onClick={() => {
                           if (!id) return;
@@ -1772,6 +1783,7 @@ function toggleOpen(profileId: string) {
 
 
 function LeaderboardsTab({ isAdmin }: { isAdmin: boolean }) {
+  const myProfileId = useMyProfileId(); // ⭐ eigene Zeile hervorheben
   const [subTab, setSubTab] = useState<
     "elo" | "tournaments" | "matches" | "highscores"
   >("elo");
@@ -2933,7 +2945,7 @@ async function loadMatchHistory() {
                       return (
                         <Fragment key={row.profileId}>
                         <tr
-                          className={"border-b last:border-0 cursor-pointer hover:bg-neutral-50/70 " + (eloOpen ? "bg-neutral-50" : "")}
+                          className={"border-b last:border-0 cursor-pointer hover:bg-neutral-50/70 " + (eloOpen ? "bg-neutral-50" : "") + (myProfileId && row.profileId === myProfileId ? " bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "")}
                           onClick={() => setOpenEloProfileId(eloOpen ? null : row.profileId)}
                           title="Klicken: Elo-Verlauf anzeigen"
                         >
@@ -3205,7 +3217,7 @@ async function loadMatchHistory() {
         <tr
           className={
             "border-b last:border-0 hover:bg-neutral-50/70 cursor-pointer " +
-            (isExpanded ? "bg-neutral-50/50" : "")
+            (isExpanded ? "bg-neutral-50/50" : "") + (myProfileId && row.profileId === myProfileId ? " bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "")
           }
 
   onClick={() => {
@@ -13823,6 +13835,7 @@ const tasksById = useMemo(() => {
         eloDeltas={eloDeltas} 
         eloShieldedByProfile={eloShieldedByProfile}  // ✅ HIER
         code={code}
+        isAdmin={isAdmin}
       />
       <div ref={tournamentLeaderboardRef} />
       <Stats code={code} tournamentName={tournamentName} />

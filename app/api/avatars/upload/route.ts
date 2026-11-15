@@ -1,13 +1,25 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { checkOwnerOrAdmin } from "@/lib/ownerAuth";
 
 export async function POST(req: Request) {
   const form = await req.formData();
   const profileId = String(form.get("profileId") ?? "").trim();
   const file = form.get("file") as File | null;
   if (!profileId || !file) return NextResponse.json({ error: "Fehlende Daten" }, { status: 400 });
+  // nur Bilder, höchstens 3 MB
+  if (!String(file.type || "").startsWith("image/")) {
+    return NextResponse.json({ ok: false, error: "Bitte ein Bild hochladen" }, { status: 400 });
+  }
+  if (file.size > 3 * 1024 * 1024) {
+    return NextResponse.json({ ok: false, error: "Bild ist zu groß (max. 3 MB)" }, { status: 400 });
+  }
 
   const sb = supabaseAdmin();
+
+  // 🔐 nur Admin oder das eigene verknüpfte Profil
+  const own = await checkOwnerOrAdmin(sb, profileId);
+  if (!own.ok) return NextResponse.json({ ok: false, error: own.error }, { status: own.status });
   const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
   const path = `${profileId}.${ext}`;
 

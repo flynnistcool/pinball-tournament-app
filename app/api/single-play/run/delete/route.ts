@@ -4,6 +4,7 @@ export const revalidate = 0;
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { checkOwnerOrAdmin } from "@/lib/ownerAuth";
 
 export async function POST(req: Request) {
   const resBase = NextResponse.json({ ok: true });
@@ -25,6 +26,12 @@ export async function POST(req: Request) {
         { error: "profileId fehlt" },
         { status: 400, headers: { "Cache-Control": "no-store" } }
       );
+    }
+
+    // 🔐 nur Admin oder das eigene verknüpfte Profil
+    {
+      const own = await checkOwnerOrAdmin(supabaseAdmin(), profileId);
+      if (!own.ok) return NextResponse.json({ error: own.error }, { status: own.status });
     }
 
     // ✅ WICHTIG: supabaseAdmin ist bei dir eine Funktion -> muss aufgerufen werden

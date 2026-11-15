@@ -53,6 +53,27 @@ export function ProfilePicker({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
+  // Liste wie im Spieler-Tab: alphabetisch, in Blöcken Spieler → Platzhalter → Bots
+  // (Überschriften nur, wenn es Platzhalter oder Bots gibt)
+  type Item = { kind: "header"; key: string; label: string; count: number } | { kind: "p"; p: Profile };
+  const items = useMemo<Item[]>(() => {
+    const byName = (a: Profile, b: Profile) => (a.name ?? "").localeCompare(b.name ?? "", "de", { sensitivity: "base" });
+    const bots = profiles.filter((x) => x.is_bot).sort(byName);
+    const placeholders = profiles.filter((x) => !x.is_bot && x.exclude_from_stats).sort(byName);
+    const humans = profiles.filter((x) => !x.is_bot && !x.exclude_from_stats).sort(byName);
+    const showHeaders = bots.length > 0 || placeholders.length > 0;
+    const out: Item[] = [];
+    const add = (key: string, label: string, list: Profile[]) => {
+      if (!list.length) return;
+      if (showHeaders) out.push({ kind: "header", key, label, count: list.length });
+      for (const x of list) out.push({ kind: "p", p: x });
+    };
+    add("humans", "👤 Spieler", humans);
+    add("placeholders", "🚫 Platzhalter / Testprofile", placeholders);
+    add("bots", "🤖 KI-Bots", bots);
+    return out;
+  }, [profiles]);
+
   const selected = useMemo(() => {
     const set = new Set(value);
     return profiles.filter((p) => set.has(p.id));
@@ -122,7 +143,20 @@ export function ProfilePicker({
       {open && !disabled && (
         <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border bg-white shadow-lg">
           <div className="max-h-64 overflow-y-auto py-1">
-            {profiles.map((p) => {
+            {items.map((item) => {
+              if (item.kind === "header") {
+                return (
+                  <div
+                    key={`hdr-${item.key}`}
+                    className="sticky top-0 z-10 flex items-center gap-2 bg-white/95 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500"
+                  >
+                    <span>{item.label}</span>
+                    <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">{item.count}</span>
+                    <span className="h-px flex-1 bg-neutral-200" />
+                  </div>
+                );
+              }
+              const p = item.p;
               const isAlready = disabledIds?.has(p.id) ?? false;
               const isBlocked = !isAlready && (blockedIds?.has(p.id) ?? false);
               const already = isAlready || isBlocked;

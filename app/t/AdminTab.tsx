@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@/components/ui";
 import BotLab from "@/components/BotLab";
+import UsersAdmin from "@/components/UsersAdmin";
 
 /**
  * Admin-only tab content.
@@ -32,6 +33,18 @@ export default function AdminTab() {
           Hier kommen Admin-Aktionen rein (z.B. neues Punktesystem übernehmen).
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="text-sm font-semibold">👥 Benutzer</div>
+          <div className="text-xs text-neutral-500">
+            Logins anlegen, Rollen verteilen (Admin / Zuschauer) und mit einem Spielerprofil verknüpfen.
+          </div>
+        </CardHeader>
+        <CardBody>
+          <UsersAdmin />
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { checkOwnerOrAdmin } from "@/lib/ownerAuth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,6 +20,12 @@ export async function POST(req: Request) {
 
     if (!profileId) return noStoreJson({ error: "profileId fehlt" }, { status: 400 });
     if (!machineId) return noStoreJson({ error: "machineId fehlt" }, { status: 400 });
+
+    // 🔐 nur Admin oder das eigene verknüpfte Profil
+    {
+      const own = await checkOwnerOrAdmin(supabaseAdmin(), profileId);
+      if (!own.ok) return noStoreJson({ error: own.error }, { status: own.status });
+    }
 
     const sb = supabaseAdmin();
 

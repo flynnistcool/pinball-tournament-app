@@ -6,6 +6,7 @@
 // wenn ein Turnier inzwischen beendet oder neu angelegt wurde.
 
 import { useEffect, useState } from "react";
+import MyEntryButton from "@/components/MyEntryButton";
 
 type ListedTournament = { id: string; code: string; name?: string | null; status?: string | null };
 
@@ -43,8 +44,10 @@ export default function LiveTvButton() {
   return (
     <div className="flex min-w-0 items-center gap-2">
       {running.slice(0, 3).map((t) => (
+        <span key={t.id} className="flex min-w-0 items-center gap-2">
+        {/* 📱 eigene Handy-Eingabe – nur wenn der Login in diesem Turnier mitspielt */}
+        <MyEntryButton code={t.code} variant="pill" />
         <a
-          key={t.id}
           href={`/s/${encodeURIComponent(t.code)}/tv`}
           target="_blank"
           rel="noopener noreferrer"
@@ -59,6 +62,7 @@ export default function LiveTvButton() {
           <span className="shrink-0">📺</span>
           <span className="max-w-[14ch] truncate">{t.name ?? t.code}</span>
         </a>
+        </span>
       ))}
     </div>
   );

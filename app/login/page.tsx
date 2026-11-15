@@ -49,8 +49,10 @@ export default function LoginPage() {
             </div>
             <Button disabled={busy} onClick={onLogin} className="w-full">Anmelden</Button>
             {msg && <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{msg}</div>}
-            <div className="text-xs text-neutral-500">
-              Hinweis: Admin-Account wird in Supabase Auth angelegt (Users → Add user).
+            <div className="text-center text-xs text-neutral-500">
+              Noch kein Konto?{" "}
+              <a href="/register" className="font-semibold text-blue-700 hover:underline">Registrieren</a>
+              {" "}– der Admin schaltet dich danach frei.
             </div>
           </div>
         </CardBody>
