@@ -200,6 +200,9 @@ import { EloSparkline, WinrateSparkline } from "@/components/charts";
 import { SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 import BotToggle, { BotBadge, PlaceholderToggle, PlaceholderBadge } from "@/components/BotToggle";
+import BotStatsCard from "@/components/BotStatsCard";
+import { GRADIENT_OPTIONS } from "@/lib/playerColor";
+import ColorPickerButton from "@/components/ColorPickerButton";
 import {Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
 const ACTION_COLORS = [
   "#ef4444",
@@ -386,6 +389,9 @@ const COLOR_OPTIONS = [
   "#facc15", // helles gelb
   "#4b5563", // dunkles grau
   "#14b8a6", // teal
+
+  // Reihe 3: 🎨 dezente Verläufe
+  ...GRADIENT_OPTIONS,
 ];
 
 
@@ -562,7 +568,7 @@ function Avatar({
     <div
       className="h-10 w-10 overflow-hidden rounded-xl border flex items-center justify-center text-sm font-semibold"
       style={{
-        backgroundColor: bgColor,
+        background: bgColor, // Farbe oder 🎨 Verlauf
         color: "#111827",
       }}
     >
@@ -570,9 +576,9 @@ function Avatar({
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt={name} className="h-full w-full object-cover" />
       ) : emoji ? (
-        <span className="text-base">{emoji}</span>
+        <span className="text-xl leading-none">{emoji}</span>
       ) : (
-        <span className="text-sm font-semibold text-neutral-900">
+        <span className="text-base font-semibold text-neutral-900">
           {initials || "?"}
         </span>
       )}
@@ -1498,6 +1504,27 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
     return profiles.filter((p) => (p.name ?? "").toLowerCase().includes(s));
   }, [profiles, q]);
 
+  // Liste alphabetisch, in Blöcken: Spieler → Platzhalter → Bots (Überschrift nur, wenn es Platzhalter/Bots gibt)
+  type ListItem = { kind: "header"; key: string; label: string; count: number } | { kind: "p"; p: Profile };
+  const groupedList = useMemo<ListItem[]>(() => {
+    const byName = (a: Profile, b: Profile) =>
+      (a.name ?? "").localeCompare(b.name ?? "", "de", { sensitivity: "base" });
+    const bots = filtered.filter((p) => p.is_bot).sort(byName);
+    const placeholders = filtered.filter((p) => !p.is_bot && p.exclude_from_stats).sort(byName);
+    const humans = filtered.filter((p) => !p.is_bot && !p.exclude_from_stats).sort(byName);
+    const out: ListItem[] = [];
+    const showHeaders = bots.length > 0 || placeholders.length > 0;
+    const add = (key: string, label: string, list: Profile[]) => {
+      if (!list.length) return;
+      if (showHeaders) out.push({ kind: "header", key, label, count: list.length });
+      for (const p of list) out.push({ kind: "p", p });
+    };
+    add("humans", "👤 Spieler", humans);
+    add("placeholders", "🚫 Platzhalter / Testprofile", placeholders);
+    add("bots", "🤖 KI-Bots", bots);
+    return out;
+  }, [filtered]);
+
   
   //const [busy, setBusy] = useState(false);
   //const [msg, setMsg] = useState<string | null>(null);
@@ -1964,7 +1991,42 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
   }
 
   async function deleteProfile(id: string, name: string) {
-    if (
+    // ⚠️ Hat das Profil schon gespielt? Dann lieber als 🚫 Platzhalter markieren statt löschen.
+    let usage: { tournaments: number; matches: number } | null = null;
+    try {
+      const r = await fetch(`/api/profiles/usage?id=${encodeURIComponent(id)}&ts=${Date.now()}`, { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.ok) usage = { tournaments: Number(j.tournaments) || 0, matches: Number(j.matches) || 0 };
+    } catch {
+      /* ohne Zählung weiter wie bisher */
+    }
+    const prof = profiles.find((x) => x.id === id);
+
+    if (usage && usage.tournaments > 0) {
+      const reallyDelete = confirm(
+        `⚠️ „${name}“ hat schon ${usage.tournaments} Turnier${usage.tournaments === 1 ? "" : "e"} (${usage.matches} Matches) gespielt.\n\n` +
+          `Löschen ist endgültig: Elo-Verlauf und Handy-Links werden gelöscht, in alten Turnieren bleibt nur der Name (ohne Profil).\n\n` +
+          `Tipp: Lieber als 🚫 Platzhalter markieren – dann zählt das Profil in keiner Statistik mehr, alte Turniere bleiben vollständig.\n\n` +
+          `OK = trotzdem endgültig löschen\nAbbrechen = nicht löschen`
+      );
+      if (!reallyDelete) {
+        if (!prof?.exclude_from_stats && !prof?.is_bot && confirm(`Stattdessen „${name}“ als 🚫 Platzhalter markieren?`)) {
+          try {
+            const r = await fetch("/api/profiles/set-placeholder", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id, excludeFromStats: true }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !j?.ok) setError(j?.error ?? "Konnte nicht als Platzhalter markieren");
+            else await load();
+          } catch {
+            setError("Netzwerkfehler – konnte nicht als Platzhalter markieren");
+          }
+        }
+        return;
+      }
+    } else if (
       !confirm(
         `Profil "${name}" wirklich löschen?\nDieser Vorgang kann nicht rückgängig gemacht werden.`
       )
@@ -2596,10 +2658,16 @@ const headToHeadPanel =
                               ? "ring-2 ring-offset-2 ring-neutral-900"
                               : "ring-0"
                           }`}
-                          style={{ backgroundColor: c }}
+                          style={{ background: c }}
                         />
                       );
                     })}
+                    <ColorPickerButton
+                      value={drafts["new"]?.color}
+                      presets={COLOR_OPTIONS}
+                      onChange={(c) => updateDraftField("new", "color", c)}
+                      disabled={savingKey === "new"}
+                    />
                     <button
                       type="button"
                       onClick={() => updateDraftField("new", "color", "")}
@@ -2669,8 +2737,23 @@ const headToHeadPanel =
             </div>
           )}
 
-          {/* Bestehende Spieler */}
-          {filtered.map((p) => {
+          {/* Bestehende Spieler (alphabetisch, Blöcke: Spieler → Platzhalter → Bots) */}
+          {groupedList.map((item) => {
+            if (item.kind === "header") {
+              return (
+                <div
+                  key={`hdr-${item.key}`}
+                  className="flex items-center gap-2 px-1 pt-3 text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                >
+                  <span>{item.label}</span>
+                  <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 text-[11px] font-semibold text-neutral-500">
+                    {item.count}
+                  </span>
+                  <span className="h-px flex-1 bg-neutral-200" />
+                </div>
+              );
+            }
+            const p = item.p;
             const isOpen = openId === p.id;
             const draft = drafts[p.id] ?? ensureDraft(p.id, p);
 
@@ -2955,11 +3038,12 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                   onClick={() => openRow(p.id)}
                 >
                   <div className="flex items-center gap-3 min-w-0 w-full">
+                    {/* beim Bearbeiten: Live-Vorschau von Farbe/Emoji (Abbrechen = alter Stand) */}
                     <Avatar
                       url={(p as any).avatar_url ?? null}
                       name={p.name}
-                      color={p.color}
-                      icon={p.icon}
+                      color={isOpen && currentDetailTab === "edit" && drafts[p.id] ? drafts[p.id].color || null : p.color}
+                      icon={isOpen && currentDetailTab === "edit" && drafts[p.id] ? drafts[p.id].icon || null : p.icon}
                     />
                     <div>
   <div className="text-base font-medium flex items-center gap-2 min-w-0">
@@ -3060,7 +3144,8 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
     Statistiken
   </button>
 
-{(isOwnerOfProfile(p.id) || isAdmin) &&  (
+{/* 🤖 Bots: kein Single Play und keine Info */}
+{(isOwnerOfProfile(p.id) || isAdmin) && !p.is_bot &&  (
   <button
     type="button"
     onClick={() => {
@@ -3077,7 +3162,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
   </button>
 )}
 
-{(isOwnerOfProfile(p.id) || isAdmin) &&  (
+{(isOwnerOfProfile(p.id) || isAdmin) && !p.is_bot &&  (
 
   <button
     type="button"
@@ -3216,11 +3301,17 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                                         ? "ring-2 ring-offset-2 ring-neutral-900"
                                         : "ring-0"
                                     }`}
-                                    style={{ backgroundColor: c }}
+                                    style={{ background: c }}
                                     disabled={savingKey === p.id}
                                   />
                                 );
                               })}
+                              <ColorPickerButton
+                                value={draft.color}
+                                presets={COLOR_OPTIONS}
+                                onChange={(c) => updateDraftField(p.id, "color", c)}
+                                disabled={savingKey === p.id}
+                              />
                               <button
                                 type="button"
                                 onClick={() =>
@@ -3311,7 +3402,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
 
                     
                     {/* Tab: INFO */}
-{currentDetailTab === "info" && (() => {
+{currentDetailTab === "info" && !p.is_bot && (() => {
   const mode = infoMode[p.id] ?? (isAdmin ? "edit" : "preview");
   const currentText = infoDraft[p.id] ?? (p.info ?? "");
   return (
@@ -3403,7 +3494,7 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
 })()}
 
 {/* Tab: SINGLE PLAY */}
-                    {currentDetailTab === "single" && (
+                    {currentDetailTab === "single" && !p.is_bot && (
                       <div className="space-y-3">
                         {/* Header */}
                         <div className="rounded-xl border bg-white p-3">
@@ -5481,8 +5572,13 @@ return (
 
                     
 {/* Tab: STATISTIKEN */}
-                    {currentDetailTab === "stats" && (
+                    {/* 🤖 Bots: nur ihre Bilanz gegen Menschen (sonst wird für Bots nichts gewertet) */}
+                    {currentDetailTab === "stats" && p.is_bot ? <BotStatsCard profileId={p.id} /> : null}
+
+                    {currentDetailTab === "stats" && !p.is_bot && (
                       <div className="space-y-3">
+                        {/* 🤖 Bilanz gegen die KI-Bots */}
+                        <BotStatsCard profileId={p.id} />
                         {/* Performance-Blöcke: Matches, Turniere, Super-Finale */}
                         <div className="grid gap-3 sm:grid-cols-3 mt-2">
                           {/* Matches-Block */}

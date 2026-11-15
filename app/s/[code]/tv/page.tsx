@@ -26,6 +26,10 @@ import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { liveEntriesFrom } from "@/lib/recordWatch";
+import BotEloBadge from "@/components/BotEloBadge";
+import { effectiveExtraball } from "@/lib/botRules";
+import { favoriteTitle, pickFavorite } from "@/lib/favorite";
+import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/PlayerQrWall";
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
@@ -39,7 +43,7 @@ type PbLookup = (playerId: string, machineName: string) => { before: number | nu
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
 // Ansichten (Tabs) mit Auto-Wechsel; Dauer je Ansicht
-type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race" | "players";
+type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race" | "players" | "qr";
 const TAB_DURATION_MS: Record<TvTab, number> = {
   current: 10000, // Aktuelle Runde (laufendes Turnier: ⇄ Verlauf)
   archive: 15000, // Alle Runden
@@ -49,6 +53,7 @@ const TAB_DURATION_MS: Record<TvTab, number> = {
   series: 16000, // 📊 Turnierserie (innen: Serie ⇄ Turniername)
   race: 10000, // 📈 Verlauf (Matchplay & Co.)
   players: 32000, // 🃏 Spielerkarten (blättert innen alle 8 s)
+  qr: 30000, // 📱 QR-Codes (nur per Antippen, nicht im Auto-Wechsel)
 };
 // Nach Turnierende schneller wechseln (Siegerehrung -> Superfinale -> Runden/Tabelle)
 const FINISHED_TAB_MS = 6000;
@@ -61,6 +66,7 @@ const TAB_LABEL: Record<TvTab, string> = {
   series: "📊 Turnierserie",
   race: "📈 Verlauf",
   players: "🃏 Spieler",
+  qr: "📱 QR-Codes",
 };
 
 const MACHINE_WR_REFRESH_MS = 60000; // Flipper-Winraten (über alle Turniere) nur 1x pro Minute laden
@@ -76,7 +82,8 @@ type MatchCardPlayer = {
   mCount: number; // Anzahl Matches für die Flipper-Winrate
   tTop: boolean; // höchster Wert im (laufenden) Match -> grün
   mTop: boolean;
-  favorite: boolean; // ★ meiste Bestwerte im laufenden Match (eindeutig)
+  favorite: boolean; // ★ Favorit im laufenden Match (lib/favorite.ts: Winrates, sonst Elo)
+  favoriteTitle?: string;
 };
 type MachineWr = { winrate: number | null; matchesPlayed: number };
 type MatchCard = {
@@ -134,7 +141,14 @@ const MAX_SCALE = 2; // bei wenigen Spielern darf vergrößert werden
 
 type Player = { id: string; name: string | null; active?: boolean; profile_id?: string | null };
 type Machine = { id: string; name: string | null; icon_emoji?: string | null };
-type Profile = { id: string; icon?: string | null; color?: string | null; rating?: number | null };
+type Profile = {
+  id: string;
+  icon?: string | null;
+  color?: string | null;
+  rating?: number | null;
+  is_bot?: boolean | null;
+  exclude_from_stats?: boolean | null;
+};
 type Round = {
   id: string;
   number: number;
@@ -159,6 +173,7 @@ type PublicTournament = {
     status?: string | null;
     match_size?: number | null;
     category?: string | null;
+    extraball?: boolean | null;
   };
   players?: Player[];
   profiles?: Profile[];
@@ -198,6 +213,7 @@ type Row = {
   place: number;
   eloStart: number | null; // Elo vor dem Turnier (tournament_ratings)
   eloNow: number | null; // aktuelle Elo im Profil (wird nach jeder fertigen Runde neu berechnet)
+  isBot?: boolean; // 🤖 KI-Bot (feste Elo)
   tp?: number | null; // Turnierpunkte heute (erst nach "Turnier beenden"), inkl. Superfinale-Bonus
   tpBonus?: number; // davon Superfinale-Bonus (für "+6 TP +2 🔥")
   streak?: number; // 🔥 Serie (nur laufendes Turnier, siehe lib/winStreaks.ts)
@@ -377,6 +393,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
         eloStart: p.profile_id != null ? startEloByProfile[p.profile_id] ?? null : null,
         eloNow:
           prof?.rating != null && Number.isFinite(Number(prof.rating)) ? Number(prof.rating) : null,
+        isBot: prof?.is_bot === true,
       };
     });
     rowsUnsorted.sort((a, b) => b.total - a.total || b.real - a.real || a.name.localeCompare(b.name));
@@ -566,6 +583,8 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     for (const mp of mps) (mpsByMatch[mp.match_id] ||= []).push(mp);
     const profileOf: Record<string, string> = {};
     for (const p of players) if (p.profile_id) profileOf[p.id] = p.profile_id;
+    const profileByIdMv: Record<string, Profile> = {};
+    for (const pr of data?.profiles ?? []) profileByIdMv[pr.id] = pr;
 
     // Turnier-Winrate je Spieler (wie /api/stats: Siege / gewertete Matches)
     const played: Record<string, number> = {};
@@ -635,9 +654,23 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             const mTop = !finished && b.mWin != null && b.mWin === maxM;
             return { ...b, tTop, mTop, greens: (tTop ? 1 : 0) + (mTop ? 1 : 0) };
           });
-          // ★ Favorit: meiste grüne Werte, nur wenn eindeutig (wie Admin)
-          const maxGreens = withTop.length ? Math.max(...withTop.map((b) => b.greens)) : 0;
-          const favCount = withTop.filter((b) => b.greens === maxGreens).length;
+          // ★ Favorit: gleiche Regel wie Admin (lib/favorite.ts)
+          const favRes = finished
+            ? null
+            : pickFavorite(
+                withTop
+                  .filter((b) => b.hasProfile)
+                  .map((b) => {
+                    const pr = profileByIdMv[profileOf[b.x.player_id] ?? ""];
+                    return {
+                      key: String(b.x.player_id),
+                      t: b.tWin,
+                      m: b.mWin,
+                      elo: pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Number(pr.rating) : null,
+                      placeholder: pr?.exclude_from_stats === true,
+                    };
+                  })
+              );
 
           return {
             matchId: m.id,
@@ -654,7 +687,8 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
               mCount: b.mCount,
               tTop: b.tTop,
               mTop: b.mTop,
-              favorite: !finished && maxGreens > 0 && favCount === 1 && b.greens === maxGreens,
+              favorite: !!favRes && favRes.key === String(b.x.player_id),
+              favoriteTitle: favRes && favRes.key === String(b.x.player_id) ? favoriteTitle(favRes) : undefined,
             })),
           };
         });
@@ -737,7 +771,14 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   );
   const hasRace = raceData.rounds.length > 0;
   const racePlayers: RacePlayer[] = useMemo(
-    () => view.rows.map((r) => ({ id: r.id, name: r.name, icon: r.icon, color: r.color })),
+    () =>
+      view.rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        icon: r.icon,
+        color: r.color,
+        ...(r.isBot ? { botElo: r.eloNow ?? r.eloStart } : {}), // 🤖
+      })),
     [view.rows]
   );
   // Rotation: Flippername unter der Rundennummer
@@ -767,6 +808,38 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     return r.before != null || r.today != null ? r : null;
   };
 
+  // 📱 QR-Codes der Spieler: nur wenn dieser Browser als Admin angemeldet ist (Admin-Schnittstelle)
+  const [qrLinks, setQrLinks] = useState<Record<string, string> | null>(null);
+  const qrPlayerKey = (data?.players ?? []).map((p) => p.id).join("|");
+  useEffect(() => {
+    if (!code) return;
+    let alive = true;
+    loadPlayerLinks(code).then((l) => {
+      if (alive) setQrLinks(l);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [code, qrPlayerKey]);
+  const qrPlayers: QrWallPlayer[] = useMemo(() => {
+    const profById = new Map((data?.profiles ?? []).map((pr) => [String(pr.id), pr]));
+    return (data?.players ?? [])
+      .filter((p) => {
+        const pr = p.profile_id ? profById.get(String(p.profile_id)) : undefined;
+        return !pr?.is_bot && !pr?.exclude_from_stats; // 🤖/🚫 keine Handy-Eingabe
+      })
+      .map((p) => {
+        const pr = p.profile_id ? profById.get(String(p.profile_id)) : undefined;
+        return {
+          id: String(p.id),
+          name: String(p.name ?? "?"),
+          icon: (pr?.icon ?? "").trim() || null,
+          color: pr?.color ?? null,
+        };
+      });
+  }, [data?.players, data?.profiles]);
+  const hasQr = !!qrLinks && qrPlayers.some((p) => !!qrLinks[p.id]);
+
   const tabs: TvTab[] = useMemo(() => {
     if (!data) return [];
     if (isFinished) {
@@ -784,8 +857,9 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     if (isMatchFormat && hasRace) t.push("race");
     if (hasSeries) t.push("series");
     t.push("players"); // 🃏 Spielerkarten (vorerst nur per Antippen)
+    if (hasQr) t.push("qr"); // 📱 QR-Codes (nur per Antippen, nur mit Admin-Anmeldung)
     return t.length > 1 ? t : [];
-  }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries, hasRace]);
+  }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries, hasRace, hasQr]);
 
   const [tvTab, setTvTab] = useState<TvTab>("current");
   const vtSupported = useViewTransitionSupport();
@@ -866,24 +940,28 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   // Auto-Wechsel: solange das Turnier läuft, die Turnierserie überspringen
   // (wichtig ist dann die Tabelle / wer wo spielt) – per Klick bleibt sie erreichbar
   //   Matchplay & Co.: nur Aktuelle Runde ⇄ Verlauf (je 10 s) – "Alle Runden" + Serie per Klick
-  const autoTabs: TvTab[] = isFinished
-    ? tabs.filter((t) => t !== "players")
-    : preStart
-    ? ["players"] // vor Runde 1: nur die Spielerkarten
-    : isMatchFormat
-    ? tabs.filter((t) => t === "current" || t === "race" || (betweenRounds && t === "players"))
-    : tabs.filter((t) => t !== "series" && (t !== "players" || betweenRounds));
+  const autoTabs: TvTab[] = (
+    isFinished
+      ? tabs.filter((t) => t !== "players")
+      : preStart
+      ? (["players"] as TvTab[]) // vor Runde 1: nur die Spielerkarten
+      : isMatchFormat
+      ? tabs.filter((t) => t === "current" || t === "race" || (betweenRounds && t === "players"))
+      : tabs.filter((t) => t !== "series" && (t !== "players" || betweenRounds))
+  ).filter((t) => t !== "qr"); // 📱 QR-Codes nie automatisch
   // vor Runde 1 direkt die Karten zeigen; startet Runde 1, sofort zur Runde wechseln
   useEffect(() => {
     if (!data) return;
     if (!autoTab) return;
-    if (preStart && tvTab !== "players") setTvTab("players");
-    else if (!preStart && !betweenRounds && !isFinished && tvTab === "players") {
+    // vor Runde 1: Startseite = 📱 QR-Codes (wenn als Admin angemeldet), sonst die Spielerkarten
+    const startTab: TvTab = hasQr ? "qr" : "players";
+    if (preStart && tvTab !== startTab) setTvTab(startTab);
+    else if (!preStart && !betweenRounds && !isFinished && (tvTab === "players" || tvTab === "qr")) {
       // Runde gestartet (erste oder nächste): Karten sofort verlassen, nicht erst nach Ablauf
       setTimeout(() => smoothSwitch(() => setTvTab(isMatchFormat ? "current" : "table")), 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, preStart, betweenRounds, autoTab]);
+  }, [data, preStart, betweenRounds, autoTab, hasQr]);
   useEffect(() => {
     if (!autoTab || autoTabs.length < 2) {
       setMainTimer(null);
@@ -1015,6 +1093,17 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                     nPlayers={Array.isArray(data?.players) ? data.players.length : 0}
                     showSuperFinal
                   />
+                ) : null}
+                {data ? (
+                  effectiveExtraball(format, data?.tournament?.extraball) ? (
+                    <span className="rounded-full bg-emerald-400/15 px-3 py-0.5 text-sm normal-case tracking-normal text-emerald-200 ring-1 ring-emerald-300/30">
+                      🎱 mit Extraball
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-white/10 px-3 py-0.5 text-sm normal-case tracking-normal text-white/60">
+                      <span className="mr-1 opacity-60 grayscale">🎱</span>ohne Extraball
+                    </span>
+                  )
                 ) : null}
               </div>
               {/* leading-normal + py: verhindert abgeschnittene Ober-/Unterlängen */}
@@ -1168,6 +1257,8 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             <div className="py-24 text-center text-2xl text-white/50">Lade Turnier …</div>
           ) : activeTab === "players" ? (
             <PlayerCardsTv code={code} />
+          ) : activeTab === "qr" && qrLinks ? (
+            <PlayerQrWall code={code} players={qrPlayers} links={qrLinks} />
           ) : isMatchFormat && matchView ? (
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
@@ -1231,7 +1322,7 @@ function PlayerAvatar({
       className={`inline-flex shrink-0 items-center justify-center rounded-full ring-2 ring-white/20 ${size} ${
         row.color ? "" : "bg-white/10"
       }`}
-      style={row.color ? { backgroundColor: row.color } : undefined}
+      style={row.color ? { background: row.color } : undefined}
     >
       {row.icon ? row.icon : <span className="text-[0.6em] font-bold text-white/80">{initials(row.name)}</span>}
     </span>
@@ -1242,6 +1333,14 @@ function PlayerAvatar({
 // - immer die Elo vom Turnierstart
 // - bei Elo an und Veränderung: Start → aktuell (+/-Differenz), live nach jeder fertigen Runde
 function EloLine({ row, eloOn }: { row: Row; eloOn: boolean }) {
+  // 🤖 Bots: feste Elo → Abzeichen statt Elo-Verlauf
+  if (row.isBot) {
+    return (
+      <div className="mt-0.5">
+        <BotEloBadge variant="tv" elo={row.eloNow ?? row.eloStart} />
+      </div>
+    );
+  }
   const start = row.eloStart != null ? Math.round(row.eloStart) : null;
   const now = row.eloNow != null ? Math.round(row.eloNow) : null;
   const base = start ?? now; // vor der ersten Runde gibt es evtl. noch keinen Startwert
@@ -1591,6 +1690,7 @@ function MatchTvView({
                     <span key={id} className="flex items-center gap-2 font-semibold">
                       <PlayerAvatar row={r} size="h-8 w-8 text-base" />
                       {r.name}
+                      {r.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} /> : null}
                     </span>
                   ) : null;
                 })}
@@ -1812,10 +1912,20 @@ function MatchCardView({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-lg font-bold">{r.name}</span>
+                  {r.isBot ? (
+                    <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} className="text-sm" />
+                  ) : (r.eloNow ?? r.eloStart) != null ? (
+                    <span className="shrink-0 text-sm font-normal tabular-nums text-white/40">
+                      Elo {Math.round((r.eloNow ?? r.eloStart) as number)}
+                    </span>
+                  ) : null}
                   <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
                   {p.favorite ? (
-                    <span className="text-lg text-amber-300 drop-shadow-[0_0_6px_rgba(251,191,36,0.7)]" title="Favorit">
-                      ★
+                    <span
+                      className="inline-flex shrink-0 items-center rounded-full bg-amber-400/20 px-2.5 py-0.5 text-sm font-bold text-amber-200 ring-1 ring-amber-300/60 drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]"
+                      title={p.favoriteTitle ?? "Favorit"}
+                    >
+                      ★ Favorit
                     </span>
                   ) : null}
                 </div>
@@ -1917,6 +2027,7 @@ function ArchiveView({ blocks, rowById }: { blocks: RoundBlock[]; rowById: Recor
                               {p.position ?? "–"}
                             </span>
                             <span className="font-semibold">{r?.name ?? "?"}</span>
+                            {r?.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} /> : null}
                           </span>
                         );
                       })}
@@ -2107,9 +2218,12 @@ function PodiumStep({
 
 /** Siegerpodest Hauptturnier: Top 3 nach Punkten (wie Leaderboard), darunter Platz 4–6 */
 function PodiumView({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
+  // Sobald irgendwer Punkte hat, stehen auch Plätze mit 0 Punkten auf dem Podest
+  // (z. B. Platz 3 mit 0 Punkten bei 3 Spielern) – vorher fehlte der Spieler dann ganz.
+  const anyScored = rows.some((r) => r.real > 0);
   const byPlace = (pl: number): PodiumEntry[] =>
     rows
-      .filter((r) => r.place === pl && r.real > 0)
+      .filter((r) => r.place === pl && (r.real > 0 || anyScored))
       .map((r) => ({
         key: r.id,
         row: r,
@@ -2150,6 +2264,7 @@ function PodiumView({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
               <span className="text-xl font-extrabold text-white/50">{r.place}.</span>
               <PlayerAvatar row={r} size="h-9 w-9 text-lg" />
               <span className="text-xl font-bold">{r.name}</span>
+              {r.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} /> : null}
               <span className="text-lg tabular-nums text-white/60">{r.real} P</span>
             </div>
           ))}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { humanTournamentResults, loadStatsExclusions } from "@/lib/statsExclusions";
+import { loadTournamentPlayerCounts } from "@/lib/tournamentCounts";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -65,7 +66,8 @@ export async function GET(req: Request) {
         category,
         name,
         status,
-        created_at
+        created_at,
+        format
       )
     `
     )
@@ -115,25 +117,31 @@ export async function GET(req: Request) {
   // Bot-/Platzhalter-Profil selbst: eigene Ergebnisse unverändert zeigen (echter Platz)
   const exSelf = profileId ? await loadStatsExclusions(sb) : null;
   const showRaw = !!(profileId && exSelf && exSelf.excludedProfileIds.has(String(profileId)));
+  // 👤 Teilnehmerzahl je Turnier
+  const exCounts = exSelf ?? (await loadStatsExclusions(sb));
+  const countsByT = await loadTournamentPlayerCounts(sb, tIds, exCounts);
+
   const rows = (data ?? []).filter((r: any) => showRaw || keep.has(`${r.tournament_id}|${r.player_id}`)).map((r: any) => ({
     tournament_id: r.tournament_id,
     tournament_code: r.tournaments?.code ?? null,
     tournament_name: r.tournaments?.name ?? null,
     tournament_category: r.tournaments?.category ?? null,
     created_at: r.tournaments?.created_at ?? null,
+    tournament_format: r.tournaments?.format ?? null,
+    humans_count: countsByT.get(String(r.tournament_id))?.humans ?? 0,
+    placeholders_count: countsByT.get(String(r.tournament_id))?.placeholders ?? 0,
+    bots_count: countsByT.get(String(r.tournament_id))?.bots ?? 0,
     final_rank: showRaw ? r.final_rank ?? null : keep.get(`${r.tournament_id}|${r.player_id}`) ?? r.final_rank ?? null,
     tournament_points: r.tournament_points ?? 0,
     super_final_rank: r.super_final_rank ?? null, // für Aufschlüsselung "6 TP + 2 🔥"
   }));
 
-  // Sortierung: Punkte desc, bei Gleichstand neuestes zuerst
+  // Sortierung: neuestes Turnier zuerst, bei gleichem Datum mehr Punkte zuerst
   rows.sort((a: any, b: any) => {
-    if ((b.tournament_points ?? 0) !== (a.tournament_points ?? 0)) {
-      return (b.tournament_points ?? 0) - (a.tournament_points ?? 0);
-    }
     const ad = a.created_at ? Date.parse(a.created_at) : 0;
     const bd = b.created_at ? Date.parse(b.created_at) : 0;
-    return bd - ad;
+    if (bd !== ad) return bd - ad;
+    return (b.tournament_points ?? 0) - (a.tournament_points ?? 0);
   });
 
   return NextResponse.json(

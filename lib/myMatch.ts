@@ -29,7 +29,14 @@ export type MmData = {
   matches: MmMatch[];
   match_players: MmMatchPlayer[];
   /** Profil-Optik + aktuelle Elo (aus /api/public/tournament) */
-  profiles?: { id: string; icon?: string | null; color?: string | null; rating?: number | null }[];
+  profiles?: {
+    id: string;
+    icon?: string | null;
+    color?: string | null;
+    rating?: number | null;
+    is_bot?: boolean | null;
+    exclude_from_stats?: boolean | null;
+  }[];
   /** Elo beim Turnierstart */
   start_ratings?: { profile_id: string; rating_before: number | null }[];
 };
@@ -222,6 +229,8 @@ export type LiveRow = {
   color: string | null;
   eloStart: number | null;
   eloNow: number | null;
+  /** 🤖 KI-Bot (feste Elo) */
+  isBot?: boolean;
   /** Punkte pro Runde (für die kleinen Balken) */
   history: { round: number; points: number }[];
 };
@@ -294,6 +303,7 @@ export function liveLeaderboard(data: MmData): { rows: LiveRow[]; roundPointsMax
       color: prof?.color ?? null,
       eloStart: p.profile_id ? startElo.get(String(p.profile_id)) ?? null : null,
       eloNow: now,
+      isBot: prof?.is_bot === true,
       history: history[p.id] ?? [],
     };
   });
@@ -303,4 +313,12 @@ export function liveLeaderboard(data: MmData): { rows: LiveRow[]; roundPointsMax
     r.place = prev && prev.total === r.total ? prev.place : i + 1;
   });
   return { rows, roundPointsMax, eloOn };
+}
+
+/** 🤖 Elo eines Bots (Spieler-ID) – undefined = kein Bot */
+export function botEloOf(data: MmData, playerId: string): number | null | undefined {
+  const p = data.players.find((x) => String(x.id) === String(playerId));
+  const prof = p?.profile_id ? (data.profiles ?? []).find((x) => String(x.id) === String(p.profile_id)) : undefined;
+  if (!prof?.is_bot) return undefined;
+  return prof.rating != null && Number.isFinite(Number(prof.rating)) ? Number(prof.rating) : null;
 }

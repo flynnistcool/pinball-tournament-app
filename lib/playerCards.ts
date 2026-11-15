@@ -8,6 +8,8 @@ export type CardProfile = {
   icon: string | null;
   color: string | null;
   rating: number | null;
+  /** 🤖 KI-Bot */
+  is_bot?: boolean | null;
 };
 
 export type CardInput = {
@@ -42,6 +44,8 @@ export type PlayerCard = {
   icon: string | null;
   color: string | null;
   elo: number | null;
+  /** 🤖 KI-Bot (feste Elo) */
+  isBot?: boolean;
   /** Elo-Rang unter den Spielern dieses Turniers (1 = Favorit), null ohne Elo */
   eloRank: number | null;
   eloRankOf: number;
@@ -176,6 +180,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
       icon: prof?.icon ?? null,
       color: prof?.color ?? null,
       elo,
+      isBot: prof?.is_bot === true,
       eloRank: rankOf(elo),
       eloRankOf: ratings.length,
       tournaments: a?.tournaments.size ?? 0,

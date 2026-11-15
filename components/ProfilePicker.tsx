@@ -6,6 +6,8 @@ type Profile = {
   icon?: string | null; // z.B. "😎"
   color?: string | null; // z.B. "#0ea5e9"
   is_bot?: boolean | null; // 🤖 KI-Bot
+  rating?: number | null; // Elo (bei Bots: feste Stärke)
+  exclude_from_stats?: boolean | null; // 🚫 Platzhalter/Testprofil
 };
 
 function initials(name: string) {
@@ -18,7 +20,7 @@ function Avatar({ p }: { p: Profile }) {
   return (
     <span
       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs"
-      style={p.color ? { backgroundColor: p.color } : {}}
+      style={p.color ? { background: p.color } : {}}
     >
       {(p.icon ?? "").trim() || initials(p.name)}
     </span>
@@ -154,7 +156,27 @@ export function ProfilePicker({
                   </span>
                   <Avatar p={p} />
                   <span className="truncate">{p.name}</span>
-                  {p.is_bot ? <span className="shrink-0 text-xs" title="KI-Bot">🤖</span> : null}
+                  {p.is_bot ? (
+                    <span
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700"
+                      title="KI-Bot mit fester Elo"
+                    >
+                      🤖 Bot{typeof p.rating === "number" ? ` · ${Math.round(p.rating)}` : ""}
+                    </span>
+                  ) : null}
+                  {!p.is_bot && typeof p.rating === "number" ? (
+                    <span className="shrink-0 text-[11px] tabular-nums text-neutral-400" title="Elo">
+                      {Math.round(p.rating)}
+                    </span>
+                  ) : null}
+                  {p.exclude_from_stats ? (
+                    <span
+                      className="inline-flex shrink-0 items-center rounded-full bg-neutral-200 px-1.5 py-0.5 text-[11px] font-semibold text-neutral-600"
+                      title="Platzhalter-/Testprofil – zählt nicht für Statistiken"
+                    >
+                      🚫 Platzhalter
+                    </span>
+                  ) : null}
                   {isAlready && <span className="ml-auto shrink-0 text-xs text-neutral-500">schon dabei</span>}
                   {isBlocked && <span className="ml-auto shrink-0 text-xs text-neutral-500">{blockedLabel}</span>}
                 </button>

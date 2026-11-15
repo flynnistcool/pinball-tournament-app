@@ -27,6 +27,8 @@ import {
   type MyMatchInfo,
 } from "@/lib/myMatch";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
+import BotEloBadge from "@/components/BotEloBadge";
+import { botEloOf } from "@/lib/myMatch";
 
 const POLL_MS = 6000;
 /** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 16 s → danach haben es alle gesehen) */
@@ -359,6 +361,9 @@ function MatchCard({ info, data, meId, title }: { info: MyMatchInfo; data: MmDat
               <span className="w-5 text-xs text-neutral-400">{i + 1}.</span>
               <span className="min-w-0 flex-1 truncate font-semibold">
                 {nameOf(data, mp.player_id)}
+                {botEloOf(data, mp.player_id) !== undefined ? (
+                  <BotEloBadge elo={botEloOf(data, mp.player_id)} className="ml-1.5 align-middle text-[10px]" />
+                ) : null}
                 {isMe ? <span className="ml-1 text-xs font-normal text-indigo-600">(du)</span> : null}
               </span>
               {s != null ? <span className="tabular-nums text-sm text-neutral-600">{fmt.format(s)}</span> : null}
@@ -425,6 +430,8 @@ function EntryCard({
   const canEditRow = (pid: string) =>
     mode === "full" || mode === "score" || (mode === "own" && String(pid) === String(me.playerId));
   const canPositions = mode === "full";
+  // 🤖 Match mit Bot: Platz ergibt sich nur aus den Scores (keine Platz-Knöpfe, Plätze kommen automatisch)
+  const matchHasBot = info.players.some((x) => botEloOf(data, String(x.player_id)) !== undefined);
 
   const savedOf = (pid: string): Seen => {
     const mp = info.players.find((x) => String(x.player_id) === String(pid));
@@ -608,6 +615,9 @@ function EntryCard({
                   <span className="w-5 text-xs text-neutral-400">{i + 1}.</span>
                   <span className="min-w-0 flex-1 truncate text-base font-bold">
                     {nameOf(data, pid)}
+                    {botEloOf(data, pid) !== undefined ? (
+                      <BotEloBadge elo={botEloOf(data, pid)} className="ml-1.5 align-middle text-[10px]" />
+                    ) : null}
                     {isMe ? <span className="ml-1 text-xs font-normal text-indigo-600">(du)</span> : null}
                   </span>
                   {!editable && saved.score != null ? (
@@ -627,7 +637,7 @@ function EntryCard({
                   </div>
                 ) : null}
 
-                {canPositions ? (
+                {canPositions && !matchHasBot ? (
                   <div className="mt-2 flex items-center gap-1.5 pl-7">
                     <span className="mr-1 text-xs text-neutral-500">Platz</span>
                     {Array.from({ length: n }, (_, k) => k + 1).map((p) => {
@@ -674,7 +684,9 @@ function EntryCard({
         </div>
       ) : (
         <div className="rounded-xl bg-white/70 px-3 py-2 text-xs text-neutral-500">
-          {mode === "own"
+          {matchHasBot && mode === "full"
+            ? "🤖 Mit Bot: Bitte deinen Score eintragen – die Plätze ergeben sich automatisch aus den Scores (der Bot spielt über den Admin)."
+            : mode === "own"
             ? "💡 Trag nach deinem Spiel deinen Score ein."
             : mode === "score"
             ? "💡 Tipp: Der Gewinner trägt die Scores aller Spieler ein. Die Plätze kommen automatisch."
@@ -800,7 +812,7 @@ function Avatar({ name, icon, color }: { name: string; icon: string | null; colo
         "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg ring-2 ring-white " +
         (color ? "" : "bg-neutral-200")
       }
-      style={color ? { backgroundColor: color } : undefined}
+      style={color ? { background: color } : undefined}
     >
       {icon ? icon : <span className="text-[11px] font-bold text-neutral-600">{initials(name)}</span>}
     </span>
@@ -907,7 +919,11 @@ function BoardTab({ data, meId }: { data: MmData; meId: string }) {
                   ) : null}
                   <StreakFire n={streaks[r.id]} mode={sMode} />
                 </div>
-                <EloText start={r.eloStart} now={r.eloNow} eloOn={eloOn} />
+                {r.isBot ? (
+                  <BotEloBadge elo={r.eloNow ?? r.eloStart} className="text-[10px]" />
+                ) : (
+                  <EloText start={r.eloStart} now={r.eloNow} eloOn={eloOn} />
+                )}
               </div>
               <div className="shrink-0" title="Punkte pro Runde">
                 <RoundPointsBars items={r.history} scaleMax={roundPointsMax} width={64} height={22} />

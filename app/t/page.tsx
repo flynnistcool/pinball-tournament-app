@@ -41,7 +41,11 @@ import AnnouncerAvatar from "@/components/AnnouncerAvatar";
 import CreateTournamentForm from "@/components/CreateTournamentForm";
 import ExtraballToggle, { ExtraballBadge } from "@/components/ExtraballToggle";
 import { botsAllowedInFormat, extraballForced, effectiveExtraball, eloAllowedInFormat } from "@/lib/botRules";
+import { formatAndPlayers, formatLabel as tournamentFormatLabel, participantsText } from "@/lib/formatLabel";
+import EloHistoryPanel from "@/components/EloHistoryPanel";
 import BotScoreButtons from "@/components/BotScoreButtons";
+import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
+import { favoriteTitle, pickFavorite } from "@/lib/favorite";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
@@ -479,6 +483,12 @@ type PlayerVisual = {
   avatarUrl?: string | null;
   /** 🤖 KI-Bot */
   isBot?: boolean;
+  /** 🤖 feste Elo des Bots */
+  botElo?: number | null;
+  /** aktuelle Elo (für den ★ Favoriten) */
+  elo?: number | null;
+  /** 🚫 Platzhalter/Testprofil */
+  isPlaceholder?: boolean;
 };
 
 type EloLeaderboardEntry = {
@@ -548,7 +558,7 @@ function PlayerPill({ player }: { player: PlayerVisual }) {
       .join("") || "?";
 
   const emoji = (player.icon ?? "").trim();
-  const bgStyle = player.color ? { backgroundColor: player.color } : {};
+  const bgStyle = player.color ? { background: player.color } : {}; // Farbe oder 🎨 Verlauf
 
   return (
     <div className="flex items-center gap-2 min-w-0">
@@ -922,7 +932,7 @@ const kBadgeClass =
                       <div className="flex items-center gap-2 min-w-0">
                         <PlayerPill player={pv} />
 
-                        {typeof k === "number" && (
+                        {typeof k === "number" && !prof?.is_bot && !prof?.exclude_from_stats && (
                           <span
                             className={
                               "shrink-0 rounded-full border px-2 py-[1px] text-[11px] font-bold tabular-nums " +
@@ -968,6 +978,15 @@ const kBadgeClass =
                       🛡
                     </span>
                   )}
+
+                  {/* 🤖 Bot / 🚫 Platzhalter (statt K-Faktor) – hinter der Elo */}
+                  {prof?.is_bot ? (
+                    <BotBadge className="ml-1" />
+                  ) : prof?.exclude_from_stats ? (
+                    <span className="ml-1">
+                      <PlaceholderBadge />
+                    </span>
+                  ) : null}
 
                 </div>
 
@@ -1600,6 +1619,11 @@ function toggleOpen(profileId: string) {
         avatarUrl: row.avatar_url ?? null,
       }}
     />
+    {typeof row.elo === "number" ? (
+      <span className="shrink-0 text-[11px] tabular-nums text-neutral-400" title="aktuelle Elo">
+        Elo {Math.round(row.elo)}
+      </span>
+    ) : null}
 
         {/* 🔽 Pfeil rechts (nur wenn profileId vorhanden) */}
     {id ? (
@@ -1691,6 +1715,9 @@ function toggleOpen(profileId: string) {
                     {cat ?? "—"}
                     {dt ? ` • ${dt}` : ""}
                   </span>
+                  <span className="text-[11px] text-neutral-400">
+                    {formatAndPlayers(d.tournamentFormat, d.humansCount, d.placeholdersCount, d.botsCount)}
+                  </span>
                 </div>
               </td>
 
@@ -1750,6 +1777,8 @@ function LeaderboardsTab({ isAdmin }: { isAdmin: boolean }) {
 
   // --- Elo ---
   const [eloRows, setEloRows] = useState<EloLeaderboardEntry[]>([]);
+  // 📈 aufgeklappter Spieler im Elo-Leaderboard (zeigt seinen Elo-Verlauf)
+  const [openEloProfileId, setOpenEloProfileId] = useState<string | null>(null);
   const [eloLoading, setEloLoading] = useState(false);
   const [eloError, setEloError] = useState<string | null>(null);
 
@@ -2230,6 +2259,7 @@ type HighscoreMachine = {
     player: string;
     tournament: string;
     tournamentCreatedAt?: string | null; // ✅ HIER rein
+    tournamentFormat?: string | null;
   }>;
 };
 
@@ -2898,10 +2928,13 @@ async function loadMatchHistory() {
                           : "text-red-600"
                         : "text-neutral-400";
 
+                      const eloOpen = openEloProfileId === row.profileId;
                       return (
+                        <Fragment key={row.profileId}>
                         <tr
-                          key={row.profileId}
-                          className="border-b last:border-0 hover:bg-neutral-50/70"
+                          className={"border-b last:border-0 cursor-pointer hover:bg-neutral-50/70 " + (eloOpen ? "bg-neutral-50" : "")}
+                          onClick={() => setOpenEloProfileId(eloOpen ? null : row.profileId)}
+                          title="Klicken: Elo-Verlauf anzeigen"
                         >
       <td className="py-1 pr-2 text-sm tabular-nums text-neutral-500 text-left">
         {medal ? (
@@ -2920,6 +2953,11 @@ async function loadMatchHistory() {
                                   avatarUrl: row.avatar_url ?? null,
                                 }}
                               />
+                              <span
+                                className={"text-[10px] text-neutral-400 transition-transform " + (eloOpen ? "rotate-180" : "")}
+                              >
+                                ▾
+                              </span>
                             </div>
                           </td>
                           <td className="py-1 pr-2 text-right tabular-nums font-semibold">
@@ -2946,6 +2984,14 @@ async function loadMatchHistory() {
                             {row.matchesPlayed}
                           </td>
                         </tr>
+                        {eloOpen ? (
+                          <tr className="border-b bg-neutral-50">
+                            <td colSpan={6} className="px-2 py-2">
+                              <EloHistoryPanel profileId={row.profileId} />
+                            </td>
+                          </tr>
+                        ) : null}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -3280,7 +3326,7 @@ async function loadMatchHistory() {
           <tr className="text-left text-[11px] text-neutral-500 border-b">
             <th className="py-1 pr-2">Turnier</th>
             <th className="py-1 pr-2">Kategorie</th>
-            <th className="py-1 pr-2">Code</th>
+            <th className="py-1 pr-2">Format</th>
             <th className="py-1 pr-2">Datum</th>
             <th className="py-1 pr-2 text-right">Platz</th>
             <th className="py-1 pr-2 text-right">Punkte</th>
@@ -3296,8 +3342,13 @@ async function loadMatchHistory() {
               <td className="py-1 pr-2 text-neutral-600">
                 {s.tournament_category ?? "—"}
               </td>
-              <td className="py-1 pr-2 tabular-nums text-neutral-500">
-                {s.tournament_code ?? "—"}
+              <td className="py-1 pr-2 whitespace-nowrap text-neutral-500">
+                {tournamentFormatLabel(s.tournament_format)}
+                {s.humans_count || s.placeholders_count || s.bots_count ? (
+                  <span className="text-neutral-400">
+                    {" "}• {participantsText(s.humans_count, s.placeholders_count, s.bots_count)}
+                  </span>
+                ) : null}
               </td>
               <td className="py-1 pr-2 text-neutral-500">
                 {s.created_at
@@ -3340,7 +3391,7 @@ async function loadMatchHistory() {
             <tr className="text-left text-[11px] text-neutral-500 border-b">
               <th className="py-1 pr-2">Turnier</th>
               <th className="py-1 pr-2">Kategorie</th>
-              <th className="py-1 pr-2">Code</th>
+              <th className="py-1 pr-2">Format</th>
               <th className="py-1 pr-2">Datum</th>
               <th className="py-1 pr-2 text-right">Platz</th>
               <th className="py-1 pr-2 text-right">Punkte</th>
@@ -3356,8 +3407,13 @@ async function loadMatchHistory() {
                 <td className="py-1 pr-2 text-neutral-600">
                   {s.tournament_category ?? "—"}
                 </td>
-                <td className="py-1 pr-2 tabular-nums text-neutral-500">
-                  {s.tournament_code ?? "—"}
+                <td className="py-1 pr-2 whitespace-nowrap text-neutral-500">
+                  {tournamentFormatLabel(s.tournament_format)}
+                {s.humans_count || s.placeholders_count || s.bots_count ? (
+                  <span className="text-neutral-400">
+                    {" "}• {participantsText(s.humans_count, s.placeholders_count, s.bots_count)}
+                  </span>
+                ) : null}
                 </td>
                 <td className="py-1 pr-2 text-neutral-500">
                   {s.created_at
@@ -3482,7 +3538,7 @@ async function loadMatchHistory() {
               <th className="py-1 pr-2">Spieler</th>
               <th className="py-1 pr-2">Turnier</th>
               <th className="py-1 pr-2">Kategorie</th>
-              <th className="py-1 pr-2">Code</th>
+              <th className="py-1 pr-2">Format</th>
               <th className="py-1 pr-2">Datum</th>
               <th className="py-1 pr-2 text-right">Platz</th>
               <th className="py-1 pr-2 text-right">Punkte</th>
@@ -3508,7 +3564,14 @@ async function loadMatchHistory() {
                   </td>
                   <td className="py-1 pr-2">{s.tournament_name ?? "—"}</td>
                   <td className="py-1 pr-2 text-neutral-600">{s.tournament_category ?? "—"}</td>
-                  <td className="py-1 pr-2 tabular-nums text-neutral-500">{s.tournament_code ?? "—"}</td>
+                  <td className="py-1 pr-2 whitespace-nowrap text-neutral-500">
+                    {tournamentFormatLabel(s.tournament_format)}
+                {s.humans_count || s.placeholders_count || s.bots_count ? (
+                  <span className="text-neutral-400">
+                    {" "}• {participantsText(s.humans_count, s.placeholders_count, s.bots_count)}
+                  </span>
+                ) : null}
+                  </td>
                   <td className="py-1 pr-2 text-neutral-500">
                     {s.created_at ? new Date(s.created_at).toLocaleDateString("de-DE") : "—"}
                   </td>
@@ -4105,6 +4168,9 @@ return (
                           {s.tournamentCreatedAt
                             ? ` (${new Date(s.tournamentCreatedAt).toLocaleDateString("de-DE")})`
                             : ""}
+                          {s.tournamentFormat ? (
+                            <span className="text-neutral-400"> • {tournamentFormatLabel(s.tournamentFormat)}</span>
+                          ) : null}
                         </span>
                       </div>
                       <div className="tabular-nums font-semibold">
@@ -4413,7 +4479,18 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                             </div>
                           </div>
 
-                          {/* RIGHT: TP BLOCK */}
+                          {/* RIGHT: TP BLOCK – ohne Turnierpunkte (z. B. 🤖 Training) unsichtbarer Platzhalter,
+                              damit der Elo-Block in allen Zeilen an derselben Stelle steht */}
+                          {Number(r.tournamentPoints ?? 0) <= 0 &&
+                            rows.some((x: any) => Number(x?.tournamentPoints ?? 0) > 0) && (
+                            <div
+                              aria-hidden
+                              className="invisible ml-2 mt-2 inline-flex font-semibold items-center rounded-full border px-2 py-1 text-sm"
+                            >
+                              <span className="text-[11px]">Turnierwertung</span>
+                              <span className="mt-0.5 text-[13px]">+0 TP</span>
+                            </div>
+                          )}
                           {Number(r.tournamentPoints ?? 0) > 0 && (
                             <div className="ml-2 mt-2 inline-flex font-semibold items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-sm">
                               <div className="justify-between">
@@ -4706,7 +4783,7 @@ function MiniLeaderboard({
                   <div className="flex items-start gap-1.5 flex-1 min-w-0">
                     <span
                       className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-white/70 text-xs mt-0.5"
-                      style={color ? { backgroundColor: color } : {}}
+                      style={color ? { background: color } : {}}
                     >
                       {emoji || initials}
                     </span>
@@ -8389,6 +8466,12 @@ disabled={
         }
       }
     />
+    {/* dezent: aktuelle Elo hinter dem Namen (Bots haben ihr Abzeichen unten) */}
+    {!playersById?.[mp.player_id]?.isBot && typeof playersById?.[mp.player_id]?.elo === "number" ? (
+      <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">
+        Elo {Math.round(playersById[mp.player_id].elo as number)}
+      </span>
+    ) : null}
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
     <StreakFire n={winStreaks[String(mp.player_id)]} mode={winStreakMode} />
@@ -8399,34 +8482,29 @@ disabled={
         const p = raw ? String(raw) : "";
         return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
       };
-      const vals = (mps ?? [])
-        .map((o: any) => profOf(o?.player_id))
-        .filter(Boolean)
-        .map((prof: string) => {
-          const t = tWinrateByPlayerId?.[prof];
-          const mw = machineName && locationId ? mWinrateByKey?.[`${prof}__${machineName}__${locationId}`]?.winrate : null;
+      // gemeinsame Regel (lib/favorite.ts): echte Winrate-Bestwerte, sonst höchste Elo mit Vorsprung
+      const cands = (mps ?? [])
+        .map((o: any) => ({ pid: o?.player_id ? String(o.player_id) : "", prof: profOf(o?.player_id) }))
+        .filter((x: any) => x.prof)
+        .map((x: any) => {
+          const t = tWinrateByPlayerId?.[x.prof];
+          const mw = machineName && locationId ? mWinrateByKey?.[`${x.prof}__${machineName}__${locationId}`]?.winrate : null;
+          const pv = playersById?.[x.pid];
           return {
-            prof,
+            key: x.prof,
             t: typeof t === "number" && Number.isFinite(t) ? t : null,
             m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
+            elo: typeof pv?.elo === "number" ? pv.elo : null,
+            placeholder: pv?.isPlaceholder === true,
           };
         });
-      const tNums = vals.map((v: any) => v.t).filter((x: any) => x != null);
-      const mNums = vals.map((v: any) => v.m).filter((x: any) => x != null);
-      const maxT = tNums.length ? Math.max(...tNums) : null;
-      const maxM = mNums.length ? Math.max(...mNums) : null;
-      const counts = vals.map((v: any) => ({
-        prof: v.prof,
-        n: (v.t != null && v.t === maxT ? 1 : 0) + (v.m != null && v.m === maxM ? 1 : 0),
-      }));
-      const maxCount = counts.length ? Math.max(...counts.map((c: any) => c.n)) : 0;
-      const best = counts.filter((c: any) => c.n === maxCount);
+      const favRes = pickFavorite(cands);
       const myProf = profOf(mp?.player_id);
-      const fav = maxCount > 0 && best.length === 1 && !!myProf && best[0].prof === myProf;
-      return fav ? (
+      const fav = !!favRes && !!myProf && favRes.key === myProf;
+      return fav && favRes ? (
         <span
           className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
-          title="Favorit – beste Winrates in diesem Match"
+          title={favoriteTitle(favRes)}
         >
           ★ Favorit
         </span>
@@ -8542,8 +8620,19 @@ return (
     </div>
     )}
 
-    {/* 💪 Persönlicher Highscore auf diesem Flipper */}
-    <div className="pl-9">
+    {/* 💪 Persönlicher Highscore auf diesem Flipper (+ 🤖 Bot-Abzeichen mit Elo) */}
+    <div className="pl-9 flex flex-wrap items-center gap-x-2">
+      {playersById?.[String(mp?.player_id)]?.isBot ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700"
+          title="KI-Bot mit fester Elo"
+        >
+          🤖 Bot
+          {typeof playersById?.[String(mp?.player_id)]?.botElo === "number"
+            ? ` · ${Math.round(playersById[String(mp.player_id)].botElo)}`
+            : ""}
+        </span>
+      ) : null}
       <PersonalBestLine
         hidden={tournament?.status === "finished"}
         code={code}
@@ -8574,12 +8663,13 @@ return (
                       <Select
                         value={pos ?? ""}
                         className="rounded-lg h-10 max-h-10 w--[160px] max-w-[160px]  px-1 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8"
-                        disabled={locked || isEliminationFormat || isRotationFormat}
+                        disabled={locked || isEliminationFormat || isRotationFormat || (mps ?? []).some((x: any) => playersById?.[x.player_id]?.isBot)}
+                        title={(mps ?? []).some((x: any) => playersById?.[x.player_id]?.isBot) ? "🤖 Mit Bot: Platz ergibt sich aus den Scores" : undefined}
                         //onChange={async (e) => {
                         
                         onChange={
                            
-                            (isEliminationFormat || isRotationFormat)
+                            (isEliminationFormat || isRotationFormat || (mps ?? []).some((x: any) => playersById?.[x.player_id]?.isBot))
                               ? undefined
                               : async (e) => {
                           if (locked) return;
@@ -8867,8 +8957,8 @@ return (
       }}
     />
 
-    {/* 🤖 KI-Bot: würfeln + Rechenzettel (Round the Pinball) */}
-    {isRotationFormat && playersById?.[mp.player_id]?.isBot ? (
+    {/* 🤖 KI-Bot: würfeln + Rechenzettel (Round the Pinball, Matchplay, Swiss, Round Robin) */}
+    {botsAllowedInFormat(tournament?.format) && playersById?.[mp.player_id]?.isBot ? (
       <BotScoreButtons
         code={code}
         matchId={String(mp.match_id)}
@@ -9914,8 +10004,8 @@ if (joined)
                 <div className="hidden sm:grid sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
                   <div className="sm:col-[span_5_/_span_5]">Name</div>
                   <div className="sm:col-[span_6_/_span_6]">Kategorie / Serie</div>
-                  <div className="sm:col-[span_5_/_span_5]">Format</div>
-                  <div className="sm:col-[span_4_/_span_4]">Location</div>
+                  <div className="sm:col-[span_6_/_span_6]">Format</div>
+                  <div className="sm:col-[span_3_/_span_3]">Location</div>
                   <div className="sm:col-[span_2_/_span_2]">Status</div>
                   <div className="sm:col-[span_2_/_span_2]">Erstellt</div>
                 </div>
@@ -9979,7 +10069,7 @@ if (joined)
                       )}
                     </div>
 
-                    <div className="col-span-2 sm:col-[span_5_/_span_5] flex items-center gap-1.5 text-sm text-neutral-400">
+                    <div className="col-span-2 sm:col-[span_6_/_span_6] flex items-center gap-1.5 text-sm text-neutral-400">
                         <span
     className={`inline-flex items-center whitespace-nowrap rounded-full py-1 text-xs font-medium ${formatStyleRound(t.format)}`}
   >
@@ -9988,16 +10078,40 @@ if (joined)
                       {typeof t.player_count === "number" ? (
                         <span
                           className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600"
-                          title={`${t.player_count} Spieler`}
+                          title={`${t.human_count ?? t.player_count} Spieler`}
                         >
-                          👥 {t.player_count}
+                          👥 {t.human_count ?? t.player_count}
+                        </span>
+                      ) : null}
+                      {t.placeholder_count ? (
+                        <span
+                          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600"
+                          title={`${t.placeholder_count} Platzhalter / Testprofile`}
+                        >
+                          🚫 {t.placeholder_count}
+                        </span>
+                      ) : null}
+                      {t.missing_results ? (
+                        <span
+                          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800"
+                          title="Beendet, aber ohne gespeicherte Auswertung (Platz/Turnierpunkte). Im Turnier „🔄 Auswertung neu schreiben“ drücken."
+                        >
+                          ⚠️ ohne Auswertung
+                        </span>
+                      ) : null}
+                      {t.bot_count ? (
+                        <span
+                          className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
+                          title={`${t.bot_count} KI-Bot${t.bot_count === 1 ? "" : "s"}`}
+                        >
+                          🤖 {t.bot_count}
                         </span>
                       ) : null}
                     </div>
 
                     {/* Location statt Code (Code steht im Turnier selbst) */}
                     <div
-                      className="sm:col-[span_4_/_span_4] min-w-0 truncate text-sm text-neutral-600"
+                      className="sm:col-[span_3_/_span_3] min-w-0 truncate text-sm text-neutral-600"
                       title={`Code: ${t.code}`}
                     >
                       {(() => {
@@ -10511,6 +10625,32 @@ async function setSpeechRoundEnabled(next: boolean) {
   // ✏️ Name/Kategorie eines beendeten Turniers ändern (Dialog)
   const [editMetaOpen, setEditMetaOpen] = useState(false);
 
+  // 🔄 Auswertung (Platz/Turnierpunkte) eines beendeten Turniers neu schreiben – z. B. wenn sie fehlt
+  const [rewriteBusy, setRewriteBusy] = useState(false);
+  async function rewriteResults() {
+    if (rewriteBusy) return;
+    if (!confirm("Auswertung (Platz und Turnierpunkte) dieses Turniers neu berechnen und speichern?\n\nElo, Spiele und Ergebnisse bleiben unverändert.")) return;
+    setRewriteBusy(true);
+    try {
+      const res = await fetch("/api/tournaments/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j?.ok === false) {
+        alert(j?.error ?? "Auswertung konnte nicht geschrieben werden");
+      } else {
+        alert(`✅ Auswertung neu geschrieben (${j?.results ?? 0} Spieler).`);
+      }
+    } catch {
+      alert("Netzwerkfehler – Auswertung konnte nicht geschrieben werden");
+    } finally {
+      setRewriteBusy(false);
+      await reloadAll();
+    }
+  }
+
   // ✅ Elo-Schalter gilt für das GANZE Turnier:
   // Zustand aus den Runden übernehmen (sonst springt er beim Neuladen fälschlich auf "an").
   // Gibt es noch keine Runden, bleibt die lokale Einstellung (gilt dann für neue Runden).
@@ -10709,11 +10849,13 @@ const matchSize =
       body: JSON.stringify({ code }),
     });
     const j = await res.json().catch(() => ({}));
-    if (!res.ok) {
+    if (!res.ok || j?.ok === false) {
       closeTvWindow(tvWin);
-      alert(j?.error ?? "Fehler beim Beenden");
+      alert(j?.error ?? "Fehler beim Beenden – das Turnier ist noch nicht beendet. Bitte noch einmal versuchen.");
+      await reloadAll();
       return;
     }
+    if (j?.warning) alert(`⚠️ ${j.warning}`);
 
     showTvInWindow(tvWin);
     await reloadAll();
@@ -10834,13 +10976,19 @@ async function registerFinalWin(playerId: string, winnerName: string, tvWin: Win
     if (ADMIN_FINISH_CELEBRATION) playWinnerSounds();
 
     try {
-      await fetch("/api/tournaments/finish", {
+      const fr = await fetch("/api/tournaments/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
+      const fj = await fr.json().catch(() => ({}));
+      if (!fr.ok || fj?.ok === false) {
+        setNotice(
+          `⚠️ Superfinale gespeichert, aber die Turnier-Auswertung fehlt: ${fj?.error ?? "unbekannter Fehler"} – bitte „🔄 Auswertung neu schreiben“ im Turnierkopf drücken.`
+        );
+      }
     } catch {
-      // Ignorieren, Feier trotzdem zeigen
+      setNotice("⚠️ Superfinale gespeichert, aber die Turnier-Auswertung konnte nicht geschrieben werden (Netzwerk). Bitte „🔄 Auswertung neu schreiben“ im Turnierkopf drücken.");
     }
 
     showTvInWindow(tvWin);
@@ -12899,6 +13047,9 @@ const tasksById = useMemo(() => {
               icon: p.icon ?? prof?.icon ?? null,
               avatarUrl: p.avatar_url ?? prof?.avatar_url ?? null,
               isBot: p.is_bot === true,
+              botElo: p.is_bot === true && typeof prof?.rating === "number" ? prof.rating : null,
+              elo: typeof prof?.rating === "number" ? prof.rating : null,
+              isPlaceholder: prof?.exclude_from_stats === true,
             } as PlayerVisual,
           ];
         })
@@ -13181,11 +13332,22 @@ const tasksById = useMemo(() => {
             ✏️ Name / Kategorie
           </button>
         ) : null}
+        {isFinished && isAdmin ? (
+          <button
+            type="button"
+            disabled={rewriteBusy}
+            onClick={rewriteResults}
+            className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50"
+            title="Platz und Turnierpunkte dieses Turniers neu berechnen und speichern (Elo und Spiele bleiben unverändert)"
+          >
+            {rewriteBusy ? "🔄 schreibe …" : "🔄 Auswertung neu schreiben"}
+          </button>
+        ) : null}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
         <span>🏷️ {cat || <span className="italic">keine Kategorie</span>}</span>
-        {effectiveExtraball(data?.tournament?.format, data?.tournament?.extraball) ? <ExtraballBadge /> : null}
         {data?.tournament?.locations?.name ? <span>📍 {data.tournament.locations.name}</span> : null}
+        <ExtraballBadge on={effectiveExtraball(data?.tournament?.format, data?.tournament?.extraball)} />
       </div>
     </div>
 

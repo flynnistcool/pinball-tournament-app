@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 import { humanMatchRows, loadStatsExclusions } from "@/lib/statsExclusions";
 
 // Sorgt dafür, dass Next diese Route nicht statisch cached
@@ -24,10 +25,13 @@ export async function GET() {
   const sb = supabaseAdmin();
 
   // 1) Alle Match-Player + Match + Round + Tournament laden
-  const { data, error } = await sb
-    .from("match_players")
-    .select(
-      `
+  //    (seitenweise – Supabase liefert pro Abfrage höchstens 1000 Zeilen)
+  const { data, error } = await fetchAllRows<any>(() =>
+    sb
+      .from("match_players")
+      .select(
+        `
+      match_id,
       player_id,
       position,
       matches!inner (
@@ -39,7 +43,10 @@ export async function GET() {
         )
       )
     `
-    );
+      )
+      .order("match_id")
+      .order("player_id")
+  );
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -60,10 +67,9 @@ export async function GET() {
 
   let validTournamentIds = new Set<string>();
   if (tournamentIds.size > 0) {
-    const { data: tournaments, error: tErr } = await sb
-      .from("tournaments")
-      .select("id")
-      .in("id", Array.from(tournamentIds));
+    const { data: tournaments, error: tErr } = await fetchAllIn<any>(Array.from(tournamentIds), (chunk) =>
+      sb.from("tournaments").select("id").in("id", chunk).order("id")
+    );
 
     if (tErr) {
       return NextResponse.json({ error: tErr.message }, { status: 500 });
@@ -82,10 +88,9 @@ export async function GET() {
   > = {};
 
   if (playerIds.length > 0) {
-    const { data: players, error: pErr } = await sb
-      .from("players")
-      .select("id, name, profile_id")
-      .in("id", playerIds);
+    const { data: players, error: pErr } = await fetchAllIn<any>(playerIds, (chunk) =>
+      sb.from("players").select("id, name, profile_id").in("id", chunk).order("id")
+    );
 
     if (pErr) {
       return NextResponse.json({ error: pErr.message }, { status: 500 });
@@ -111,14 +116,13 @@ export async function GET() {
 
   const profilesById: Record<
     string,
-    { id: string; avatar_url: string | null; color: string | null; icon: string | null }
+    { id: string; avatar_url: string | null; color: string | null; icon: string | null; rating?: number | null }
   > = {};
 
   if (profileIds.length > 0) {
-    const { data: profiles, error: profErr } = await sb
-      .from("profiles")
-      .select("id, name, avatar_url, color, icon")
-      .in("id", profileIds);
+    const { data: profiles, error: profErr } = await fetchAllIn<any>(profileIds, (chunk) =>
+      sb.from("profiles").select("id, name, avatar_url, color, icon, rating").in("id", chunk).order("id")
+    );
 
     if (profErr) {
       return NextResponse.json({ error: profErr.message }, { status: 500 });
@@ -130,6 +134,7 @@ export async function GET() {
         avatar_url: pr.avatar_url ?? null,
         color: pr.color ?? null,
         icon: pr.icon ?? null,
+        rating: typeof pr.rating === "number" ? pr.rating : null,
       };
     }
   }
@@ -235,6 +240,7 @@ const out: MatchPlacementRow[] = Object.values(statsByKey)
       avatar_url: prof?.avatar_url ?? null,
       color: prof?.color ?? null,
       icon: prof?.icon ?? null,
+      elo: (prof as any)?.rating ?? null, // aktuelle Elo (dezent hinter dem Namen)
       matches: s.matches,
       firstPlaces: s.firstPlaces,
       secondPlaces: s.secondPlaces,

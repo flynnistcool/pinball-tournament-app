@@ -46,14 +46,21 @@ export default function ExtraballToggle({
   );
 }
 
-/** kleines Abzeichen für Turnierkopf / Archiv */
-export function ExtraballBadge() {
-  return (
+/** kleines Abzeichen für Turnierkopf / Archiv (on = mit Extraball, sonst dezent "ohne Extraball") */
+export function ExtraballBadge({ on = true }: { on?: boolean }) {
+  return on ? (
     <span
       className="inline-flex shrink-0 items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800"
       title="Dieses Turnier wird mit Extraball gespielt"
     >
       🎱 mit Extraball
+    </span>
+  ) : (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+      title="Dieses Turnier wird ohne Extraball gespielt"
+    >
+      <span className="mr-1 opacity-60 grayscale">🎱</span>ohne Extraball
     </span>
   );
 }

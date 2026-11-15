@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { humanTournamentResults, loadStatsExclusions } from "@/lib/statsExclusions";
+import { loadTournamentPlayerCounts } from "@/lib/tournamentCounts";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -58,7 +59,8 @@ export async function GET(req: Request) {
         category,
         name,
         status,
-        created_at
+        created_at,
+        format
       )
     `
     );
@@ -191,6 +193,12 @@ export async function GET(req: Request) {
   // 🛡️ Statistik-Schutz: Bots/Platzhalter raus, 🤖 Training-Turniere raus, Plätze nur unter Menschen
   const ex = await loadStatsExclusions(sb);
   const humanRows: TournamentResultRow[] = humanTournamentResults(rows, ex, (pid) => playersById[pid]?.profile_id ?? null);
+  // 👤 Teilnehmerzahl je Turnier (für die Turnierlisten beim Aufklappen)
+  const countsByT = await loadTournamentPlayerCounts(
+    sb,
+    humanRows.map((r) => String(r.tournament_id)),
+    ex
+  );
 
   // Welche Zeilen werden wirklich aggregiert?
   let rowsForAgg: TournamentResultRow[] = humanRows;
@@ -236,12 +244,23 @@ export async function GET(req: Request) {
         color: profile?.color ?? null,
         icon: profile?.icon ?? null,
         totalInFilter: list.length,
-        selected: top.map((r) => ({
+        // Anzeige: neuestes Turnier zuerst (ausgewählt wurde oben nach Punkten)
+        selected: [...top]
+          .sort((a, b) => {
+            const ad = a.tournaments?.created_at ? Date.parse(a.tournaments.created_at) : 0;
+            const bd = b.tournaments?.created_at ? Date.parse(b.tournaments.created_at) : 0;
+            return bd - ad;
+          })
+          .map((r) => ({
           tournament_id: r.tournament_id,
           tournament_code: r.tournaments?.code ?? null,
           tournament_name: r.tournaments?.name ?? null,
           tournament_category: r.tournaments?.category ?? null,
           created_at: r.tournaments?.created_at ?? null,
+          tournament_format: (r.tournaments as any)?.format ?? null,
+          humans_count: countsByT.get(String(r.tournament_id))?.humans ?? 0,
+          placeholders_count: countsByT.get(String(r.tournament_id))?.placeholders ?? 0,
+          bots_count: countsByT.get(String(r.tournament_id))?.bots ?? 0,
           final_rank: r.final_rank ?? null,
           tournament_points: r.tournament_points ?? 0,
         })),

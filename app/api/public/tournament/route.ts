@@ -11,7 +11,7 @@ export async function GET(req: Request) {
   const { data: t, error: tErr } = await sb
     .from("tournaments")
     // Hinweis: season_year und best_of existieren in der Live-DB nicht -> nicht abfragen
-    .select("id, code, name, created_at, category, match_size, format, location_id, locations(name), status")
+    .select("id, code, name, created_at, category, match_size, format, location_id, locations(name), status, extraball")
     .eq("code", code)
     .single();
 
@@ -64,7 +64,7 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     new Set((players ?? []).map((p: any) => p.profile_id).filter(Boolean))
   ) as string[];
   const { data: profiles } = profileIds.length
-    ? await sb.from("profiles").select("id, icon, color, rating").in("id", profileIds)
+    ? await sb.from("profiles").select("id, icon, color, rating, is_bot, exclude_from_stats").in("id", profileIds)
     : { data: [] as any[] };
 
   // Elo-Stand vor dem Turnier (Sicherung beim Turnierstart) – für Infobildschirm

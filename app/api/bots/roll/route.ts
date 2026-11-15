@@ -15,8 +15,8 @@ import { loadBotSettings } from "@/lib/botSettingsServer";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/** Stufe 1: Bots spielen zunächst nur bei Round the Pinball */
-const BOT_PLAY_FORMATS = new Set(["rotation"]);
+/** Formate, in denen ein Bot seinen Score würfeln kann (Platz ergibt sich dann aus den Scores) */
+const BOT_PLAY_FORMATS = new Set(["rotation", "matchplay", "swiss", "round_robin"]);
 
 function fail(error: string, status: number, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status, headers: { "Cache-Control": "no-store" } });
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     if (!t) return fail("Turnier nicht gefunden", 404);
     const format = String((t as any).format ?? "").toLowerCase();
     if (!botsAllowedInFormat(format) || !BOT_PLAY_FORMATS.has(format)) {
-      return fail("🤖 Bots können (noch) nur bei Round the Pinball spielen", 400);
+      return fail("🤖 Bots können in diesem Format nicht spielen", 400);
     }
     if (!(t as any).location_id) {
       return fail("Das Turnier hat keine Location – der Bot braucht die Scores dieser Location.", 400);

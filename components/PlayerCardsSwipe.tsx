@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PlayerTradingCard } from "@/components/PlayerCardsTv";
 import type { PlayerCard } from "@/lib/playerCards";
+import BotEloBadge from "@/components/BotEloBadge";
 
 const REFRESH_MS = 3 * 60_000;
 
@@ -122,6 +123,7 @@ export default function PlayerCardsSwipe({
         <div className="min-w-0 flex-1 text-center">
           <div className="truncate text-sm font-semibold text-neutral-800">
             {shown?.name}
+            {shown?.isBot ? <BotEloBadge elo={shown.elo} className="ml-1.5 align-middle text-[10px]" /> : null}
             {shown && String(shown.playerId) === String(meId) ? (
               <span className="ml-1.5 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
                 du

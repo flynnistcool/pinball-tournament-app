@@ -91,7 +91,8 @@ export async function POST(req: Request) {
       })
       .filter(Boolean)) as MPRow[];
 
-    const matchesPlayed = rows.length;
+    // nur gewertete Matches (Platz vergeben) – offene Matches sind weder Sieg noch Niederlage
+    const matchesPlayed = rows.filter((r) => typeof r.position === "number").length;
 
     const placements = {
       "1": 0,

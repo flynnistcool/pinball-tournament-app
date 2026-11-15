@@ -170,6 +170,8 @@ export async function POST(req: Request) {
 
     const posA = numOrNull(rowA.position);
     const posB = numOrNull(rowB.position);
+    // nur gewertete Matches (beide mit Platz) – offene Matches zählen nicht
+    if (posA == null || posB == null) continue;
 
     payload.matches.togetherAny.count++;
 

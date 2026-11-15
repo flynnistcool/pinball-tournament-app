@@ -65,7 +65,7 @@ export async function GET(req: Request) {
 
     if (profileIds.length) {
       const prRes = await fetchAllIn<CardProfile>(profileIds, (chunk) =>
-        sb.from("profiles").select("id, name, avatar_url, icon, color, rating").in("id", chunk).order("id")
+        sb.from("profiles").select("id, name, avatar_url, icon, color, rating, is_bot").in("id", chunk).order("id")
       );
       if (prRes.error) return fail(`Profile laden fehlgeschlagen: ${prRes.error.message}`, 500);
       profiles = prRes.data;

@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 import { loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 type MPRow = {
@@ -26,12 +27,17 @@ export async function GET() {
 
   // 1) Alle Match-Player mit Position = 1 (Sieger) laden,
   //    inkl. Match + Round (für Turnier & Runden-Nr.)
-  const { data: mps, error } = await sb
-    .from("match_players")
-    .select(
-      "player_id, position, matches!inner(id, machine_id, round_id, rounds!inner(tournament_id, number))"
-    )
-    .eq("position", 1); // nur Sieger
+  //    (seitenweise – Supabase liefert pro Abfrage höchstens 1000 Zeilen)
+  const { data: mps, error } = await fetchAllRows<any>(() =>
+    sb
+      .from("match_players")
+      .select(
+        "match_id, player_id, position, matches!inner(id, machine_id, round_id, rounds!inner(tournament_id, number))"
+      )
+      .eq("position", 1) // nur Sieger
+      .order("match_id")
+      .order("player_id")
+  );
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -85,10 +91,9 @@ export async function GET() {
   // Spieler
   let players: { id: string; name: string }[] = [];
   if (playerIds.size > 0) {
-    const { data, error: pErr } = await sb
-      .from("players")
-      .select("id, name")
-      .in("id", Array.from(playerIds));
+    const { data, error: pErr } = await fetchAllIn<any>(Array.from(playerIds), (chunk) =>
+      sb.from("players").select("id, name").in("id", chunk).order("id")
+    );
 
     if (pErr) {
       return NextResponse.json({ error: pErr.message }, { status: 500 });
@@ -99,10 +104,9 @@ export async function GET() {
   // Maschinen
   let machines: { id: string; name: string }[] = [];
   if (machineIds.size > 0) {
-    const { data, error: mErr } = await sb
-      .from("machines")
-      .select("id, name")
-      .in("id", Array.from(machineIds));
+    const { data, error: mErr } = await fetchAllIn<any>(Array.from(machineIds), (chunk) =>
+      sb.from("machines").select("id, name").in("id", chunk).order("id")
+    );
 
     if (mErr) {
       return NextResponse.json({ error: mErr.message }, { status: 500 });
@@ -119,10 +123,9 @@ export async function GET() {
     category: string | null;
   }[] = [];
   if (tournamentIds.size > 0) {
-    const { data, error: tErr } = await sb
-      .from("tournaments")
-      .select("id, name, code, created_at, category")
-      .in("id", Array.from(tournamentIds));
+    const { data, error: tErr } = await fetchAllIn<any>(Array.from(tournamentIds), (chunk) =>
+      sb.from("tournaments").select("id, name, code, created_at, category").in("id", chunk).order("id")
+    );
 
     if (tErr) {
       return NextResponse.json({ error: tErr.message }, { status: 500 });

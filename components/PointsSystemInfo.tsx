@@ -160,7 +160,7 @@ function PointsSystemDialog({
           <div className="mb-1 font-semibold">🏆 Turnierpunkte (Serie)</div>
           <div className="mb-2 text-xs text-neutral-500">
             Nach Turnierende je Endplatz: 1. Platz = N + 2, 2. Platz = N, danach je 1 weniger (N = {nPlayers}). Bei
-            Gleichstand wird gemittelt.
+            Gleichstand bekommen alle die Punkte des besseren Platzes (z. B. 1., 1., 3. → 6, 6, 2).
           </div>
           {tp.length ? (
             <SchemeTable values={tp} unit="TP" />

@@ -60,16 +60,10 @@ export async function POST(req: Request) {
     );
   }
 
-  // 2) Status auf "finished" setzen (auch wenn schon finished – damit wir
-  //    die Auswertung trotzdem neu schreiben können)
-  const { error: upErr } = await sb
-    .from("tournaments")
-    .update({ status: "finished" })
-    .eq("id", t.id);
-
-  if (upErr) {
-    return NextResponse.json({ error: upErr.message }, { status: 500 });
-  }
+  // 2) Status wird erst GANZ AM ENDE auf "finished" gesetzt – nachdem die Auswertung
+  //    (tournament_results) sicher gespeichert ist. Bricht unterwegs etwas ab, bleibt das
+  //    Turnier offen und "Turnier beenden" kann einfach noch einmal gedrückt werden.
+  //    (Früher: erst "finished", dann auswerten → bei Abbruch beendet OHNE Turnierpunkte.)
 
   // 3) Spieler, Maschinen, Match-Players laden
   const [
@@ -285,7 +279,10 @@ export async function POST(req: Request) {
 // Regeln:
 // - Gleichstand = gleiche `points` (keine Auflösung über wins/name)
 // - final_rank folgt Competition Ranking: 1,1,1,4 ...
-// - tournament_points: Durchschnitt der Punkte der belegten Plätze
+// - tournament_points: bei Gleichstand bekommen alle die Punkte des BESSEREN Platzes
+//   (Nutzer-Entscheidung 2026-11-15, "Variante B": 1., 1., 3., 4. → 6, 6, 2, 1 TP).
+//   Früher: Durchschnitt der belegten Plätze → konnte z. B. 1,5 ergeben, was die Spalte
+//   tournament_results.tournament_points (ganze Zahl) nicht speichern kann.
 {
   // 1) final_rank setzen (Competition Ranking, nur nach points)
   let lastPts: number | null = null;
@@ -317,14 +314,9 @@ export async function POST(req: Request) {
     const end = i; // exklusiv
     const groupSize = end - start;
 
-    // belegte Plätze: rankStart .. rankStart + groupSize - 1
-    const rankEnd = rankStart + groupSize - 1;
 
-    let sum = 0;
-    for (let place = rankStart; place <= rankEnd; place++) {
-      sum += tournamentPointsForRank(place, nPlayersTournament);
-    }
-    const baseAvg = groupSize > 0 ? sum / groupSize : 0;
+    // Gleichstand: alle bekommen die Punkte des besten belegten Platzes (rankStart)
+    const baseAvg = groupSize > 0 ? tournamentPointsForRank(rankStart, nPlayersTournament) : 0;
 
     for (let j = start; j < end; j++) {
       const r = resultRows[j];
@@ -364,11 +356,9 @@ export async function POST(req: Request) {
           const pts = Number(humans[k].points ?? 0);
           while (k < humans.length && Number(humans[k].points ?? 0) === pts) k++;
           const rankStart = start + 1; // Competition Ranking unter Menschen
-          const rankEnd = k; // inkl.
-          let sum = 0;
-          for (let place = rankStart; place <= rankEnd; place++) sum += tournamentPointsForRank(place, nHumans);
-          const avg = sum / (rankEnd - rankStart + 1);
-          for (let j = start; j < k; j++) humans[j].tournament_points = avg; // kein Superfinale mit Bots
+          // Gleichstand: alle bekommen die Punkte des besseren Platzes (wie oben)
+          const tp = tournamentPointsForRank(rankStart, nHumans);
+          for (let j = start; j < k; j++) humans[j].tournament_points = tp; // kein Superfinale mit Bots
         }
       }
     }
@@ -386,14 +376,29 @@ export async function POST(req: Request) {
       console.error("Speichern in tournament_results fehlgeschlagen:", insErr);
       return NextResponse.json(
         {
-          ok: true,
-          warning:
-            "Turnier beendet, aber Speichern der Gesamtergebnisse ist fehlgeschlagen.",
+          ok: false,
+          error:
+            t.status === "finished"
+              ? `Auswertung konnte nicht gespeichert werden (${insErr.message}). Das Turnier bleibt beendet – bitte „🔄 Auswertung neu schreiben“ später noch einmal versuchen.`
+              : `Auswertung konnte nicht gespeichert werden (${insErr.message}). Das Turnier ist noch NICHT beendet – bitte noch einmal „Turnier beenden“ drücken.`,
         },
-        { status: 200 }
+        { status: 500 }
       );
     }
   }
 
-  return NextResponse.json({ ok: true });
+  // 7) Erst jetzt: Status auf "finished" (auch wenn schon finished – Auswertung neu schreiben)
+  const { error: upErr } = await sb
+    .from("tournaments")
+    .update({ status: "finished" })
+    .eq("id", t.id);
+
+  if (upErr) {
+    return NextResponse.json(
+      { ok: false, error: `Auswertung gespeichert, aber Status konnte nicht gesetzt werden: ${upErr.message}` },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ ok: true, results: resultRows.length });
 }

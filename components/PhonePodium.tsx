@@ -6,6 +6,7 @@
 
 import { useMemo } from "react";
 import { liveLeaderboard, type LiveRow, type MmData } from "@/lib/myMatch";
+import BotEloBadge from "@/components/BotEloBadge";
 
 function initials(name: string): string {
   return (
@@ -27,7 +28,7 @@ function Avatar({ row, size }: { row: LiveRow; size: string }) {
         " " +
         (row.color ? "" : "bg-neutral-200")
       }
-      style={row.color ? { backgroundColor: row.color } : undefined}
+      style={row.color ? { background: row.color } : undefined}
     >
       {row.icon ? row.icon : <span className="text-[0.45em] font-bold text-neutral-600">{initials(row.name)}</span>}
     </span>
@@ -62,6 +63,7 @@ function Step({ place, rows, meId }: { place: 1 | 2 | 3; rows: LiveRow[]; meId: 
                 {isMe ? (
                   <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">du</span>
                 ) : null}
+                {r.isBot ? <BotEloBadge elo={r.eloNow ?? r.eloStart} className="text-[10px]" /> : null}
                 <div className="text-xs font-semibold tabular-nums text-neutral-500">{r.total} Punkte</div>
               </div>
             );
@@ -82,11 +84,13 @@ function Step({ place, rows, meId }: { place: 1 | 2 | 3; rows: LiveRow[]; meId: 
 
 export default function PhonePodium({ data, meId }: { data: MmData; meId: string }) {
   const { rows } = useMemo(() => liveLeaderboard(data), [data]);
-  const scored = rows.filter((r) => r.total > 0);
-  const byPlace = (pl: number) => scored.filter((r) => r.place === pl);
-  const rest = rows.filter((r) => !(r.total > 0 && r.place <= 3));
+  // Sobald irgendwer Punkte hat, stehen auch Plätze mit 0 Punkten auf dem Podest
+  const anyScored = rows.some((r) => r.total > 0);
+  const onPodium = (r: LiveRow) => r.place <= 3 && (r.total > 0 || anyScored);
+  const byPlace = (pl: number) => rows.filter((r) => r.place === pl && onPodium(r));
+  const rest = rows.filter((r) => !onPodium(r));
   const me = rows.find((r) => r.id === String(meId)) ?? null;
-  const meOnPodium = !!me && me.total > 0 && me.place <= 3;
+  const meOnPodium = !!me && onPodium(me);
 
   return (
     <div className="space-y-3">
@@ -136,6 +140,7 @@ export default function PhonePodium({ data, meId }: { data: MmData; meId: string
                 <span className={"min-w-0 flex-1 truncate " + (isMe ? "font-black text-indigo-800" : "font-bold")}>
                   {r.name}
                 </span>
+                {r.isBot ? <BotEloBadge elo={r.eloNow ?? r.eloStart} className="text-[10px]" /> : null}
                 {isMe ? (
                   <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
                     du

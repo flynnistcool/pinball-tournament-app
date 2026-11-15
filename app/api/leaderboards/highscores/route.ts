@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
+import { fetchAllRows } from "@/lib/supabaseChunks";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -24,9 +25,13 @@ function normMachineKeyName(s: any) {
 export async function GET() {
   const sb = supabaseAdmin();
 
-  const { data, error } = await sb
+  // seitenweise – Supabase liefert pro Abfrage höchstens 1000 Zeilen
+  const { data, error } = await fetchAllRows<any>(() =>
+    sb
     .from("match_players")
     .select(`
+      match_id,
+      player_id,
       score,
       stats_ignored,
       player:players (
@@ -47,12 +52,16 @@ export async function GET() {
             name,
             location_id,
             status,
-            created_at
+            created_at,
+            format
           )
         )
       )
     `)
-    .not("score", "is", null);
+    .not("score", "is", null)
+    .order("match_id")
+    .order("player_id")
+  );
 
   if (error) {
     return NextResponse.json(
@@ -107,6 +116,7 @@ export async function GET() {
         player: string;
         tournament: string;
         tournamentCreatedAt: string | null;
+        tournamentFormat: string | null;
       }>;
     }
   >();
@@ -157,6 +167,7 @@ export async function GET() {
       player: player?.name ?? "Unbekannt",
       tournament: tournament.name ?? "Unbekanntes Turnier",
       tournamentCreatedAt: tournament.created_at ?? null,
+      tournamentFormat: tournament.format ?? null,
     });
   }
 

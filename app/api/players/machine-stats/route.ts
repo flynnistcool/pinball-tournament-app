@@ -177,9 +177,9 @@ export async function POST(req: Request) {
         }
       }
 
-      map[key].matchesPlayed += 1;
-
       const pos = typeof r.position === "number" ? r.position : null;
+      // nur gewertete Matches (Platz vergeben) zählen – offene Matches sind weder Sieg noch Niederlage
+      if (pos != null) map[key].matchesPlayed += 1;
       if (pos != null) {
         map[key].posSum += pos;
         map[key].posCount += 1;

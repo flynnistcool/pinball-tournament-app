@@ -42,3 +42,22 @@ export async function fetchAllIn<T>(
 
   return { data: out, error: null };
 }
+
+/**
+ * Wie fetchAllIn, aber für Abfragen OHNE ID-Liste (z. B. "alle match_players"):
+ * lädt seitenweise je 1000 Zeilen, bis nichts mehr kommt.
+ * WICHTIG: build() muss eine stabile Reihenfolge haben (.order(...)), sonst fehlen/doppeln Zeilen.
+ */
+export async function fetchAllRows<T>(
+  build: () => RangeableQuery<T>
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: out, error: { message: String(error.message ?? error) } };
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return { data: out, error: null };
+}

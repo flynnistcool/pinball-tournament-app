@@ -6,6 +6,7 @@
 // Punkte-Regeln aus lib/pointsDisplay.ts (NICHT lib/points.ts).
 
 import type { MmData } from "@/lib/myMatch";
+import { effectiveExtraball } from "@/lib/botRules";
 import {
   matchPointsScheme,
   tournamentPointsScheme,
@@ -58,6 +59,7 @@ type TournamentExtra = {
   category?: string | null;
   match_size?: number | null;
   created_at?: string | null;
+  extraball?: boolean | null;
   locations?: { name?: string | null } | { name?: string | null }[] | null;
 };
 
@@ -152,6 +154,7 @@ export default function PhoneTournamentInfo({ data }: { data: MmData }) {
         <Fact icon="🔁" label={format === "rotation" ? "Runden gesamt" : "Runden bisher"} value={String(nRounds)} />
         {dateText ? <Fact icon="📅" label="Datum" value={dateText} /> : null}
         <Fact icon="📈" label="Elo-Wertung" value={eloOn ? "an" : "aus"} />
+        <Fact icon="🎱" label="Extraball" value={effectiveExtraball(format, t.extraball) ? "mit Extraball" : "ohne Extraball"} />
       </div>
 
       {/* Punktesystem */}

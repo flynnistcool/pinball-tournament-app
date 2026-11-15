@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import type { BestMachine, PlayerCard } from "@/lib/playerCards";
+import { solidColor } from "@/lib/playerColor";
 
 const REFRESH_MS = 5 * 60_000;
 const PAGE_SIZE = 4;
@@ -34,6 +35,8 @@ type Theme = {
   dotOn: string;
   dotOff: string;
   elo: string;
+  /** 🤖 Bot-Abzeichen (lila wie überall) */
+  bot: string;
   ring: string;
   pct: string;
   neutralBadge: string;
@@ -52,6 +55,7 @@ const DARK: Theme = {
   dotOn: "bg-white/80",
   dotOff: "bg-white/20",
   elo: "bg-black/40 text-white/90 ring-1 ring-white/15",
+  bot: "bg-violet-500/30 text-violet-100 ring-1 ring-violet-300/50",
   ring: "ring-white/80",
   pct: "text-emerald-300",
   neutralBadge: "bg-white/15 text-white",
@@ -70,6 +74,7 @@ const LIGHT: Theme = {
   dotOn: "bg-neutral-700",
   dotOff: "bg-neutral-300",
   elo: "bg-white/80 text-neutral-800 ring-1 ring-neutral-200",
+  bot: "bg-violet-100 text-violet-700 ring-1 ring-violet-200",
   ring: "ring-white",
   pct: "text-emerald-600",
   neutralBadge: "bg-white/80 text-neutral-700 ring-1 ring-neutral-200",
@@ -154,7 +159,7 @@ function BestMachinesBox({ list, local, t }: { list: BestMachine[]; local: boole
 /** light = helle Variante für die Handy-Seite (Infobildschirm: dunkel) */
 export function PlayerTradingCard({ card, light = false }: { card: PlayerCard; light?: boolean }) {
   const t = light ? LIGHT : DARK;
-  const accent = card.color || "#818cf8";
+  const accent = solidColor(card.color) || "#818cf8"; // 🎨 bei Verlauf: erste Farbe
   const badge = rankBadge(card, t);
   const frame = badge?.frame ?? accent;
   return (
@@ -176,16 +181,22 @@ export function PlayerTradingCard({ card, light = false }: { card: PlayerCard; l
         ) : (
           <span />
         )}
-        <span className={`rounded-full px-3 py-1 font-mono text-sm font-bold ${t.elo}`}>
-          Elo {card.elo != null ? Math.round(card.elo) : "–"}
-        </span>
+        {card.isBot ? (
+          <span className={`rounded-full px-3 py-1 text-sm font-bold ${t.bot}`}>
+            🤖 Bot · {card.elo != null ? Math.round(card.elo) : "–"}
+          </span>
+        ) : (
+          <span className={`rounded-full px-3 py-1 font-mono text-sm font-bold ${t.elo}`}>
+            Elo {card.elo != null ? Math.round(card.elo) : "–"}
+          </span>
+        )}
       </div>
 
       {/* Avatar */}
       <div className="relative mx-auto mt-4">
         <div
           className={`flex h-36 w-36 items-center justify-center overflow-hidden rounded-full text-7xl ring-4 ${t.ring}`}
-          style={{ backgroundColor: accent }}
+          style={{ background: card.color || accent }}
         >
           {card.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element

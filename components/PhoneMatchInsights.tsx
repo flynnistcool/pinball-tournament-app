@@ -15,6 +15,8 @@ import { liveEntriesFrom } from "@/lib/recordWatch";
 import { topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import StreakFire from "@/components/StreakFire";
+import BotEloBadge from "@/components/BotEloBadge";
+import { favoriteTitle, pickFavorite, type FavoriteResult } from "@/lib/favorite";
 import type { MmData, MyMatchInfo } from "@/lib/myMatch";
 
 const WINRATE_REFRESH_MS = 5 * 60_000;
@@ -132,16 +134,26 @@ export default function PhoneMatchInsights({
   const showCompare = !isRotation && !info.done && info.players.length > 1;
   const tTop = showCompare ? topIds(tVals) : new Set<string>();
   const mTop = showCompare ? topIds(mVals) : new Set<string>();
-  let favorite: string | null = null;
+  // ★ Favorit: gleiche Regel wie Admin/TV (lib/favorite.ts) – echte Winrate-Bestwerte, sonst Elo mit Vorsprung
+  let favRes: FavoriteResult | null = null;
   if (showCompare) {
-    const greens = info.players.map((mp) => {
-      const pid = String(mp.player_id);
-      return { pid, n: (tTop.has(pid) ? 1 : 0) + (mTop.has(pid) ? 1 : 0) };
-    });
-    const max = Math.max(0, ...greens.map((g) => g.n));
-    const best = greens.filter((g) => g.n === max);
-    if (max > 0 && best.length === 1) favorite = best[0].pid;
+    favRes = pickFavorite(
+      info.players
+        .filter((mp) => !!profileOf(String(mp.player_id)))
+        .map((mp) => {
+          const pid = String(mp.player_id);
+          const pr = (data.profiles ?? []).find((x) => String(x.id) === profileOf(pid));
+          return {
+            key: pid,
+            t: tVals[pid],
+            m: mVals[pid],
+            elo: pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Number(pr.rating) : null,
+            placeholder: pr?.exclude_from_stats === true,
+          };
+        })
+    );
   }
+  const favorite: string | null = favRes ? favRes.key : null;
 
   const recs = records?.enabled && machineName ? recordsForMachine(machineName, records.prior, live) : null;
   // 🔥 On fire – dieselbe Rechnung wie im Handy-Leaderboard (aus den ohnehin geladenen Daten)
@@ -183,6 +195,15 @@ export default function PhoneMatchInsights({
             <div key={pid} className={"px-3 py-2 " + (isMe ? "bg-indigo-50/60" : "")}>
               <div className="flex items-center gap-1.5 font-bold">
                 <span className="truncate">{nameOf(pid)}</span>
+                {(() => {
+                  // dezent: aktuelle Elo hinter dem Namen (Bots: lila Abzeichen)
+                  const pr = (data.profiles ?? []).find((x) => String(x.id) === profileOf(pid));
+                  const elo = pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Math.round(Number(pr.rating)) : null;
+                  if (pr?.is_bot) return <BotEloBadge elo={elo} className="text-[10px]" />;
+                  return elo != null ? (
+                    <span className="shrink-0 text-[11px] font-normal tabular-nums text-neutral-400">Elo {elo}</span>
+                  ) : null;
+                })()}
                 {isMe ? (
                   <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
                     du
@@ -192,7 +213,7 @@ export default function PhoneMatchInsights({
                 {favorite === pid ? (
                   <span
                     className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
-                    title="Favorit – beste Winrates in diesem Match"
+                    title={favRes ? favoriteTitle(favRes) : "Favorit"}
                   >
                     ★ Favorit
                   </span>

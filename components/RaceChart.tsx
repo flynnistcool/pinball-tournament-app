@@ -5,8 +5,16 @@
 // Gestrichelte Abschnitte = Runde noch nicht fertig (vorläufig).
 
 import type { RaceData } from "@/lib/raceChart";
+import { solidColor } from "@/lib/playerColor";
 
-export type RacePlayer = { id: string; name: string; icon: string | null; color: string | null };
+export type RacePlayer = {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  /** 🤖 KI-Bot: feste Elo (undefined = kein Bot) */
+  botElo?: number | null;
+};
 
 // gut unterscheidbare Linienfarben (nach Platz vergeben)
 const PALETTE = [
@@ -80,7 +88,15 @@ export default function RaceChart({
 
   // Geometrie
   const padL = 64;
-  const padR = 300;
+  // 🤖 mit Bots: rechts so viel Platz wie nötig (Name + Abzeichen "Bot · Elo" + Punktzahl), nicht mehr
+  const nameW = (name: string) => Math.min(name.length, 14) * 10; // geschätzt, 18 px fett
+  const hasBots = players.some((p) => p.botElo !== undefined);
+  const padR = hasBots
+    ? Math.max(
+        220,
+        26 + Math.max(...players.map((p) => 36 + nameW(p.name) + (p.botElo !== undefined ? 8 + 116 : 0))) + 66
+      )
+    : 300;
   const padT = 28;
   const padB = roundLabels ? 78 : 56;
   const plotW = width - padL - padR;
@@ -227,13 +243,39 @@ export default function RaceChart({
                   strokeOpacity="0.5"
                   strokeWidth="1.5"
                 />
-                <circle cx={lx + 14} cy={at} r="14" fill={p.color || "#334155"} stroke={c} strokeWidth="2.5" />
+                <circle cx={lx + 14} cy={at} r="14" fill={solidColor(p.color) || "#334155"} stroke={c} strokeWidth="2.5" />
                 <text x={lx + 14} y={at + 6} textAnchor="middle" fontSize={p.icon ? 16 : 12} fontWeight="800" fill="white">
                   {p.icon || initials(p.name)}
                 </text>
                 <text x={lx + 36} y={at + 6} fill="white" fontSize="18" fontWeight={place <= 3 ? 800 : 600}>
                   {p.name.length > 14 ? p.name.slice(0, 13) + "…" : p.name}
                 </text>
+                {p.botElo !== undefined ? (
+                  // 🤖 Abzeichen wie im Leaderboard – direkt hinter dem Namen
+                  // (Textbreite geschätzt: ~11 px je Zeichen bei 18 px fett; nie über die Punktzahl hinaus)
+                  <g transform={`translate(${Math.min(lx + 36 + nameW(p.name) + 8, width - 66 - 116) - (width - 66 - 116)}, 0)`}>
+                    <rect
+                      x={width - 66 - 116}
+                      y={at - 13}
+                      width={116}
+                      height={26}
+                      rx={13}
+                      fill="rgba(139,92,246,0.25)"
+                      stroke="rgba(196,181,253,0.4)"
+                      strokeWidth="1"
+                    />
+                    <text
+                      x={width - 66 - 58}
+                      y={at + 5}
+                      textAnchor="middle"
+                      fill="#ede9fe"
+                      fontSize="14"
+                      fontWeight="700"
+                    >
+                      🤖 Bot{typeof p.botElo === "number" ? ` · ${Math.round(p.botElo)}` : ""}
+                    </text>
+                  </g>
+                ) : null}
                 <text x={width - 14} y={at + 7} textAnchor="end" fill={c} fontSize="22" fontWeight="900">
                   {final}
                 </text>

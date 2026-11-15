@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
+import { fetchAllIn } from "@/lib/supabaseChunks";
+import { loadTournamentPlayerCounts } from "@/lib/tournamentCounts";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -22,6 +24,12 @@ type OutRow = {
   tournamentCode: string | null;
   tournamentCategory: string | null;
   tournamentCreatedAt: string | null;
+  /** Turnierformat (matchplay, rotation, …) */
+  tournamentFormat: string | null;
+  /** Teilnehmer im Turnier: Spieler / Platzhalter / Bots */
+  humansCount: number;
+  placeholdersCount: number;
+  botsCount: number;
   matches: number;
   firstPlaces: number;
   secondPlaces: number;
@@ -58,11 +66,16 @@ export async function GET(req: Request) {
     }
 
     // 2) match_players für diese playerIds holen (nur Matches mit gesetzter Position)
-    const mpRes = await supabase
-      .from("match_players")
-      .select("match_id, player_id, position")
-      .in("player_id", playerIds)
-      .not("position", "is", null);
+    //    (in Paketen – bei vielen Matches wird die Anfrage sonst zu lang: "fetch failed")
+    const mpRes = await fetchAllIn<any>(playerIds.map(String), (chunk) =>
+      supabase
+        .from("match_players")
+        .select("match_id, player_id, position")
+        .in("player_id", chunk)
+        .not("position", "is", null)
+        .order("match_id")
+        .order("player_id")
+    );
 
     if (mpRes.error) {
       return jsonNoStore({ error: mpRes.error.message }, 500);
@@ -89,10 +102,9 @@ export async function GET(req: Request) {
     const matchIds = Array.from(new Set(mps.map((x) => x.match_id)));
 
     // 3) matches -> rounds
-    const matchesRes = await supabase
-      .from("matches")
-      .select("id, round_id")
-      .in("id", matchIds);
+    const matchesRes = await fetchAllIn<any>(matchIds.map(String), (chunk) =>
+      supabase.from("matches").select("id, round_id").in("id", chunk).order("id")
+    );
 
     if (matchesRes.error) {
       return jsonNoStore({ error: matchesRes.error.message }, 500);
@@ -108,10 +120,9 @@ export async function GET(req: Request) {
     }
 
     // 4) rounds -> tournaments
-    const roundsRes = await supabase
-      .from("rounds")
-      .select("id, tournament_id")
-      .in("id", roundIds);
+    const roundsRes = await fetchAllIn<any>(roundIds.map(String), (chunk) =>
+      supabase.from("rounds").select("id, tournament_id").in("id", chunk).order("id")
+    );
 
     if (roundsRes.error) {
       return jsonNoStore({ error: roundsRes.error.message }, 500);
@@ -127,11 +138,14 @@ export async function GET(req: Request) {
     }
 
     // 5) tournaments laden – nur finished
-    const tRes = await supabase
-      .from("tournaments")
-      .select("id, name, code, status, category, created_at")
-      .in("id", tournamentIds)
-      .eq("status", "finished");
+    const tRes = await fetchAllIn<any>(tournamentIds.map(String), (chunk) =>
+      supabase
+        .from("tournaments")
+        .select("id, name, code, status, category, created_at, format")
+        .in("id", chunk)
+        .eq("status", "finished")
+        .order("id")
+    );
 
     if (tRes.error) {
       return jsonNoStore({ error: tRes.error.message }, 500);
@@ -146,6 +160,7 @@ export async function GET(req: Request) {
         code: string | null;
         category: string | null;
         created_at: string | null;
+        format: string | null;
       }
     >();
 
@@ -155,8 +170,12 @@ export async function GET(req: Request) {
         code: t.code ?? null,
         category: (t as any).category ?? null,
         created_at: (t as any).created_at ?? null,
+        format: (t as any).format ?? null,
       });
     }
+
+    // Teilnehmer je Turnier: Spieler / Platzhalter / Bots
+    const countsByT = await loadTournamentPlayerCounts(supabase, Array.from(tMap.keys()), exBt);
 
     // helper: roundId -> tournamentId
     const roundToTournament = new Map<string, string>();
@@ -191,6 +210,10 @@ export async function GET(req: Request) {
           tournamentCode: tInfo.code,
           tournamentCategory: tInfo.category,
           tournamentCreatedAt: tInfo.created_at,
+          tournamentFormat: tInfo.format,
+          humansCount: countsByT.get(tid)?.humans ?? 0,
+          placeholdersCount: countsByT.get(tid)?.placeholders ?? 0,
+          botsCount: countsByT.get(tid)?.bots ?? 0,
           matches: 0,
           firstPlaces: 0,
           secondPlaces: 0,
@@ -222,6 +245,10 @@ export async function GET(req: Request) {
         tournamentCode: a.tournamentCode,
         tournamentCategory: a.tournamentCategory ?? null,
         tournamentCreatedAt: a.tournamentCreatedAt ?? null,
+        tournamentFormat: a.tournamentFormat ?? null,
+        humansCount: a.humansCount ?? 0,
+        placeholdersCount: a.placeholdersCount ?? 0,
+        botsCount: a.botsCount ?? 0,
         matches: a.matches,
         firstPlaces: a.firstPlaces,
         secondPlaces: a.secondPlaces,
