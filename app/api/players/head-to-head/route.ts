@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { isExcludedProfile, loadHumanMatchContext, loadHumanResultsContext, loadStatsExclusions } from "@/lib/statsExclusions";
+import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 
 
 export const dynamic = "force-dynamic";
@@ -85,10 +86,14 @@ export async function POST(req: Request) {
 
   // ✅ Wichtig: Ein Profil hat pro Turnier eine players-Zeile.
   // match_players referenziert players.id (nicht profiles.id).
-  const { data: pMap, error: pErr } = await sb
-    .from("players")
-    .select("id, profile_id, tournament_id")
-    .in("profile_id", [profileAId, profileBId]);
+  // (>1000 Zeilen: seitenweise laden)
+  const { data: pMap, error: pErr } = await fetchAllRows(() =>
+    sb
+      .from("players")
+      .select("id, profile_id, tournament_id")
+      .in("profile_id", [profileAId, profileBId])
+      .order("id")
+  );
 
   if (pErr) return noStoreJson({ ok: false, error: pErr.message }, { status: 500 });
 
@@ -107,10 +112,15 @@ export async function POST(req: Request) {
   const unionIds = Array.from(new Set([...aPlayerIds, ...bPlayerIds]));
 
   // ---- Matches: Head-to-Head ----
-  const { data: unionMp, error: mp0Err } = await sb
-    .from("match_players")
-    .select("match_id, player_id")
-    .in("player_id", unionIds);
+  // (>1000 Zeilen / lange ID-Listen: in Paketen + seitenweise laden)
+  const { data: unionMp, error: mp0Err } = await fetchAllIn(unionIds, (chunk) =>
+    sb
+      .from("match_players")
+      .select("match_id, player_id")
+      .in("player_id", chunk)
+      .order("match_id")
+      .order("player_id")
+  );
 
   if (mp0Err) {
     return noStoreJson({ ok: false, error: mp0Err.message }, { status: 500 });
@@ -138,10 +148,14 @@ export async function POST(req: Request) {
     return noStoreJson(payload);
   }
 
-  const { data: allMp, error: mpErr } = await sb
-    .from("match_players")
-    .select("match_id, player_id, position")
-    .in("match_id", matchIdsBoth);
+  const { data: allMp, error: mpErr } = await fetchAllIn(matchIdsBoth, (chunk) =>
+    sb
+      .from("match_players")
+      .select("match_id, player_id, position")
+      .in("match_id", chunk)
+      .order("match_id")
+      .order("player_id")
+  );
 
   if (mpErr) {
     return noStoreJson({ ok: false, error: mpErr.message }, { status: 500 });

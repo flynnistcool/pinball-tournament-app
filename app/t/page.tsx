@@ -13110,6 +13110,28 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
       };
     }
 
+    // 3b) ★ Favorit wie das Abzeichen (lib/favorite.ts): Turnier-Winrate (/api/stats, wie im Match-Block),
+    //     Flipper-Winrate (oben geladen) und Elo (Profile) – Platzhalter zählen bei der Elo nicht.
+    const tWinrateByPid: Record<string, number | null> = {};
+    try {
+      const stRes = await fetch(`/api/stats?_ts=${Date.now()}`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        body: JSON.stringify({ code, _ts: Date.now() }),
+      });
+      const stJson = await stRes.json().catch(() => ({}));
+      for (const r of Array.isArray(stJson?.stats) ? stJson.stats : []) {
+        const pid = r?.player_id ? String(r.player_id) : r?.id ? String(r.id) : "";
+        if (pid) tWinrateByPid[pid] = typeof r?.winrate === "number" ? r.winrate : null;
+      }
+    } catch {
+      // ohne Turnier-Winrate entscheidet die Elo
+    }
+    const profForSpeech: Record<string, any> = Object.fromEntries(
+      (Array.isArray(profiles) ? profiles : []).map((p: any) => [String(p.id), p])
+    );
+
     // 4) Speech zusammenbauen
     const parts: string[] = [];
     parts.push(`Round ${roundNo}.`);
@@ -13125,20 +13147,32 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
       const playersText = players.map((p: any) => p.name).join(", ");
       let line = `Match ${idx + 1} on machine ${machineName} with the playing order: ${playersText}.`;
 
-      // Favorite = höchste m-winrate auf dieser Maschine (falls verfügbar)
-      // Matchnummer: wenn Backend eine Nummer liefert, nutzen wir die; sonst 1..n
-      const matchNo = typeof m.number === "number" ? m.number : idx + 1;
-      let best: { name: string; winrate: number } | null = null;
-      for (const p of players) {
-        if (!p.profile_id) continue;
-        const wr = wrByKey[`${p.profile_id}__${machineName}`];
-        const wv = wr?.winrate;
-        if (typeof wv !== "number") continue;
-        if (!best || wv > best.winrate) best = { name: p.name, winrate: wv };
-      }
+      // ★ Favorit nach derselben Regel wie das Abzeichen (lib/favorite.ts)
+      const favCands = mpList
+        .map((mp: any) => {
+          const pid = String(mp.player_id);
+          const pl = playersByIdLocal[pid];
+          if (!pl?.profile_id) return null;
+          const prof = profForSpeech[pl.profile_id];
+          const t = tWinrateByPid[pid];
+          const mw = wrByKey[`${pl.profile_id}__${machineName}`]?.winrate;
+          return {
+            key: pid,
+            t: typeof t === "number" && Number.isFinite(t) ? t : null,
+            m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
+            elo: typeof prof?.rating === "number" ? prof.rating : null,
+            placeholder: prof?.exclude_from_stats === true,
+          };
+        })
+        .filter(Boolean) as any[];
+      const favRes = pickFavorite(favCands);
+      const favName = favRes ? playersByIdLocal[favRes.key]?.name : null;
 
-      if (best) {
-        line += ` Favorite player with the better machine-winrate on ${machineName} in this match is ${best.name}.`;
+      if (favRes && favName) {
+        line +=
+          favRes.reason === "winrate"
+            ? ` The favorite in this match, with the best win rates, is ${favName}.`
+            : ` The favorite in this match, with the highest Elo, is ${favName}.`;
       }
 
       parts.push(line);
