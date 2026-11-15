@@ -3,19 +3,14 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { cookies } from "next/headers";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { isAdminUser } from "@/lib/authRoles";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+// 🔐 Rolle NUR aus app_metadata (user_metadata kann jeder Benutzer selbst ändern) – lib/authRoles.ts
 function isAdminFromUser(user: any): boolean {
-  if (!user) return false;
-
-  const meta = {
-    ...(user.app_metadata || {}),
-    ...(user.user_metadata || {}),
-  };
-
-  return meta.role === "admin";
+  return isAdminUser(user);
 }
 
 function formatLabel(category: string, name: string, from: string, to: string) {

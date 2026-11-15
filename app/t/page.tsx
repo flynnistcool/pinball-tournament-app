@@ -46,6 +46,7 @@ import EloHistoryPanel from "@/components/EloHistoryPanel";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
 import { favoriteTitle, pickFavorite } from "@/lib/favorite";
+import { roleOfUser } from "@/lib/authRoles";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
 import { computeProvisionalRotationPoints, SUPER_FINAL_TP_BONUS } from "@/lib/points";
@@ -9380,18 +9381,9 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
 
       setUserEmail(user.email ?? null);
 
-      console.log("app_metadata:", user.app_metadata);
-      console.log("user_metadata:", user.user_metadata);
-
-      // 👉 WICHTIG: richtiges Merge statt ||
-      const meta = {
-        ...(user.app_metadata || {}),
-        ...(user.user_metadata || {}),
-      };
-
-      console.log("merged meta:", meta, "role:", meta.role);
-
-      const role = meta.role as string | undefined;
+      // 🔐 Rolle NUR aus app_metadata (nur Server/DB kann sie setzen) – lib/authRoles.ts.
+      //    user_metadata kann jeder Benutzer selbst ändern und zählt deshalb NICHT.
+      const role = roleOfUser(user);
 
       if (role === "admin") {
         setUserRole("admin");
@@ -11081,7 +11073,7 @@ async function registerFinalWin(playerId: string, winnerName: string, tvWin: Win
   }, [rounds, matches, matchPlayers]);
 
   useEffect(() => {
-    if (!data || locked) return;
+    if (!data || locked || !isAdmin) return; // 🔐 nur Admins rechnen (Zuschauer dürfen nichts ändern)
 
     // Erstes Laden: nur den aktuellen Stand merken, noch nichts tun
     if (eloBasisRef.current === null) {
@@ -11098,7 +11090,7 @@ async function registerFinalWin(playerId: string, winnerName: string, tvWin: Win
       eloRecalcTimerRef.current = null;
       recalcElo();
     }, 2000);
-  }, [eloBasis, data, locked]);
+  }, [eloBasis, data, locked, isAdmin]);
 
   useEffect(() => {
     return () => {
