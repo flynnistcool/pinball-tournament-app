@@ -28,7 +28,8 @@ import EntryLogMatchLine from "@/components/EntryLogLine";
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
-import RefreshCountdown from "@/components/RefreshCountdown";
+import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdown";
+import { findHalfSavedMatches } from "@/lib/halfSaved";
 import RotationRoundsDialog from "@/components/RotationRoundsDialog";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
@@ -6379,6 +6380,54 @@ const prevRoundStatusRef = useRef<Record<string, string | undefined>>({});
   const [savingTime, setSavingTime] = useState<Record<string, boolean>>({});
   const [timeFocusKey, setTimeFocusKey] = useState<string | null>(null);
 
+  // 🔁 Merkungen (Override) verwerfen, sobald sich der Wert in der DB ändert (z. B. Handy hat gespeichert).
+  // Sonst zeigt das Feld für immer die alte Tablet-Eingabe – und würde sie beim Verlassen erneut speichern.
+  // Ausnahme: das Score-Feld, in dem gerade getippt wird.
+  const scoreFocusKeyRef = useRef<string | null>(null);
+  scoreFocusKeyRef.current = scoreFocusKey;
+  const overrideDbValsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const prev = overrideDbValsRef.current;
+    const next = new Map<string, string>();
+    const changedScore = new Set<string>();
+    const changedPos = new Set<string>();
+    for (const mp of (matchPlayers ?? []) as any[]) {
+      const key = k(String(mp.match_id), String(mp.player_id));
+      const s = mp.score == null ? "" : String(mp.score);
+      const p = mp.position == null ? "" : String(mp.position);
+      next.set("s|" + key, s);
+      next.set("p|" + key, p);
+      if (prev.has("s|" + key) && prev.get("s|" + key) !== s) changedScore.add(key);
+      if (prev.has("p|" + key) && prev.get("p|" + key) !== p) changedPos.add(key);
+    }
+    overrideDbValsRef.current = next;
+
+    if (changedScore.size) {
+      setScoreOverride((o) => {
+        let cp: Record<string, string> | null = null;
+        for (const key of Object.keys(o)) {
+          if (changedScore.has(key) && key !== scoreFocusKeyRef.current) {
+            cp = cp ?? { ...o };
+            delete cp[key];
+          }
+        }
+        return cp ?? o;
+      });
+    }
+    if (changedPos.size) {
+      setPosOverride((o) => {
+        let cp: Record<string, number | null> | null = null;
+        for (const key of Object.keys(o)) {
+          if (changedPos.has(key)) {
+            cp = cp ?? { ...o };
+            delete cp[key];
+          }
+        }
+        return cp ?? o;
+      });
+    }
+  }, [matchPlayers]);
+
 
     // ================================
   // Timeplay Stopwatch (Fullscreen Overlay)
@@ -11112,19 +11161,93 @@ async function registerFinalWin(playerId: string, winnerName: string, tvWin: Win
 
 
 // 🔄 Anzeige "Update in X s" (rechte Spalte): letzter Abruf + gerade am Laden + "jetzt aktualisieren"
-const POLL_MS = 16000;
+const POLL_MS = 12000;
+// Highscores + Serien-Rangliste ändern sich im Turnier kaum → nur etwa jede Minute mitladen
+const POLL_SLOW_MS = 60000;
 const [pollLastAt, setPollLastAt] = useState<number | null>(null);
 const [pollBusy, setPollBusy] = useState(false);
 const pollNowRef = useRef<(() => void) | null>(null);
+// 🧩 Nachladen bei "halb gespeichertem" Match (Anzeige im Aktualisierungs-Block)
+const [pollRecheck, setPollRecheck] = useState<RecheckInfo | null>(null);
 
 useEffect(() => {
   if (!code) return;
 
   let cancelled = false;
   let t: number | undefined;
+  let lastSlowAt = 0; // wann Highscores + Serien-Rangliste zuletzt geladen wurden
 
-async function tick() {
+  // 🧩 Halb gespeicherte Matches: nach 2 s nur die Turnierdaten erneut laden, max. 3× hintereinander
+  const RECHECK_DELAY_MS = 2000;
+  const RECHECK_MAX = 3;
+  let inFlight = false; // es läuft gerade ein Abruf → nie zwei gleichzeitig
+  let recheckTimer: number | undefined;
+  let recheckAttempt = 0;
+  let gaveUpKey = ""; // für genau diesen Zwischenstand schon aufgegeben → nicht erneut versuchen
+  let displayTimer: number | undefined;
+
+  function showRecheck(info: RecheckInfo | null, hideAfterMs?: number) {
+    window.clearTimeout(displayTimer);
+    setPollRecheck(info);
+    if (hideAfterMs) displayTimer = window.setTimeout(() => !cancelled && setPollRecheck(null), hideAfterMs);
+  }
+
+  function checkHalfSaved(next: any) {
+    if (cancelled) return;
+    const half = findHalfSavedMatches(next);
+    const key = [...half].sort().join(",");
+    if (!half.length) {
+      gaveUpKey = "";
+      if (recheckAttempt > 0) {
+        recheckAttempt = 0;
+        window.clearTimeout(recheckTimer);
+        recheckTimer = undefined;
+        showRecheck({ phase: "resolved", attempt: 0, max: RECHECK_MAX, count: 0 }, 4000);
+      }
+      return;
+    }
+    if (recheckTimer !== undefined || key === gaveUpKey) return; // schon geplant / schon aufgegeben
+    if (recheckAttempt >= RECHECK_MAX) {
+      gaveUpKey = key;
+      recheckAttempt = 0;
+      showRecheck({ phase: "gaveup", attempt: RECHECK_MAX, max: RECHECK_MAX, count: half.length }, 5000);
+      return;
+    }
+    recheckAttempt += 1;
+    showRecheck({ phase: "waiting", attempt: recheckAttempt, max: RECHECK_MAX, count: half.length });
+    recheckTimer = window.setTimeout(recheck, RECHECK_DELAY_MS);
+  }
+
+  async function recheck() {
+    recheckTimer = undefined;
+    if (cancelled) return;
+    if (inFlight) {
+      // normales Nachladen läuft gerade → kurz danach noch einmal (zählt nicht als Versuch)
+      recheckTimer = window.setTimeout(recheck, RECHECK_DELAY_MS);
+      return;
+    }
+    inFlight = true;
+    setPollRecheck((p) => (p ? { ...p, phase: "loading" } : p));
+    let next: any = null;
+    try {
+      next = await reload(); // nur Turnierdaten – Profile/Finale/Highscores nicht nötig
+    } catch {
+      // nächster Versuch bzw. normaler Takt
+    } finally {
+      inFlight = false;
+    }
+    if (next) checkHalfSaved(next);
+    else if (!cancelled) recheckTimer = window.setTimeout(recheck, RECHECK_DELAY_MS);
+  }
+
+async function tick(force = false) {
   if (cancelled) return;
+  // 💤 Tablet gesperrt / Tab im Hintergrund: nichts laden (beim Zurückkommen wird sofort geladen)
+  if (!force && typeof document !== "undefined" && document.hidden) return;
+  if (inFlight) return; // Nachladen läuft gerade
+  inFlight = true;
+  const loadSlow = force || Date.now() - lastSlowAt >= POLL_SLOW_MS - 1000;
+  if (loadSlow) lastSlowAt = Date.now();
   setPollBusy(true);
 
   // ✅ HIER EINSETZEN – Snapshot für Elo-Δ (auch für Zuschauer)
@@ -11140,17 +11263,23 @@ async function tick() {
 
   try {
     const next = await reload();
+    checkHalfSaved(next);
 
     // ⚠️ KEIN Elo-Delta-Tracking hier (das passiert über den Snapshot oben)
   await Promise.all([
     loadProfiles(),
     reloadFinal(),
-    loadTournamentHighscores(true), // ✅ silent
-    loadCategoryTournamentLeaderboard(next?.tournament?.category, true, next?.tournament?.name), // ✅ silent
+    ...(loadSlow
+      ? [
+          loadTournamentHighscores(true), // ✅ silent
+          loadCategoryTournamentLeaderboard(next?.tournament?.category, true, next?.tournament?.name), // ✅ silent
+        ]
+      : []),
   ]);
   } catch (e) {
     // optional
   } finally {
+    inFlight = false;
     if (!cancelled) {
       setPollBusy(false);
       setPollLastAt(Date.now());
@@ -11158,24 +11287,34 @@ async function tick() {
   }
 }
 
-  // "jetzt aktualisieren": sofort laden und den 16-s-Takt neu starten
+  // "jetzt aktualisieren": sofort laden und den 12-s-Takt neu starten
   pollNowRef.current = () => {
     if (cancelled) return;
     window.clearInterval(t);
-    t = window.setInterval(tick, POLL_MS);
-    void tick();
+    t = window.setInterval(() => void tick(), POLL_MS);
+    void tick(true); // Knopf = alles laden (auch Highscores + Serie)
   };
 
   // sofort laden
-  tick();
+  void tick(true);
 
-  // alle 16 Sekunden für Besucher & Admin
-  t = window.setInterval(tick, POLL_MS);
+  // alle 12 Sekunden für Besucher & Admin
+  t = window.setInterval(() => void tick(), POLL_MS);
+
+  // 👀 wieder sichtbar (Tablet entsperrt / Tab zurück) → sofort aktualisieren
+  function onVisible() {
+    if (!document.hidden) pollNowRef.current?.();
+  }
+  document.addEventListener("visibilitychange", onVisible);
 
   return () => {
     cancelled = true;
     pollNowRef.current = null;
     clearInterval(t);
+    window.clearTimeout(recheckTimer);
+    window.clearTimeout(displayTimer);
+    document.removeEventListener("visibilitychange", onVisible);
+    setPollRecheck(null);
   };
 }, [code]);
 
@@ -13976,6 +14115,7 @@ const tasksById = useMemo(() => {
       lastAt={pollLastAt}
       intervalMs={POLL_MS}
       busy={pollBusy}
+      recheck={pollRecheck}
       onRefreshNow={() => pollNowRef.current?.()}
     />
 
