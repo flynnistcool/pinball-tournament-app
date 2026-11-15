@@ -23,6 +23,9 @@ import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
 import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
+import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
+import { RivalryEventTv, useRivalryEvents } from "@/components/RivalryEvents";
+import { bestInsightForMatch, type RivalryInsight } from "@/lib/rivalryInsights";
 import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { liveEntriesFrom } from "@/lib/recordWatch";
@@ -757,6 +760,18 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
   // beide inneren Reiter (Serie + Turniername) vorhanden → nach Turnierende doppelt so lange zeigen
   const seriesHasBoth = !!series?.category && !!series?.name;
 
+  // ⚔️ Gegner-Duell-Hinweise (einmal pro Runde laden; nicht bei Round the Pinball/Timeplay/DYP)
+  const rivalryOn = !!data && !isFinished && !["rotation", "timeplay", "dyp_round_robin"].includes(format);
+  const rtpRivalryOn = !!data && !isFinished && format === "rotation";
+  const rivData = useRivalryData(code, rtpRivalryOn ? rtpRefreshKey() : String(data?.rounds?.length ?? 0), rivalryOn || rtpRivalryOn);
+  const rivalry = rivData.insights;
+  // 🎉 Gegner-Ereignisse nach Matches: groß in der Mitte
+  const rivEvents = useRivalryEvents({
+    matchPlayers: data?.match_players,
+    pairs: rivData.pairs,
+    enabled: rivalryOn || rtpRivalryOn,
+  });
+
   // 📈 Verlauf ("Rennen"): kumulierte Rundenpunkte je Spieler (Rotation inkl. vorläufiger Punkte)
   const raceData: RaceData = useMemo(
     () =>
@@ -1231,6 +1246,11 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
 
           <style>{TRANSITION_CSS}</style>
           {/* 🏆 Highscore-Jubel (Allzeit-Rekord / persönlicher Rekord) – Einblendung über allem */}
+          <RivalryEventTv
+            events={rivEvents.events}
+            dismiss={rivEvents.dismiss}
+            nameOf={(pid) => (data?.players ?? []).find((p) => String(p.id) === String(pid))?.name ?? "?"}
+          />
           <RecordCelebration
             code={code}
             data={data}
@@ -1262,6 +1282,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           ) : isMatchFormat && matchView ? (
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
+              rivalry={rivalryOn ? rivalry : null}
               recLookup={recLookup}
               pbLookup={pbLookup}
               mv={matchView}
@@ -1296,7 +1317,12 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                 roundLabels={raceRoundLabels}
               />
             ) : isRotation ? (
-              <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} recLookup={recLookup} />
+              <div className="space-y-3">
+                <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} recLookup={recLookup} />
+                {rtpRivalryOn ? (
+                  <RivalryBar variant="tv" insights={rivalry} nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"} />
+                ) : null}
+              </div>
             ) : (
               <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
             )
@@ -1602,6 +1628,7 @@ const pctFmt = (v: number | null) =>
   v == null ? "–" : `${v.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
 
 function MatchTvView({
+  rivalry,
   recLookup,
   pbLookup,
   mv,
@@ -1613,6 +1640,8 @@ function MatchTvView({
   isFinished,
   race,
 }: {
+  /** ⚔️ Gegner-Duell-Hinweise (null = aus) */
+  rivalry?: Record<string, RivalryInsight> | null;
   recLookup: RecLookup;
   pbLookup: PbLookup;
   mv: MatchViewData;
@@ -1674,6 +1703,7 @@ function MatchTvView({
                 <MatchCardView
                   key={m.matchId}
                   m={m}
+                  rivalry={rivalry && !m.finished ? bestInsightForMatch(m.players.map((p) => p.id), rivalry) : null}
                   rowById={rowById}
                   rec={recLookup(m.machineName)}
                   pb={(playerId) => pbLookup(playerId, m.machineName)}
@@ -1857,11 +1887,13 @@ function CardRecords({ rec }: { rec: ReturnType<RecLookup> }) {
 
 function MatchCardView({
   m,
+  rivalry,
   rowById,
   rec,
   pb,
 }: {
   m: MatchCard;
+  rivalry?: RivalryInsight | null;
   rowById: Record<string, Row>;
   rec: ReturnType<RecLookup>;
   pb: (playerId: string) => ReturnType<PbLookup>;
@@ -1887,6 +1919,11 @@ function MatchCardView({
         </span>
       </div>
       <CardRecords rec={rec} />
+      {rivalry ? (
+        <div className="px-4 pt-2">
+          <RivalryBadge insight={rivalry} variant="tv" nameOf={(pid) => rowById[pid]?.name ?? "?"} />
+        </div>
+      ) : null}
 
       {/* Spieler in Startreihenfolge */}
       <div className="space-y-1.5 p-3">

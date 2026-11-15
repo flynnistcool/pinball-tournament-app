@@ -29,6 +29,8 @@ import {
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import BotEloBadge from "@/components/BotEloBadge";
 import { botEloOf } from "@/lib/myMatch";
+import { rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
+import { RivalryEventPhone, useRivalryEvents } from "@/components/RivalryEvents";
 
 const POLL_MS = 6000;
 /** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 12 s) */
@@ -99,6 +101,18 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
     };
   }, [me, load]);
 
+  // 🎉 Gegner-Ereignisse nach Matches – nur wenn ich beteiligt bin (Karte oben)
+  const phFormat = String(data?.tournament?.format ?? "");
+  const phRivOn =
+    !!data && !!me && String(data?.tournament?.status ?? "") !== "finished" && !["timeplay", "dyp_round_robin"].includes(phFormat);
+  const phRivData = useRivalryData(code, phFormat === "rotation" ? rtpRefreshKey() : String(data?.rounds?.length ?? 0), phRivOn);
+  const phRivEvents = useRivalryEvents({
+    matchPlayers: data?.match_players,
+    pairs: phRivData.pairs,
+    enabled: phRivOn,
+    onlyFor: me?.playerId ?? null,
+  });
+
   if (meError) {
     return (
       <Shell>
@@ -122,6 +136,12 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
 
   return (
     <Shell>
+      <RivalryEventPhone
+        events={phRivEvents.events}
+        dismiss={phRivEvents.dismiss}
+        meId={String(me.playerId)}
+        nameOf={(pid) => String(data.players.find((p) => String(p.id) === String(pid))?.name ?? "?")}
+      />
       <header className="mb-3">
         <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
           {data.tournament?.name ?? "Turnier"}

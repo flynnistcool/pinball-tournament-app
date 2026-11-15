@@ -29,6 +29,9 @@ import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
 import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdown";
+import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } from "@/components/RivalryBadge";
+import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
+import { bestInsightForMatch } from "@/lib/rivalryInsights";
 import { findHalfSavedMatches } from "@/lib/halfSaved";
 import RotationRoundsDialog from "@/components/RotationRoundsDialog";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
@@ -6149,6 +6152,12 @@ function RoundMatchesCard({
     playersCount,
   ]);
 
+  // ⚔️ Gegner-Duell-Hinweise (Serie / Erzfeind / Dauerduell / Jubiläum) – einmal pro Runde laden
+  const rivalryOn =
+    tournament?.status !== "finished" &&
+    !["rotation", "timeplay", "dyp_round_robin"].includes(String(tournament?.format ?? ""));
+  const rivalryInsights = useRivalry(code, String((rounds ?? []).length), rivalryOn);
+
   // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
   const winStreakMode = streakMode(tournament?.format);
   const winStreaks = useMemo(
@@ -8006,6 +8015,19 @@ disabled={
                                   machineName={m.machine_id ? machinesInfoById[m.machine_id]?.name : null}
                                   liveEntries={liveRecordEntries}
                                 />
+
+                                {/* ⚔️ Gegner-Duell-Hinweis (nur laufende Matches) */}
+                                {rivalryOn && String((m as any)?.status ?? "").toLowerCase() !== "finished" ? (() => {
+                                  const ins = bestInsightForMatch(
+                                    mps.map((x: any) => String(x.player_id)),
+                                    rivalryInsights
+                                  );
+                                  return ins ? (
+                                    <div className="px-2 pb-1.5 sm:px-4">
+                                      <RivalryBadge insight={ins} nameOf={(pid) => playersById?.[pid]?.name ?? "?"} />
+                                    </div>
+                                  ) : null;
+                                })() : null}
                               </div>
 
                                       {/* ================================
@@ -10199,6 +10221,31 @@ if (joined)
                         ? new Date(t.created_at).toLocaleDateString("de-DE")
                         : "—"}
                     </div>
+
+                    {/* 👥 Wer hat mitgespielt (beendet: nach Endplatz, 🏆 = Sieger) */}
+                    {Array.isArray(t.players) && t.players.length ? (
+                      <div className="sm:col-[span_24_/_span_24] -mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-neutral-500">
+                        {t.players.map((p: any, i: number) => (
+                          <span
+                            key={i}
+                            className={
+                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 " +
+                              (p.kind === "bot"
+                                ? "bg-violet-50 text-violet-700"
+                                : p.kind === "placeholder"
+                                ? "bg-neutral-100 text-neutral-400 line-through"
+                                : p.rank === 1
+                                ? "bg-amber-50 font-semibold text-amber-800"
+                                : "bg-neutral-50 text-neutral-600")
+                            }
+                            title={p.rank ? `${p.rank}. Platz` : undefined}
+                          >
+                            {p.rank === 1 ? "🏆" : p.kind === "bot" ? "🤖" : null}
+                            {p.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
 
@@ -11990,6 +12037,20 @@ async function reloadAll() {
 }, [rounds]);
 
   const isRotationFormat = String(data?.tournament?.format ?? "") === "rotation";
+  // ⚔️ Round the Pinball: "Duelle des Abends" einmal oben (statt pro Flipper) – einmal pro Runde laden
+  const rtpRivalryOn = isRotationFormat && data?.tournament?.status !== "finished";
+  // 🎉 Gegner-Ereignisse nach Matches (Serie gerissen / Erzfeind besiegt / Jubiläum) – alle Formate außer Timeplay/DYP
+  const rivEventsOn =
+    !!data &&
+    data?.tournament?.status !== "finished" &&
+    !["timeplay", "dyp_round_robin"].includes(String(data?.tournament?.format ?? ""));
+  const rivData = useRivalryData(
+    code,
+    isRotationFormat ? rtpRefreshKey() : String(data?.rounds?.length ?? 0),
+    rivEventsOn
+  );
+  const rtpRivalry = rivData.insights;
+  const rivEvents = useRivalryEvents({ matchPlayers: data?.match_players, pairs: rivData.pairs, enabled: rivEventsOn });
 
   const isTimeplayFormat = String(data?.tournament?.format ?? "") === "timeplay";
 
@@ -13298,6 +13359,12 @@ const tasksById = useMemo(() => {
 
   return (
     <div className="space-y-4">
+      {/* 🎉 Gegner-Ereignisse: klein rechts unten */}
+      <RivalryEventToasts
+        events={rivEvents.events}
+        dismiss={rivEvents.dismiss}
+        nameOf={(pid) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?"}
+      />
       {/* 🛡️ Laden fehlgeschlagen → letzte Ansicht bleibt stehen, Hinweis oben */}
       {loadWarning ? (
         <div className="fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+8px)] z-[90] w-[min(92vw,560px)] -translate-x-1/2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 shadow-lg">
@@ -14137,6 +14204,13 @@ const tasksById = useMemo(() => {
           }));
       })()}
     />
+    {rtpRivalryOn ? (
+      <RivalryBar
+        className="mt-2"
+        insights={rtpRivalry}
+        nameOf={(pid) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?"}
+      />
+    ) : null}
     <RotationGlobalTimerSticky
       locked={locked}
       timeLeftLabel={rotFmt(displayMs)}

@@ -15,6 +15,8 @@ import { liveEntriesFrom } from "@/lib/recordWatch";
 import { topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import StreakFire from "@/components/StreakFire";
+import RivalryBadge, { rtpRefreshKey, useRivalry } from "@/components/RivalryBadge";
+import { pairKey, type RivalryInsight } from "@/lib/rivalryInsights";
 import BotEloBadge from "@/components/BotEloBadge";
 import { favoriteTitle, pickFavorite, type FavoriteResult } from "@/lib/favorite";
 import type { MmData, MyMatchInfo } from "@/lib/myMatch";
@@ -160,6 +162,20 @@ export default function PhoneMatchInsights({
   const sMode = streakMode(data.tournament?.format);
   const streaks = useMemo(() => (finished ? {} : computeStreaks(data, sMode)), [data, sMode, finished]);
 
+  // ⚔️ Gegner-Duell-Hinweise: nur eigene Gegner im laufenden Match (nicht Round the Pinball/Timeplay/DYP)
+  const rivalryOn = !finished && !info.done && !["timeplay", "dyp_round_robin"].includes(format);
+  // Round the Pinball: alle gegen alle → einmal pro Runde laden, nur die 2 spannendsten zeigen
+  const rivalry = useRivalry(code, isRotation ? rtpRefreshKey() : String(data.rounds?.length ?? 0), rivalryOn);
+  const myRivalries = rivalryOn
+    ? info.players
+        .map((mp) => String(mp.player_id))
+        .filter((pid) => pid !== String(meId))
+        .map((pid) => rivalry[pairKey(String(meId), pid)])
+        .filter((x): x is RivalryInsight => !!x)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, isRotation ? 2 : 3)
+    : [];
+
   return (
     <div className="space-y-3 rounded-2xl bg-white p-4 shadow-sm">
       <div className="text-sm font-black uppercase tracking-wide text-neutral-500">📊 Infos zum Match</div>
@@ -179,6 +195,14 @@ export default function PhoneMatchInsights({
               <RecordItem icon="📅" label="30 Tage" rec={recs.month} />
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {myRivalries.length ? (
+        <div className="flex flex-col items-start gap-1.5">
+          {myRivalries.map((ins) => (
+            <RivalryBadge key={ins.a + ins.b} insight={ins} nameOf={nameOf} className="text-xs" />
+          ))}
         </div>
       ) : null}
 

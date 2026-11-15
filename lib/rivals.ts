@@ -42,6 +42,8 @@ export type RivalStat = {
   streakFrom: string | null;
   streakTo: string | null;
   streakTournaments: number;
+  /** laufende Serie: so viele Duelle zuletzt am Stück gewonnen (0 = letztes Duell nicht gewonnen) */
+  currentStreak: number;
 };
 
 export type RivalKind = "frequent" | "even" | "nemesis" | "favorite" | "streak";
@@ -143,6 +145,7 @@ export function computeRivalStats(
       streakFrom: s.bestFrom,
       streakTo: s.bestTo,
       streakTournaments: s.bestTids,
+      currentStreak: s.run,
     });
   });
   return out;
