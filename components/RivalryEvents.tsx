@@ -83,18 +83,61 @@ const KIND_TONE: Record<RivalryEvent["kind"], { tv: string; light: string }> = {
   jubilee: { tv: "from-sky-500/90 to-indigo-600/90", light: "border-sky-200 bg-sky-50 text-sky-900" },
 };
 
-/** 📺 TV: groß in der Mitte, eins nach dem anderen */
+// 🔊 kurze, selbst erzeugte Klänge (kein Download nötig) – je Ereignis eigene Melodie
+const EVENT_SOUND: Record<RivalryEvent["kind"], { notes: number[]; step: number; type: OscillatorType }> = {
+  // 💥 Serie gerissen: absteigend, etwas "kaputt" klingend
+  streakBroken: { notes: [784, 622, 523, 392], step: 0.12, type: "triangle" },
+  // 😈 Erzfeind besiegt: aufsteigender Triumph
+  nemesisBeaten: { notes: [523, 659, 784, 1047], step: 0.11, type: "square" },
+  // 🤝 Jubiläum: freundliches Glockenspiel
+  jubilee: { notes: [659, 988, 1319], step: 0.16, type: "sine" },
+};
+
+function playEventSound(kind: RivalryEvent["kind"]) {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const { notes, step, type } = EVENT_SOUND[kind];
+    const vol = type === "square" ? 0.08 : 0.22; // Rechteck klingt lauter
+    notes.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type;
+      o.frequency.value = f;
+      const t0 = ctx.currentTime + i * step;
+      const last = i === notes.length - 1;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + (last ? 0.7 : 0.25));
+      o.connect(g).connect(ctx.destination);
+      o.start(t0);
+      o.stop(t0 + (last ? 0.75 : 0.3));
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 2000);
+  } catch {
+    /* ohne Ton weiter */
+  }
+}
+
+/** 📺 TV: groß in der Mitte, eins nach dem anderen (Ton nur, wenn am TV "🔊 Ton aktivieren" gedrückt wurde) */
 export function RivalryEventTv({
   events,
   dismiss,
   nameOf,
+  soundOn = false,
 }: {
   events: RivalryEvent[];
   dismiss: (id: string) => void;
   nameOf: (playerId: string) => string;
+  soundOn?: boolean;
 }) {
   const ev = events[0];
   useAutoDismiss(ev?.id, 7000, dismiss);
+  useEffect(() => {
+    if (ev && soundOn) playEventSound(ev.kind);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ev?.id]);
   if (!ev) return null;
   const t = eventText(ev, nameOf);
   return (

@@ -1247,6 +1247,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
           <style>{TRANSITION_CSS}</style>
           {/* 🏆 Highscore-Jubel (Allzeit-Rekord / persönlicher Rekord) – Einblendung über allem */}
           <RivalryEventTv
+            soundOn={soundOn}
             events={rivEvents.events}
             dismiss={rivEvents.dismiss}
             nameOf={(pid) => (data?.players ?? []).find((p) => String(p.id) === String(pid))?.name ?? "?"}
