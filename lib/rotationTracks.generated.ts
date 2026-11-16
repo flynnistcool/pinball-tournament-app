@@ -7,7 +7,6 @@ import type { RotationTrack } from "@/lib/rotationMusic";
 const rot = (file: string) => "/sounds/rotation/" + encodeURIComponent(file);
 
 export const GENERATED_TRACKS: readonly RotationTrack[] = [
-  { id: "vanta-bloom-rock-alexgrohl", title: "Vanta Bloom-Rock", artist: "AlexGrohl", category: "Sonstiges", src: rot("AlexGrohl - Vanta Bloom-Rock-.mp3") },
   { id: "vanta-bloom-alexgrohl", title: "Vanta Bloom", artist: "AlexGrohl", category: "Rock", src: rot("AlexGrohl - Vanta Bloom-Rock.mp3") },
   { id: "my-heart-is-blue-black-assaf-ayalon", title: "My Heart Is Blue Black", artist: "Assaf Ayalon", category: "Rockabilly", src: rot("Assaf Ayalon - My Heart Is Blue Black-Rockabilly.mp3") },
   { id: "honey-baby-assaf-ayalon-feat-roy-young", title: "Honey Baby", artist: "Assaf Ayalon feat. Roy Young", category: "Rock", src: rot("Assaf Ayalon feat. Roy Young - Honey Baby-Rock.mp3") },
