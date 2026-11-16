@@ -9,6 +9,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RotationProgress } from "@/lib/rotationTurn";
+import { notifSetting } from "@/lib/notifications";
+import { playSoundById } from "@/lib/playSound";
+import { useNotificationSettings } from "@/components/useNotificationSettings";
 
 const SHOW_MS = 4000;
 
@@ -30,6 +33,8 @@ export default function RotationTurnSplash({
   /** TV: Start-Meldung, wenn während die Seite offen ist Runden erzeugt werden */
   detectStart?: boolean;
 }) {
+  // 🔔 Meldungen & Sounds: an/aus + Dauer je Gerät
+  const notif = notifSetting(useNotificationSettings(), "rotationSplash", variant === "tv" ? "tv" : "admin");
   const prevRef = useRef<RotationProgress | null>(null);
   const pendingStartRef = useRef(false);
   const [splash, setSplash] = useState<Splash | null>(null);
@@ -81,16 +86,17 @@ export default function RotationTurnSplash({
 
   useEffect(() => {
     if (!splash) return;
+    if (notif.enabled && notif.sound !== "none") playSoundById(notif.sound, notif.volume);
     setAnim(false);
     const raf = window.requestAnimationFrame(() => setAnim(true));
-    const t = window.setTimeout(() => setSplash(null), SHOW_MS);
+    const t = window.setTimeout(() => setSplash(null), notif.ms ?? SHOW_MS);
     return () => {
       window.cancelAnimationFrame(raf);
       window.clearTimeout(t);
     };
   }, [splash]);
 
-  if (!splash) return null;
+  if (!splash || !notif.enabled) return null;
 
   const tv = variant === "tv";
   const isDone = splash.kind === "done";

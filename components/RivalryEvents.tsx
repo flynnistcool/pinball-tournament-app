@@ -9,6 +9,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { eventsForFinishedMatch, eventText, type PairState, type RivalryEvent } from "@/lib/rivalryInsights";
+import { notifSetting } from "@/lib/notifications";
+import { useNotificationSettings } from "@/components/useNotificationSettings";
+import { playEventSound } from "@/lib/synthSounds";
+import { playSoundById } from "@/lib/playSound";
+export { playEventSound };
 
 type MpLike = { match_id: string | number; player_id: string | number; position: number | null | undefined };
 
@@ -79,46 +84,11 @@ function useAutoDismiss(id: string | undefined, ms: number, dismiss: (id: string
 
 const KIND_TONE: Record<RivalryEvent["kind"], { tv: string; light: string }> = {
   streakBroken: { tv: "from-orange-500/90 to-rose-600/90", light: "border-orange-200 bg-orange-50 text-orange-900" },
+  leadChange: { tv: "from-amber-500/90 to-yellow-600/90", light: "border-amber-200 bg-amber-50 text-amber-900" },
   nemesisBeaten: { tv: "from-rose-600/90 to-fuchsia-700/90", light: "border-rose-200 bg-rose-50 text-rose-900" },
   jubilee: { tv: "from-sky-500/90 to-indigo-600/90", light: "border-sky-200 bg-sky-50 text-sky-900" },
 };
 
-// 🔊 kurze, selbst erzeugte Klänge (kein Download nötig) – je Ereignis eigene Melodie
-const EVENT_SOUND: Record<RivalryEvent["kind"], { notes: number[]; step: number; type: OscillatorType }> = {
-  // 💥 Serie gerissen: absteigend, etwas "kaputt" klingend
-  streakBroken: { notes: [784, 622, 523, 392], step: 0.12, type: "triangle" },
-  // 😈 Erzfeind besiegt: aufsteigender Triumph
-  nemesisBeaten: { notes: [523, 659, 784, 1047], step: 0.11, type: "square" },
-  // 🤝 Jubiläum: freundliches Glockenspiel
-  jubilee: { notes: [659, 988, 1319], step: 0.16, type: "sine" },
-};
-
-function playEventSound(kind: RivalryEvent["kind"]) {
-  try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const { notes, step, type } = EVENT_SOUND[kind];
-    const vol = type === "square" ? 0.08 : 0.22; // Rechteck klingt lauter
-    notes.forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = type;
-      o.frequency.value = f;
-      const t0 = ctx.currentTime + i * step;
-      const last = i === notes.length - 1;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + (last ? 0.7 : 0.25));
-      o.connect(g).connect(ctx.destination);
-      o.start(t0);
-      o.stop(t0 + (last ? 0.75 : 0.3));
-    });
-    setTimeout(() => ctx.close().catch(() => {}), 2000);
-  } catch {
-    /* ohne Ton weiter */
-  }
-}
 
 /** 📺 TV: groß in der Mitte, eins nach dem anderen (Ton nur, wenn am TV "🔊 Ton aktivieren" gedrückt wurde) */
 export function RivalryEventTv({
@@ -132,12 +102,20 @@ export function RivalryEventTv({
   nameOf: (playerId: string) => string;
   soundOn?: boolean;
 }) {
+  const ns = useNotificationSettings();
   const ev = events[0];
-  useAutoDismiss(ev?.id, 7000, dismiss);
+  const st = ev ? notifSetting(ns, ev.kind, "tv") : null;
+  useAutoDismiss(ev?.id, st?.ms ?? 7000, dismiss);
   useEffect(() => {
-    if (ev && soundOn) playEventSound(ev.kind);
+    if (!ev || !st) return;
+    if (!st.enabled) {
+      dismiss(ev.id); // 🔔 auf dem TV ausgeschaltet
+      return;
+    }
+    if (soundOn && st.sound !== "none") playSoundById(st.sound, st.volume); // 🔊 gewählter Sound
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ev?.id]);
+  if (st && !st.enabled) return null;
   if (!ev) return null;
   const t = eventText(ev, nameOf);
   return (
@@ -165,7 +143,14 @@ function Toast({
   dismiss: (id: string) => void;
   nameOf: (playerId: string) => string;
 }) {
-  useAutoDismiss(ev.id, 6000, dismiss);
+  const st = notifSetting(useNotificationSettings(), ev.kind, "admin");
+  useAutoDismiss(ev.id, st.ms ?? 6000, dismiss);
+  useEffect(() => {
+    if (!st.enabled) dismiss(ev.id); // 🔔 im Admin ausgeschaltet
+    else if (st.sound !== "none") playSoundById(st.sound, st.volume);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ev.id]);
+  if (!st.enabled) return null;
   const t = eventText(ev, nameOf);
   return (
     <button
@@ -215,9 +200,17 @@ export function RivalryEventPhone({
   nameOf: (playerId: string) => string;
   meId: string;
 }) {
+  const ns = useNotificationSettings();
   const ev = events[0];
-  useAutoDismiss(ev?.id, 8000, dismiss);
-  if (!ev) return null;
+  const st = ev ? notifSetting(ns, ev.kind, "phone") : null;
+  useAutoDismiss(ev?.id, st?.ms ?? 8000, dismiss);
+  useEffect(() => {
+    if (!ev || !st) return;
+    if (!st.enabled) dismiss(ev.id); // 🔔 am Handy ausgeschaltet
+    else if (st.sound !== "none") playSoundById(st.sound, st.volume);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ev?.id]);
+  if (!ev || (st && !st.enabled)) return null;
   const t = eventText(ev, nameOf, meId);
   return (
     <div className="fixed inset-x-3 top-[calc(env(safe-area-inset-top,0px)+12px)] z-[70]">

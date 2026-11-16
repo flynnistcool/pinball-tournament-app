@@ -1,0 +1,25 @@
+🔔 EIGENE SOUNDS FÜR „MELDUNGEN & SOUNDS“
+=========================================
+
+NEUE SOUNDS HINZUFÜGEN
+1. MP3-Datei(en) in diesen Ordner kopieren:
+      public/sounds/effekte/
+   Der Dateiname ist der Anzeigename in der Auswahl, z. B.:
+      Tusch.mp3            →  „Tusch“
+      Applaus kurz.mp3     →  „Applaus kurz“
+
+2. Im Terminal im Projektordner ausführen:
+      npm run musik
+   (sichert die Originale auf dem Desktop, verkleinert, gleicht die Lautstärke an
+    und nimmt die Sounds in die Auswahl auf)
+
+3. Hochladen (oder Claude sagen: "hochladen").
+
+4. Im Admin-Tab unter „🔔 Meldungen & Sounds“ den Sound bei der gewünschten
+   Mitteilung auswählen und speichern.
+
+TIPPS
+   - Kurze Sounds (1–5 Sekunden) passen am besten.
+   - Lizenz beachten (öffentliche Wiedergabe bei Turnieren).
+   - Sound entfernen: Datei löschen, npm run musik, hochladen.
+     Mitteilungen mit diesem Sound fallen dann automatisch auf ihren Standard-Ton zurück.

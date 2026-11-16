@@ -25,6 +25,9 @@ import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventTv, useRivalryEvents } from "@/components/RivalryEvents";
+import { notifSetting } from "@/lib/notifications";
+import { playSoundById } from "@/lib/playSound";
+import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { bestInsightForMatch, type RivalryInsight } from "@/lib/rivalryInsights";
 import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
@@ -908,11 +911,22 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
     }
   }
 
+  // 🔔 Meldungen & Sounds (Turnierende: an/aus + Lautstärke)
+  const tvNotif = useNotificationSettings();
+
   function playCelebration() {
     const drum = drumRef.current;
     const fanfare = fanfareRef.current;
     if (!drum || !fanfare) return;
+    const st = notifSetting(tvNotif, "tournamentEnd", "tv");
+    if (!st.enabled || st.sound === "none") return;
+    if (st.sound !== "drumFanfare") {
+      playSoundById(st.sound, st.volume); // 🔊 anderer Sound aus "Meldungen & Sounds"
+      return;
+    }
     try {
+      drum.volume = Math.min(1, 0.8 * st.volume);
+      fanfare.volume = Math.min(1, 0.9 * st.volume);
       drum.currentTime = 0;
       drum.play().catch(() => {});
       setTimeout(() => {
@@ -1256,10 +1270,11 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             code={code}
             data={data}
             soundOn={soundOn}
-            onRecordSound={(kind) => {
+            onRecordSound={(kind, volume) => {
               const f = fanfareRef.current;
               if (!f) return;
               try {
+                f.volume = Math.min(1, 0.9 * volume); // 🔔 Lautstärke aus "Meldungen & Sounds"
                 f.currentTime = 0;
                 f.play().catch(() => {});
                 // 30-Tage-Highscore: nur ca. 5 s Fanfare

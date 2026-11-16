@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button, Card, CardBody, CardHeader } from "@/components/ui";
 import BotLab from "@/components/BotLab";
 import UsersAdmin from "@/components/UsersAdmin";
+import NotificationsOverview from "@/components/NotificationsOverview";
 
 /**
  * Admin-only tab content.
@@ -43,6 +44,18 @@ export default function AdminTab() {
         </CardHeader>
         <CardBody>
           <UsersAdmin />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="text-sm font-semibold">🔔 Meldungen & Sounds</div>
+          <div className="text-xs text-neutral-500">
+            Welche Mitteilung erscheint wo (TV / Admin / Handy), wie lange und mit welchem Ton.
+          </div>
+        </CardHeader>
+        <CardBody>
+          <NotificationsOverview />
         </CardBody>
       </Card>
 

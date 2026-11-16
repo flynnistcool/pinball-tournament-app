@@ -14,6 +14,11 @@
 // Zeiten bewusst lang: man soll es noch sehen, wenn man erst zum TV läuft.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { notifSetting, type NotifDevice } from "@/lib/notifications";
+import { useNotificationSettings } from "@/components/useNotificationSettings";
+import { playDing } from "@/lib/synthSounds";
+import { playSoundById } from "@/lib/playSound";
+export { playDing };
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert (createPortal funktioniert trotzdem)
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, type Celebration, type PriorRecords } from "@/lib/recordWatch";
@@ -43,30 +48,6 @@ type LiveData = Parameters<typeof liveEntriesFrom>[0] &
 
 const fmt = (n: number) => n.toLocaleString("de-DE");
 
-function playDing() {
-  try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const notes = [880, 1318.5];
-    notes.forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = "sine";
-      o.frequency.value = f;
-      const t0 = ctx.currentTime + i * 0.14;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.45);
-      o.connect(g).connect(ctx.destination);
-      o.start(t0);
-      o.stop(t0 + 0.5);
-    });
-    setTimeout(() => ctx.close().catch(() => {}), 1200);
-  } catch {
-    /* ohne Ton weiter */
-  }
-}
 
 const CONFETTI_COLORS = ["#fbbf24", "#f472b6", "#60a5fa", "#34d399", "#a78bfa", "#fb923c", "#f87171"];
 
@@ -254,15 +235,19 @@ function RecordCelebrationInner({
   soundOn,
   onRecordSound,
   dismissOnTap = false,
+  device = "tv",
 }: {
   code: string;
   data: LiveData | null;
   soundOn: boolean;
-  /** Fanfare abspielen: "record" ganz, "month" kurz (ca. 5 s) */
-  onRecordSound?: (kind: "record" | "month") => void;
+  /** Fanfare abspielen: "record" ganz, "month" kurz (ca. 5 s); volume = Faktor aus 🔔 Meldungen & Sounds */
+  onRecordSound?: (kind: "record" | "month", volume: number) => void;
   /** Admin-Bereich: Antippen schließt die Einblendung sofort */
   dismissOnTap?: boolean;
+  /** für 🔔 Meldungen & Sounds (An/Aus, Dauer, Lautstärke je Gerät) */
+  device?: NotifDevice;
 }) {
+  const notifSettings = useNotificationSettings();
   const [prior, setPrior] = useState<PriorRecords | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [priorWins, setPriorWins] = useState<Record<string, number> | null>(null);
@@ -474,11 +459,15 @@ function RecordCelebrationInner({
   const current = queue[0] ?? null;
   useEffect(() => {
     if (!current) return;
-    if (soundOn) {
-      if (current.kind === "personal" || current.kind === "wins" || current.kind === "streak") playDing();
-      else onRecordSound?.(current.kind);
+    // 🔔 Meldungen & Sounds: auf diesem Gerät aus → überspringen
+    const st = notifSetting(notifSettings, current.kind, device);
+    if (!st.enabled) {
+      setQueue((q) => q.slice(1));
+      return;
     }
-    const t = window.setTimeout(() => setQueue((q) => q.slice(1)), SHOW_MS[current.kind]);
+    // 🔊 gewählter Sound (🔔 Meldungen & Sounds); TV nur nach "🔊 Ton aktivieren"
+    if ((device === "tv" ? soundOn : true) && st.sound !== "none") playSoundById(st.sound, st.volume);
+    const t = window.setTimeout(() => setQueue((q) => q.slice(1)), st.ms ?? SHOW_MS[current.kind]);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current]);

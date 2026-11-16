@@ -6232,7 +6232,7 @@ function RoundMatchesCard({
     playersCount,
   ]);
 
-  // ⚔️ Gegner-Duell-Hinweise (Serie / Erzfeind / Dauerduell / Jubiläum) – einmal pro Runde laden
+  // ⚔️ Gegner-Duell-Hinweise (Serie / Erzfeind / Ebenbürtig / Jubiläum) – einmal pro Runde laden
   const rivalryOn =
     tournament?.status !== "finished" &&
     !["rotation", "timeplay", "dyp_round_robin"].includes(String(tournament?.format ?? ""));
@@ -12358,13 +12358,63 @@ function applySoundSettings(next: SoundSettings) {
   setSoundSettings(next);
   soundRef.current = next;
   // laufende Musik sofort anpassen
+  rotMusicSetVol(next.musicVol);
+}
+
+// 🍏 iPad/iPhone: Safari ignoriert audio.volume → Musik dort über einen GainNode (Web Audio) leiten.
+//    Am PC bleibt alles wie bisher (audio.volume). Der GainNode wird im Tippen auf "Start" angelegt (iOS-Pflicht).
+const rotMusicCtxRef = useRef<AudioContext | null>(null);
+const rotMusicGainRef = useRef<GainNode | null>(null);
+function rotIsIOS() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1);
+}
+/** Musik-Lautstärke setzen (iOS: GainNode, sonst audio.volume) */
+function rotMusicSetVol(v: number) {
+  const vol = Math.min(1, Math.max(0, v));
+  const g = rotMusicGainRef.current;
+  const ctx = rotMusicCtxRef.current;
+  if (g && ctx) {
+    try {
+      g.gain.setTargetAtTime(vol, ctx.currentTime, 0.05);
+    } catch {
+      g.gain.value = vol;
+    }
+    return;
+  }
   const a = rotMusicRef.current;
   if (a) {
     try {
-      a.volume = next.musicVol;
+      a.volume = vol;
     } catch {
       /* ignore */
     }
+  }
+}
+/** im Tippen aufrufen: iOS → GainNode anlegen bzw. Audio-Kontext wieder aufwecken */
+function rotMusicIOSConnect() {
+  if (!rotIsIOS()) return;
+  if (rotMusicGainRef.current) {
+    rotMusicCtxRef.current?.resume().catch(() => {});
+    return;
+  }
+  const a = rotMusicEnsure();
+  if (!a) return;
+  try {
+    const C = window.AudioContext || (window as any).webkitAudioContext;
+    if (!C) return;
+    const ctx: AudioContext = new C();
+    const src = ctx.createMediaElementSource(a);
+    const g = ctx.createGain();
+    g.gain.value = soundRef.current.musicVol;
+    src.connect(g).connect(ctx.destination);
+    a.volume = 1;
+    rotMusicCtxRef.current = ctx;
+    rotMusicGainRef.current = g;
+    ctx.resume().catch(() => {});
+  } catch (err) {
+    console.log("iOS music gain failed (fallback audio.volume):", err);
   }
 }
 
@@ -12417,7 +12467,7 @@ function rotPrepareMusicStartInTap() {
   try {
     // iOS: nur EIN play() im Tap, und laufen lassen
     a.currentTime = 0;
-    a.volume = soundRef.current.musicVol;
+    rotMusicSetVol(soundRef.current.musicVol);
     a.muted = true;
 
     a.play()
@@ -12443,7 +12493,7 @@ function rotMusicPlay() {
   const a = rotMusicEnsure();
   if (!a) return;
   try {
-    //a.volume = soundRef.current.musicVol;
+    rotMusicCtxRef.current?.resume().catch(() => {}); // iOS: Kontext ggf. wieder aufwecken
     if (a.paused) a.play().catch(() => {});
   } catch {
     /* ignore */
@@ -12456,7 +12506,7 @@ function rotMusicStop() {
   try {
     a.pause();
     a.currentTime = 0;
-    a.volume = soundRef.current.musicVol;
+    rotMusicSetVol(soundRef.current.musicVol);
   } catch {
     /* ignore */
   }
@@ -12465,17 +12515,13 @@ function rotMusicStop() {
 function rotMusicDuck() {
   const a = rotMusicRef.current;
   if (!a) return;
-  try {
-    a.volume = soundRef.current.musicDuckVol;
-  } catch {}
+  rotMusicSetVol(soundRef.current.musicDuckVol);
 }
 
 function rotMusicUnduck() {
   const a = rotMusicRef.current;
   if (!a) return;
-  try {
-    a.volume = soundRef.current.musicVol;
-  } catch {}
+  rotMusicSetVol(soundRef.current.musicVol);
 }
 //function rotMusicUnduckPlay() {
 //  const a = rotMusicRef.current;
@@ -13092,6 +13138,7 @@ function rotStartMainTimer(durationSec: number) {
 
 
 function rotStartGlobal(minutes = 10) {
+  rotMusicIOSConnect(); // 🍏 iPad: Lautstärke-Regelung im Tippen einrichten
   rotUnlockSpeechOnce();
 
   // iOS: Endsound zuerst unlocken, DANACH Musik starten (nicht parallel)
@@ -13147,6 +13194,7 @@ function rotStartGlobal(minutes = 10) {
 
     // Resume (paused -> running)
     if (rotPaused) {
+      rotMusicIOSConnect(); // 🍏 iPad: Audio-Kontext im Tippen wieder aufwecken
       const remaining = Math.max(0, rotTimer.remainingMs as number);
       setRotTimer((prev) => ({
         endAt: Date.now() + remaining,
@@ -13558,7 +13606,7 @@ const tasksById = useMemo(() => {
         </div>
       ) : null}
       {/* 🏆 Highscore-Jubel wie am TV – hier ohne Ton, Antippen schließt */}
-      <RecordCelebration code={code} data={data} soundOn={false} dismissOnTap />
+      <RecordCelebration code={code} data={data} soundOn={false} dismissOnTap device="admin" />
 
 
 

@@ -3,7 +3,7 @@
 // Pro Spielerpaar höchstens EIN Hinweis, in dieser Rangfolge:
 //  1) 🔥 laufende Serie: einer hat die letzten ≥ 3 Duelle gegen den anderen gewonnen
 //  2) 😈 Erzfeind-Duell: einer ist der Erzfeind (#1) des anderen – und die Bilanz ist klar (≤ 40 %)
-//  3) ⚖️ Dauerduell: ≥ 20 Duelle und Bilanz zwischen 45 % und 55 %
+//  3) ⚖️ Ebenbürtig: ≥ 20 Duelle und Bilanz zwischen 45 % und 55 %
 //  4) 🤝 Jubiläum: das kommende Duell ist das 50., 100., 150. …
 // Grundlage: Duelle wie in lib/rivals.ts (alle Formate außer DYP, ohne Bots/Platzhalter).
 
@@ -82,7 +82,7 @@ export function buildInsights(
       if (nemesisOf.get(Y.profileId) === X.profileId && sy.winrate <= INSIGHT_NEMESIS_MAX_WINRATE)
         cands.push({ kind: "nemesis", ...base(X, Y, sx.wins, sx.losses), n: 0, score: 300 + Math.min(99, sy.duels / 10) });
 
-      // 3) Dauerduell
+      // 3) Ebenbürtig
       if (sx.duels >= INSIGHT_EVEN_MIN_DUELS && Math.abs(sx.winrate - 50) <= INSIGHT_EVEN_BAND) {
         const xLeads = sx.wins >= sx.losses;
         cands.push({
@@ -130,7 +130,7 @@ export function insightText(ins: RivalryInsight, nameOf: (playerId: string) => s
     case "nemesis":
       return { icon: "😈", text: `Erzfeind-Duell: ${A} ist ${gen(B)} Erzfeind (${ins.aWins} : ${ins.bWins})` };
     case "even":
-      return { icon: "⚖️", text: `Dauerduell ${A} – ${B}: ${ins.aWins} : ${ins.bWins}` };
+      return { icon: "⚖️", text: `Ebenbürtig: ${A} – ${B} ${ins.aWins} : ${ins.bWins}` };
     case "jubilee":
       return { icon: "🤝", text: `${ins.n}. Duell zwischen ${A} und ${B}` };
   }
@@ -196,7 +196,7 @@ export function buildPairStates(
 export type RivalryEvent = {
   /** eindeutig: Match + Art + Paar */
   id: string;
-  kind: "streakBroken" | "nemesisBeaten" | "jubilee";
+  kind: "streakBroken" | "nemesisBeaten" | "jubilee" | "leadChange";
   winner: string;
   loser: string;
   /** gerissene Serienlänge bzw. Nummer des Duells */
@@ -232,6 +232,11 @@ export function eventsForFinishedMatch(
 
       if (loserStreak >= EVENT_MIN_BROKEN_STREAK)
         out.push({ id: `${matchId}|streak|${winner}|${loser}`, kind: "streakBroken", n: loserStreak, score: 300 + loserStreak, ...base });
+      // ⚖️ Führungswechsel / Gleichstand in einer ausgeglichenen Rivalität (≥ 20 Duelle):
+      //    der Hintere zieht gleich, oder bei Gleichstand übernimmt jemand die Führung
+      const wBefore = wIsX ? st.xWins : st.yWins;
+      if (st.duels >= INSIGHT_EVEN_MIN_DUELS && wBefore <= lWins && wWins >= lWins)
+        out.push({ id: `${matchId}|lead|${winner}|${loser}`, kind: "leadChange", n: 0, score: 250, ...base });
       if (loserIsWinnersNemesis)
         out.push({ id: `${matchId}|nemesis|${winner}|${loser}`, kind: "nemesisBeaten", n: 0, score: 200, ...base });
       const nth = st.duels + 1;
@@ -274,6 +279,24 @@ export function eventText(
           ? `${W} hat dich geschlagen – dabei bist du sein Erzfeind. (jetzt ${bil})`
           : `${W} schlägt seinen Erzfeind ${L} (jetzt ${bil}).`,
       };
+    case "leadChange": {
+      const tie = ev.winnerWins === ev.loserWins;
+      return {
+        icon: "⚖️",
+        title: tie ? "Gleichstand!" : "Führungswechsel!",
+        text: tie
+          ? meWin
+            ? `Du ziehst gegen ${L} gleich – ${bil}!`
+            : meLose
+            ? `${W} zieht gegen dich gleich – ${bil}.`
+            : `${W} zieht gegen ${L} gleich – ${bil}!`
+          : meWin
+          ? `Du übernimmst die Führung gegen ${L} – ${bil}!`
+          : meLose
+          ? `${W} übernimmt die Führung gegen dich – ${bil}.`
+          : `${W} übernimmt die Führung gegen ${L} – ${bil}!`,
+      };
+    }
     case "jubilee":
       return {
         icon: "🤝",
