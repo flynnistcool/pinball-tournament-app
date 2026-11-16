@@ -13,7 +13,8 @@ import { GENERATED_TRACKS } from "@/lib/rotationTracks.generated";
 export type RotationTrack = { id: string; title: string; artist?: string; category: string; src: string };
 
 export const ROTATION_TRACKS: readonly RotationTrack[] = [
-  { id: "timer", title: "Timer (Standard)", category: "Standard", src: "/sounds/timer.mp3" },
+  // ?v=2: Datei wurde leiser gemacht (Lautheit angeglichen) → Browser sollen die neue Fassung laden, nicht die alte aus dem Zwischenspeicher
+  { id: "timer", title: "Timer (Standard)", category: "Standard", src: "/sounds/timer.mp3?v=2" },
   ...GENERATED_TRACKS,
 ];
 

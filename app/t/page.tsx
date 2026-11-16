@@ -32,6 +32,8 @@ import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdow
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
 import { bestInsightForMatch } from "@/lib/rivalryInsights";
+import SoundSettingsDialog from "@/components/SoundSettingsDialog";
+import { DEFAULT_SOUND_SETTINGS, normalizeSoundSettings, type SoundSettings } from "@/lib/soundSettings";
 import {
   ROTATION_CATEGORIES,
   ROTATION_TRACKS,
@@ -5268,6 +5270,8 @@ function RotationGlobalTimerSticky({
   onFullscreen,
   musicChoice,
   onMusicChoice,
+  defaultMinutes,
+  onOpenSettings,
 }: {
   locked: boolean;
   timeLeftLabel: string;
@@ -5282,20 +5286,32 @@ function RotationGlobalTimerSticky({
   /** 🎵 Hintergrundmusik: "random" | "off" | Lied-id */
   musicChoice?: MusicChoice;
   onMusicChoice?: (c: MusicChoice) => void;
+  /** ⚙️ Standard-Dauer aus den Sound- & Timer-Einstellungen */
+  defaultMinutes?: number;
+  onOpenSettings?: () => void;
 }) {
-  const [minutes, setMinutes] = useState(10);
+  const [minutes, setMinutes] = useState(defaultMinutes ?? 10);
+  // neue Standard-Dauer übernehmen, solange der Timer nicht läuft
+  useEffect(() => {
+    if (defaultMinutes && !running && !paused) setMinutes(defaultMinutes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultMinutes]);
 
   const totalMs = (durationSec ?? 600) * 1000;
 
-  let badgeClass = "bg-neutral-200 text-neutral-900";
+  // Zeit-Anzeige: Farbverlauf je nach Restzeit (grün → orange ab Halbzeit → rot in der letzten Minute)
+  let badgeClass = "bg-gradient-to-br from-neutral-100 to-neutral-200 text-neutral-900 ring-1 ring-neutral-300/60";
 
   if (timeLeftMs != null) {
     if (timeLeftMs <= 60_000) {
-      badgeClass = "bg-red-600 text-white";
+      badgeClass =
+        "bg-gradient-to-br from-rose-500 via-red-600 to-red-800 text-white ring-1 ring-white/25";
     } else if (timeLeftMs <= totalMs / 2) {
-      badgeClass = "bg-orange-500 text-white";
+      badgeClass =
+        "bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 text-white ring-1 ring-white/25";
     } else {
-      badgeClass = "bg-green-600 text-white";
+      badgeClass =
+        "bg-gradient-to-br from-emerald-400 via-green-500 to-teal-600 text-white ring-1 ring-white/25";
     }
   }
 
@@ -5303,8 +5319,19 @@ function RotationGlobalTimerSticky({
   return (
     <Card className="mt-2">
       {/* Kopf-Abstände wie "Leaderboard (live)" */}
-      <div className="px-2.5 pt-4 pb-2.5 border-b">
+      <div className="flex items-center justify-between gap-2 px-2.5 pt-4 pb-2.5 border-b">
         <div className="text-sm font-semibold">Rotation Timer</div>
+        {onOpenSettings ? (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            title="Sound- & Timer-Einstellungen"
+            aria-label="Sound- und Timer-Einstellungen"
+            className="-my-1 rounded-lg px-1.5 py-0.5 text-base text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+          >
+            ⚙️
+          </button>
+        ) : null}
       </div>
       <div className="px-2.5 py-3">
         <div className="flex items-center justify-between gap-3">
@@ -12313,11 +12340,33 @@ function rotMusicSelectForStart() {
     }
   }
 }
-// Lieder sind auf -16 LUFS angeglichen (ca. 5 dB leiser als das alte timer.mp3) → Lautstärke angehoben,
-// damit es so laut klingt wie vorher (0.25 * ~1.7)
-const ROT_MUSIC_VOL = 0.43;      // normale Lautstärke (eher leise)
-//const ROT_MUSIC_VOL_PLAY = 0.25;  // während Play
-const ROT_MUSIC_DUCK = 0.17;     // während Sprache (noch leiser)
+// ⚙️ Sound- & Timer-Einstellungen (global, app_settings "sound_settings") – Standard = bisheriges Verhalten
+// (Lieder sind auf -16 LUFS angeglichen → Musik 43 %, während Ansagen 17 %)
+const [soundSettings, setSoundSettings] = useState<SoundSettings>(DEFAULT_SOUND_SETTINGS);
+const soundRef = useRef<SoundSettings>(DEFAULT_SOUND_SETTINGS);
+soundRef.current = soundSettings;
+const [soundOpen, setSoundOpen] = useState(false);
+useEffect(() => {
+  fetch(`/api/sound-settings?ts=${Date.now()}`, { cache: "no-store" })
+    .then((r) => r.json())
+    .then((j) => {
+      if (j?.ok && j.settings) setSoundSettings(normalizeSoundSettings(j.settings));
+    })
+    .catch(() => {});
+}, []);
+function applySoundSettings(next: SoundSettings) {
+  setSoundSettings(next);
+  soundRef.current = next;
+  // laufende Musik sofort anpassen
+  const a = rotMusicRef.current;
+  if (a) {
+    try {
+      a.volume = next.musicVol;
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function rotMusicEnsure() {
   if (typeof window === "undefined") return null;
@@ -12326,7 +12375,7 @@ function rotMusicEnsure() {
     const a = new Audio(first?.src ?? "/sounds/timer.mp3");
     a.loop = true;
     a.preload = "auto";
-    a.volume = ROT_MUSIC_VOL;
+    a.volume = soundRef.current.musicVol;
     rotMusicRef.current = a;
   }
   return rotMusicRef.current;
@@ -12368,7 +12417,7 @@ function rotPrepareMusicStartInTap() {
   try {
     // iOS: nur EIN play() im Tap, und laufen lassen
     a.currentTime = 0;
-    a.volume = ROT_MUSIC_VOL;
+    a.volume = soundRef.current.musicVol;
     a.muted = true;
 
     a.play()
@@ -12394,7 +12443,7 @@ function rotMusicPlay() {
   const a = rotMusicEnsure();
   if (!a) return;
   try {
-    //a.volume = ROT_MUSIC_VOL;
+    //a.volume = soundRef.current.musicVol;
     if (a.paused) a.play().catch(() => {});
   } catch {
     /* ignore */
@@ -12407,7 +12456,7 @@ function rotMusicStop() {
   try {
     a.pause();
     a.currentTime = 0;
-    a.volume = ROT_MUSIC_VOL;
+    a.volume = soundRef.current.musicVol;
   } catch {
     /* ignore */
   }
@@ -12417,7 +12466,7 @@ function rotMusicDuck() {
   const a = rotMusicRef.current;
   if (!a) return;
   try {
-    a.volume = ROT_MUSIC_DUCK;
+    a.volume = soundRef.current.musicDuckVol;
   } catch {}
 }
 
@@ -12425,7 +12474,7 @@ function rotMusicUnduck() {
   const a = rotMusicRef.current;
   if (!a) return;
   try {
-    a.volume = ROT_MUSIC_VOL;
+    a.volume = soundRef.current.musicVol;
   } catch {}
 }
 //function rotMusicUnduckPlay() {
@@ -12452,7 +12501,7 @@ if (!rotEndSoundRef.current) return false;
     const a = rotEndSoundRef.current;
     if (!a) return false;
 
-    a.volume = 0.9;
+    a.volume = soundRef.current.endVol;
     a.currentTime = 0;
 
     await a.play();
@@ -12472,7 +12521,7 @@ function rotPrepareEndSound(): Promise<boolean> {
     const a = new Audio("/sounds/end.mp3");
     a.preload = "auto";
     (a as any).playsInline = true;
-    a.volume = 0.9;
+    a.volume = soundRef.current.endVol;
     rotEndSoundRef.current = a;
   }
 
@@ -12488,7 +12537,7 @@ function rotPrepareEndSound(): Promise<boolean> {
         a.pause();
         a.currentTime = 0;
         a.muted = false;
-        a.volume = 0.9;
+        a.volume = soundRef.current.endVol;
         console.log("EndSound unlocked OK");
         return true;
       })
@@ -12638,6 +12687,8 @@ function roundSpeak(text: string) {
     synth.cancel();
 
     const utter = new SpeechSynthesisUtterance(text);
+    utter.volume = soundRef.current.speechVol;
+    utter.rate = soundRef.current.speechRate;
 
     const v = rotPickVoice(["en-US", "de-DE"]);
     if (v) {
@@ -12702,6 +12753,8 @@ function rotSpeak(text: string) {
 
     // nur EINMAL anlegen
     const utter = new SpeechSynthesisUtterance(text);
+    utter.volume = soundRef.current.speechVol;
+    utter.rate = soundRef.current.speechRate;
 
     // Voice wählen: Vicky auf Windows, sonst iOS Stimme (en/de)
     const v = rotPickVoice(["en-US", "de-DE"]);
@@ -12793,7 +12846,7 @@ useEffect(() => {
     // Time's up (einmal)
     if (!rotFinishedAnnouncedRef.current) {
       rotFinishedAnnouncedRef.current = true;
-      rotSpeak(rotationSpeech.timesUp(speechLangRef.current));
+      if (soundRef.current.announce.timesUp) rotSpeak(rotationSpeech.timesUp(speechLangRef.current));
     }
   };
 
@@ -12934,20 +12987,20 @@ useEffect(() => {
   // 🟠 Halbzeit (einmal)
   if (!rotHalfAnnouncedRef.current && leftMs <= totalMs / 2) {
     rotHalfAnnouncedRef.current = true;
-    rotSpeak(rotationSpeech.halftime(speechLangRef.current));
+    if (soundRef.current.announce.halftime) rotSpeak(rotationSpeech.halftime(speechLangRef.current));
   }
 
   // 🔴 Noch 1 Minute (einmal)
   if (!rotOneMinuteAnnouncedRef.current && leftMs <= 60_000) {
     rotOneMinuteAnnouncedRef.current = true;
-    rotSpeak(rotationSpeech.oneMinute(speechLangRef.current));
+    if (soundRef.current.announce.oneMinute) rotSpeak(rotationSpeech.oneMinute(speechLangRef.current));
   }
 
   // 🔊 Letzte 10 Sekunden runterzählen
   if (secondsLeft <= 10 && secondsLeft > 1) {
     if (rotFinalCountdownRef.current !== secondsLeft) {
       rotFinalCountdownRef.current = secondsLeft;
-      rotSpeak(String(secondsLeft));
+      if (soundRef.current.announce.countdown) rotSpeak(String(secondsLeft));
     }
   }
 
@@ -12976,7 +13029,7 @@ useEffect(() => {
   // bei 10s: Ready-Ansage (einmal)
   if (secondsLeft <= 10 && !rotPrestartReadySpokenRef.current) {
     rotPrestartReadySpokenRef.current = true;
-    rotSpeak(rotationSpeech.getReady(speechLangRef.current));
+    if (soundRef.current.announce.getReady) rotSpeak(rotationSpeech.getReady(speechLangRef.current));
   }
 
   // bei 3,2,1: runterzählen (jeweils einmal)
@@ -13067,7 +13120,7 @@ function rotStartGlobal(minutes = 10) {
   setRotPendingDurationSec(dur);
 
   // Prestart 15 Sekunden starten
-  setRotPrestartEndAt(Date.now() + 15_000);
+  setRotPrestartEndAt(Date.now() + soundRef.current.prestartSec * 1000);
 
   // Optional: falls vorher ein Timer lief, hart stoppen (damit’s sauber ist)
   setRotTimer((prev) => ({
@@ -14370,7 +14423,7 @@ const tasksById = useMemo(() => {
       locked={locked}
       timeLeftLabel={rotFmt(displayMs)}
       timeLeftMs={displayMs}
-      durationSec={preLeftMs != null ? 15 : (rotTimer?.durationSec ?? 600)}
+      durationSec={preLeftMs != null ? soundSettings.prestartSec : (rotTimer?.durationSec ?? 600)}
       running={preLeftMs != null ? true : rotRunning}
       paused={preLeftMs != null ? false : rotPaused}
       onStart={rotStartGlobal}
@@ -14378,18 +14431,28 @@ const tasksById = useMemo(() => {
       onReset={rotResetGlobal}
       musicChoice={rotMusicChoice}
       onMusicChoice={setRotMusicChoice}
+      defaultMinutes={soundSettings.defaultMinutes}
+      onOpenSettings={() => setSoundOpen(true)}
       onFullscreen={() => {
         rotTimerAutoOpenedRef.current = true;
         setRotTimerFullscreen(true);
       }}
     />
 
+    <SoundSettingsDialog
+      open={soundOpen}
+      onClose={() => setSoundOpen(false)}
+      settings={soundSettings}
+      isAdmin={isAdmin}
+      lang={speechLangUi}
+      onSaved={applySoundSettings}
+    />
     <RotationTimerOverlay
       open={rotTimerFullscreen}
       onClose={() => setRotTimerFullscreen(false)}
       timeLeftLabel={rotFmt(displayMs)}
       timeLeftMs={displayMs}
-      durationSec={preLeftMs != null ? 15 : (rotTimer?.durationSec ?? 600)}
+      durationSec={preLeftMs != null ? soundSettings.prestartSec : (rotTimer?.durationSec ?? 600)}
       running={preLeftMs != null ? true : rotRunning}
       paused={preLeftMs != null ? false : rotPaused}
       prestart={preLeftMs != null}
