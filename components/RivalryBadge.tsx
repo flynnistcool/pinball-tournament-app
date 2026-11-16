@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { insightText, type PairState, type RivalryInsight } from "@/lib/rivalryInsights";
+import { useBadgeOn } from "@/components/DisplayDevice";
 
 type Insights = Record<string, RivalryInsight>;
 export type RivalryData = { insights: Insights; pairs: Record<string, PairState> };
@@ -67,21 +68,25 @@ export default function RivalryBadge({
   nameOf,
   variant = "light",
   className = "",
+  always = false,
 }: {
+  /** innerhalb von "Duelle des Abends" (hat eigene Einstellung) */
+  always?: boolean;
   insight: RivalryInsight | null | undefined;
   nameOf: (playerId: string) => string;
   /** light = Admin/Handy, tv = dunkler Infobildschirm */
   variant?: "light" | "tv";
   className?: string;
 }) {
-  if (!insight) return null;
+  const on = useBadgeOn("badge:rivalry"); // 🏷️ an/aus je Gerät
+  if (!insight || (!on && !always)) return null;
   const { icon, text } = insightText(insight, nameOf);
   const style = KIND_STYLE[insight.kind][variant];
   return (
     <div
       className={
-        "inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-0.5 ring-1 " +
-        (variant === "tv" ? "text-sm font-semibold " : "text-[11px] font-semibold ") +
+        "inline-flex max-w-full items-center gap-1.5 px-2.5 py-0.5 ring-1 " +
+        (variant === "tv" ? "rounded-full text-sm font-semibold " : "rounded-xl text-[11px] font-semibold leading-snug ") +
         style +
         " " +
         className
@@ -89,7 +94,8 @@ export default function RivalryBadge({
       title={text}
     >
       <span className="shrink-0">{icon}</span>
-      <span className="truncate">{text}</span>
+      {/* TV: eine Zeile; Admin/Handy: Text darf umbrechen (schmale Spalte) */}
+      <span className={variant === "tv" ? "truncate" : "min-w-0"}>{text}</span>
     </div>
   );
 }
@@ -108,10 +114,11 @@ export function RivalryBar({
   max?: number;
   className?: string;
 }) {
+  const on = useBadgeOn("badge:rivalryBar"); // 🏷️ an/aus je Gerät
   const top = Object.values(insights)
     .sort((a, b) => b.score - a.score)
     .slice(0, max);
-  if (!top.length) return null;
+  if (!on || !top.length) return null;
   return (
     <div
       className={
@@ -124,7 +131,7 @@ export function RivalryBar({
         ⚔️ Duelle des Abends
       </span>
       {top.map((ins) => (
-        <RivalryBadge key={ins.a + "|" + ins.b} insight={ins} nameOf={nameOf} variant={variant} />
+        <RivalryBadge key={ins.a + "|" + ins.b} insight={ins} nameOf={nameOf} variant={variant} always />
       ))}
     </div>
   );

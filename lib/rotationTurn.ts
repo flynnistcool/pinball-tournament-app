@@ -201,3 +201,29 @@ export function rotationProgress(
   const before = wavesAt.slice(0, plan.level).reduce((a, b) => a + b, 0);
   return { current: Math.min(total, before + plan.wave + 1), total, done: false };
 }
+
+/**
+ * Durchgang je Eintrag: "matchId|playerId" → Durchgang (1-basiert), gleiche Zählung wie rotationProgress.
+ * (für den Rückblick "Durchgang 3 / 4 geschafft")
+ */
+export function rotationWaveMap(
+  matchIds: readonly string[],
+  players: readonly TurnPlayer[],
+  orderOverride?: Record<string, readonly string[] | undefined>
+): Map<string, number> {
+  const ordered = orderedByMatch(matchIds, players, orderOverride);
+  let maxLen = 0;
+  for (const list of Array.from(ordered.values())) maxLen = Math.max(maxLen, list.length);
+  const out = new Map<string, number>();
+  let offset = 0;
+  for (let level = 0; level < maxLen; level++) {
+    const { machinesOf } = machinesAtLevel(ordered, level);
+    let w = 0;
+    for (const [pid, arr] of Array.from(machinesOf.entries())) {
+      arr.forEach((mid, i) => out.set(mid + "|" + pid, offset + i + 1));
+      w = Math.max(w, arr.length);
+    }
+    offset += w;
+  }
+  return out;
+}

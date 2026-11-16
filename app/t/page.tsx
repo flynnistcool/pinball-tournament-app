@@ -31,6 +31,12 @@ import RotationTurnSplash from "@/components/RotationTurnSplash";
 import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdown";
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
+import LiveTicker, { postFeedItems } from "@/components/LiveTicker";
+import RoundSplash from "@/components/RoundSplash";
+import FloatingTicker from "@/components/FloatingTicker";
+import { liveLeaderboard } from "@/lib/myMatch";
+import { useBadgeOn } from "@/components/DisplayDevice";
+import { eventText, insightFeedItem } from "@/lib/rivalryInsights";
 import { bestInsightForMatch } from "@/lib/rivalryInsights";
 import SoundSettingsDialog from "@/components/SoundSettingsDialog";
 import { DEFAULT_SOUND_SETTINGS, normalizeSoundSettings, type SoundSettings } from "@/lib/soundSettings";
@@ -5319,8 +5325,21 @@ function RotationGlobalTimerSticky({
   return (
     <Card className="mt-2">
       {/* Kopf-Abstände wie "Leaderboard (live)" */}
-      <div className="flex items-center justify-between gap-2 px-2.5 pt-4 pb-2.5 border-b">
+      <div className="flex items-center justify-between gap-2 px-2.5 pt-3 pb-2 border-b">
         <div className="text-sm font-semibold">Rotation Timer</div>
+        <div className="flex items-center gap-0.5">
+        {onFullscreen ? (
+          <button
+            type="button"
+            onClick={() => onFullscreen?.()}
+            disabled={locked}
+            title="Timer groß anzeigen (Vollbild)"
+            aria-label="Timer im Vollbild anzeigen"
+            className="-my-1 rounded-lg px-1.5 py-0.5 text-base text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
+          >
+            ⛶
+          </button>
+        ) : null}
         {onOpenSettings ? (
           <button
             type="button"
@@ -5332,117 +5351,102 @@ function RotationGlobalTimerSticky({
             ⚙️
           </button>
         ) : null}
+        </div>
       </div>
-      <div className="px-2.5 py-3">
-        <div className="flex items-center justify-between gap-3">
-          
-
-          <div className="flex w-[220px] flex-col items-end gap-2">
-            <Select
-              value={String(minutes)}
-              onChange={(e) => setMinutes(Number(e.target.value) || 10)}
-              className="!h-8 w-full !rounded-lg !py-0 !text-xs"
-              title="Dauer (Minuten)"
-              disabled={locked || running || paused}
-            >
-              <option value="3">3 min</option>
-              <option value="5">5 min</option>
-              <option value="8">8 min</option>
-              <option value="10">10 min</option>
-              <option value="15">15 min</option>
-              <option value="20">20 min</option>
-            </Select>
-<div className="flex w-full justify-center">
-  <div
-    className={[
-      "inline-flex items-center justify-center rounded-full",
-      "px-5 py-1.5",
-      "text-2xl font-semibold tabular-nums",
-      "transition-colors",
-      badgeClass,
-    ].join(" ")}
-    aria-live="polite"
-  >
-    {timeLeftLabel}
-  </div>
-</div>
-            <div className="grid w-full grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
-                disabled={locked || (!running && !paused)}
-                onClick={onPauseToggle}
-                title={paused ? "Timer weiterlaufen lassen" : "Timer anhalten"}
-              >
-                {paused ? "Weiter" : "Pause"}
-              </Button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
-                disabled={locked}
-                onClick={onReset}
-              >
-                Reset
-              </Button>
-            </div>
-
-            {/* 🎵 Hintergrundmusik (gilt ab dem nächsten Start, "Aus" sofort) */}
-            {onMusicChoice ? (
-              <Select
-                value={musicChoice ?? "random"}
-                onChange={(e) => onMusicChoice(e.target.value)}
-                className="!h-8 w-full !rounded-lg !py-0 !text-xs"
-                title="Hintergrundmusik – gilt ab dem nächsten Start (Aus sofort)"
-                disabled={locked}
-              >
-                <option value="random">🎲 Musik: Zufall (alle)</option>
-                <optgroup label="🎲 Zufall aus einer Art">
-                  {ROTATION_CATEGORIES.map((c) => (
-                    <option key={"cat:" + c} value={"cat:" + c}>
-                      🎲 Zufall: {c} ({ROTATION_TRACKS.filter((t) => t.category === c).length})
-                    </option>
-                  ))}
-                </optgroup>
-                {ROTATION_CATEGORIES.map((c) => (
-                  <optgroup key={c} label={"🎵 " + c}>
-                    {ROTATION_TRACKS.filter((t) => t.category === c).map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title}
-                        {t.artist ? ` – ${t.artist}` : ""}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-                <option value="off">🔇 Musik: Aus</option>
-              </Select>
-            ) : null}
-
-            <Button
-              type="button"
-              variant="secondary"
-              className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
-              disabled={locked || running}
-              onClick={async () => {
-                await onStart(minutes);
-              }}
-            >
-              Start
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
-              disabled={locked || !onFullscreen}
-              onClick={() => onFullscreen?.()}
-              title="Timer groß anzeigen (Overlay)"
-            >
-              Fullscreen
-            </Button>
+      <div className="space-y-1.5 px-2.5 py-2">
+        {/* Zeile 1: Dauer + Zeitanzeige */}
+        <div className="grid grid-cols-2 items-center gap-1.5">
+          <Select
+            value={String(minutes)}
+            onChange={(e) => setMinutes(Number(e.target.value) || 10)}
+            className="!h-7 w-full !rounded-lg !px-2 !py-0 !text-xs"
+            title="Dauer (Minuten)"
+            disabled={locked || running || paused}
+          >
+            <option value="3">3 min</option>
+            <option value="5">5 min</option>
+            <option value="8">8 min</option>
+            <option value="10">10 min</option>
+            <option value="15">15 min</option>
+            <option value="20">20 min</option>
+          </Select>
+          <div
+            className={[
+              "flex h-7 items-center justify-center rounded-full px-2",
+              "text-lg font-semibold tabular-nums",
+              "transition-colors",
+              badgeClass,
+            ].join(" ")}
+            aria-live="polite"
+          >
+            {timeLeftLabel}
           </div>
         </div>
+
+        {/* Zeile 2: Start · Pause · Reset */}
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button
+            type="button"
+            variant="secondary"
+            className="!h-7 !rounded-lg !px-1 !py-0 !text-xs w-full"
+            disabled={locked || running}
+            onClick={async () => {
+              await onStart(minutes);
+            }}
+          >
+            Start
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="!h-7 !rounded-lg !px-1 !py-0 !text-xs w-full"
+            disabled={locked || (!running && !paused)}
+            onClick={onPauseToggle}
+            title={paused ? "Timer weiterlaufen lassen" : "Timer anhalten"}
+          >
+            {paused ? "Weiter" : "Pause"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="!h-7 !rounded-lg !px-1 !py-0 !text-xs w-full"
+            disabled={locked}
+            onClick={onReset}
+          >
+            Reset
+          </Button>
+        </div>
+
+        {/* Zeile 3: 🎵 Hintergrundmusik (gilt ab dem nächsten Start, "Aus" sofort) */}
+        {onMusicChoice ? (
+          <Select
+            value={musicChoice ?? "random"}
+            onChange={(e) => onMusicChoice(e.target.value)}
+            className="!h-7 w-full !rounded-lg !px-2 !py-0 !text-xs"
+            title="Hintergrundmusik – gilt ab dem nächsten Start (Aus sofort)"
+            disabled={locked}
+          >
+            <option value="random">🎲 Musik: Zufall (alle)</option>
+            <optgroup label="🎲 Zufall aus einer Art">
+              {ROTATION_CATEGORIES.map((c) => (
+                <option key={"cat:" + c} value={"cat:" + c}>
+                  🎲 Zufall: {c} ({ROTATION_TRACKS.filter((t) => t.category === c).length})
+                </option>
+              ))}
+            </optgroup>
+            {ROTATION_CATEGORIES.map((c) => (
+              <optgroup key={c} label={"🎵 " + c}>
+                {ROTATION_TRACKS.filter((t) => t.category === c).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                    {t.artist ? ` – ${t.artist}` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="off">🔇 Musik: Aus</option>
+          </Select>
+        ) : null}
       </div>
     </Card>
   );
@@ -6237,6 +6241,25 @@ function RoundMatchesCard({
     tournament?.status !== "finished" &&
     !["rotation", "timeplay", "dyp_round_robin"].includes(String(tournament?.format ?? ""));
   const rivalryInsights = useRivalry(code, String((rounds ?? []).length), rivalryOn);
+  // 📣 Gegner-Hinweise laufender Matches einmal in den Ticker (nur wer ändern darf = Admin; doppelte ignoriert)
+  useEffect(() => {
+    if (!rivalryOn || locked || !code) return;
+    const items: any[] = [];
+    for (const m of matches ?? []) {
+      if (String((m as any)?.status ?? "").toLowerCase() === "finished") continue;
+      const pids = (matchPlayers ?? [])
+        .filter((mp: any) => String(mp.match_id) === String(m.id))
+        .map((mp: any) => String(mp.player_id));
+      const ins = bestInsightForMatch(pids, rivalryInsights);
+      if (!ins) continue;
+      const machine = m.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null;
+      items.push(insightFeedItem(ins, (pid) => playersById?.[pid]?.name ?? "?", machine));
+    }
+    if (items.length) postFeedItems(code, items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rivalryInsights, matches, matchPlayers, rivalryOn, locked, code]);
+  // 🏷️ ★ Favorit-Abzeichen an/aus (🔔 Meldungen & Sounds → Dauerhafte Anzeigen)
+  const favBadgeOn = useBadgeOn("badge:favorite");
 
   // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
   const winStreakMode = streakMode(tournament?.format);
@@ -8608,6 +8631,11 @@ disabled={
               const isActiveAtMachine =
                 rotationActivePlayerId != null && mp.player_id === rotationActivePlayerId;
 
+              // 🔒 Rotation: noch nicht dran (weiß, ohne Score) → Score-Feld gesperrt.
+              // Editierbar: wer blau ist und wer schon einen Score hat (bis Turnierende).
+              const rotationWaitLocked =
+                isRotationFormat && rotationActivePlayerId != null && !isActiveAtMachine && !hasSavedScore;
+
               return (
                 <SortablePlayerRow
                   key={k(mp.match_id, mp.player_id)}
@@ -8672,7 +8700,7 @@ disabled={
       const favRes = pickFavorite(cands);
       const myProf = profOf(mp?.player_id);
       const fav = !!favRes && !!myProf && favRes.key === myProf;
-      return fav && favRes ? (
+      return fav && favRes && favBadgeOn ? (
         <span
           className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
           title={favoriteTitle(favRes)}
@@ -9069,9 +9097,9 @@ return (
       onFocus={() =>
         setScoreFocusKey(k(mp.match_id, mp.player_id))
       }
-      placeholder="0"
+      placeholder={rotationWaitLocked ? "noch nicht dran" : "0"}
       className="h-7 rounded-md px-2 py-1 text-xs sm:h-7 sm:px-3 sm:py-2 sm:h-5 max-h-5 w--[115px] max-w-[115px]  text-xs [text-size-adjust:100%] [-webkit-text-size-adjust:100%]"
-      disabled={locked}
+      disabled={locked || rotationWaitLocked}
       onDigitsChange={(cleaned) => {
         const key = k(mp.match_id, mp.player_id);
         setScoreOverride((prev) => ({ ...prev, [key]: cleaned }));
@@ -9136,7 +9164,7 @@ return (
         playerId={String(mp.player_id)}
         hasScore={getScore(mp) != null}
         currentScore={getScore(mp)}
-        disabled={locked}
+        disabled={locked || rotationWaitLocked}
         onRolled={async (score) => {
           const key = k(mp.match_id, mp.player_id);
           setScoreOverride((prev) => ({ ...prev, [key]: String(score) }));
@@ -11058,6 +11086,75 @@ const matchSize =
     registerFinalWin(p.playerId, p.name, tvWin);
   }
 
+  // 📣 Live-Ticker: Turnierende + Superfinale (nur Admin trägt ein)
+  const nameOfPlayer = (pid: string) =>
+    String((data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?");
+  function postEndFeed(next: any) {
+    if (!isAdmin || !next) return;
+    try {
+      const rows = liveLeaderboard(next).rows;
+      const medal = ["🏆", "🥈", "🥉"];
+      const top = rows.filter((r) => r.place <= 3).slice(0, 5);
+      postFeedItems(code, [
+        {
+          key: "tournamentEnd",
+          kind: "tournamentEnd",
+          icon: "🏁",
+          title: "Turnier beendet",
+          body: top.map((r) => `${medal[r.place - 1] ?? ""} ${r.name}`).join(" · ") || "Danke fürs Mitspielen!",
+          players: top.map((r) => r.id),
+        },
+      ]);
+    } catch {
+      /* Ticker ist nur Zusatz */
+    }
+  }
+  async function postFinalFeed(kind: "superfinalGame" | "superfinalChampion", winnerId: string) {
+    if (!isAdmin) return;
+    try {
+      const r = await fetch("/api/finals/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const st = await r.json().catch(() => ({}));
+      const players: any[] = Array.isArray(st?.players) ? st.players : [];
+      const standing = players
+        .slice()
+        .sort((a, b) => Number(b.points) - Number(a.points))
+        .map((p) => `${p.name || nameOfPlayer(p.playerId)} ${p.points}`)
+        .join(" · ");
+      const games = players.reduce((sum, p) => sum + Math.max(0, Number(p.points) - Number(p.startPoints)), 0);
+      const winner = nameOfPlayer(winnerId);
+      postFeedItems(
+        code,
+        kind === "superfinalChampion"
+          ? [
+              {
+                key: `sfChampion|${st?.final_id ?? ""}`,
+                kind: "superfinalChampion",
+                icon: "👑",
+                title: "Super Grand Champion!",
+                body: `${winner} gewinnt das Superfinale – Endstand: ${standing}`,
+                players: [winnerId],
+              },
+            ]
+          : [
+              {
+                key: `sfGame|${st?.final_id ?? ""}|${games}`,
+                kind: "superfinalGame",
+                icon: "🎯",
+                title: `Finalspiel ${games}: ${winner} gewinnt`,
+                body: `Stand: ${standing} (Ziel ${st?.target_points ?? 4})`,
+                players: [winnerId],
+              },
+            ]
+      );
+    } catch {
+      /* Ticker ist nur Zusatz */
+    }
+  }
+
   async function finishTournament() {
     if (!confirm("Turnier wirklich beenden? Danach ist nichts mehr änderbar."))
       return;
@@ -11080,7 +11177,8 @@ const matchSize =
     if (j?.warning) alert(`⚠️ ${j.warning}`);
 
     showTvInWindow(tvWin);
-    await reloadAll();
+    const nextAfterFinish = await reloadAll();
+    postEndFeed(nextAfterFinish); // 📣 🏁 Turnier beendet
     {/* await loadArchive(); neue hinzugefügt */}
     await loadChampions();
     if (ADMIN_FINISH_CELEBRATION) setShowCelebration(true);
@@ -11111,6 +11209,21 @@ if (!hasAtLeastOneFinishedRound) {
     if (!res.ok) {
       setNotice(j.error ?? "Super-Finale konnte nicht gestartet werden");
       return;
+    }
+    // 📣 🏆 Superfinale gestartet
+    if (isAdmin && Array.isArray(j?.finalists)) {
+      postFeedItems(code, [
+        {
+          key: `sfStart|${j.final_id ?? ""}`,
+          kind: "superfinalStart",
+          icon: "🏆",
+          title: "Superfinale gestartet",
+          body:
+            j.finalists.map((f: any) => `${nameOfPlayer(f.player_id)} (${f.start_points})`).join(" · ") +
+            ` – Ziel ${j.target_points ?? 4} Punkte`,
+          players: j.finalists.map((f: any) => String(f.player_id)),
+        },
+      ]);
     }
     await reloadAll();
   }
@@ -11192,6 +11305,9 @@ async function registerFinalWin(playerId: string, winnerName: string, tvWin: Win
     setNotice(j.error ?? "Final-Spiel konnte nicht gespeichert werden");
     return;
   }
+
+  // 📣 Ticker: Finalspiel bzw. Super Grand Champion
+  void postFinalFeed(j.finished ? "superfinalChampion" : "superfinalGame", String(j.champion_player_id ?? playerId));
 
   // Finale fertig -> Infobildschirm (Superfinale-Podest + Ton dort), KEIN kleines Elo-Overlay
   if (j.finished) {
@@ -12169,7 +12285,41 @@ async function reloadAll() {
     rivEventsOn
   );
   const rtpRivalry = rivData.insights;
-  const rivEvents = useRivalryEvents({ matchPlayers: data?.match_players, pairs: rivData.pairs, enabled: rivEventsOn });
+  // 📣 Round the Pinball: "Duelle des Abends" (Top 3) einmal in den Ticker – nur Admin
+  useEffect(() => {
+    if (!rtpRivalryOn || !isAdmin || !code) return;
+    const top = Object.values(rtpRivalry ?? {})
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 3);
+    if (!top.length) return;
+    const nameOf = (pid: string) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?";
+    postFeedItems(code, top.map((ins: any) => insightFeedItem(ins, nameOf)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rtpRivalry, rtpRivalryOn, isAdmin, code]);
+  const rivEvents = useRivalryEvents({
+    matchPlayers: data?.match_players,
+    pairs: rivData.pairs,
+    enabled: rivEventsOn,
+    // 📣 Live-Ticker: nur das Admin-Tablet trägt ein
+    onNew: isAdmin
+      ? (evs) =>
+          postFeedItems(
+            code,
+            evs.map((ev) => {
+              const t = eventText(ev, (pid) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?");
+              return {
+                key: ev.id,
+                kind: ev.kind,
+                icon: t.icon,
+                title: `Nach dem Match: ${t.title.replace(/!$/, "")}`,
+                body: t.text,
+                players: [ev.winner, ev.loser],
+                data: { ...ev },
+              };
+            })
+          )
+      : undefined,
+  });
 
   const isTimeplayFormat = String(data?.tournament?.format ?? "") === "timeplay";
 
@@ -13606,7 +13756,20 @@ const tasksById = useMemo(() => {
         </div>
       ) : null}
       {/* 🏆 Highscore-Jubel wie am TV – hier ohne Ton, Antippen schließt */}
-      <RecordCelebration code={code} data={data} soundOn={false} dismissOnTap device="admin" />
+      {/* 📣 Live-Ticker als schwebendes, verschiebbares Fenster (zum Ausprobieren; alter Ticker rechts bleibt) */}
+      <FloatingTicker code={code} />
+      {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}
+      {!isRotationFormat ? (
+        <RoundSplash data={data} variant="admin" onFeed={isAdmin ? (items) => postFeedItems(code, items) : undefined} />
+      ) : null}
+      <RecordCelebration
+        code={code}
+        data={data}
+        soundOn={false}
+        dismissOnTap
+        device="admin"
+        onEvents={isAdmin ? (items) => postFeedItems(code, items) : undefined}
+      />
 
 
 
@@ -14436,7 +14599,12 @@ const tasksById = useMemo(() => {
   <>
     {/* 🔵 Durchgang X von Y (eine Vergabe der blauen Felder) */}
     {/* 🔵 kurze Einblendung bei neuem Durchgang / alle fertig */}
-    <RotationTurnSplash progress={rotProgressNow} startSignal={rotStartSignal} />
+    <RotationTurnSplash
+      progress={rotProgressNow}
+      startSignal={rotStartSignal}
+      data={data}
+      onFeed={isAdmin ? (items) => postFeedItems(code, items) : undefined}
+    />
     <RotationProgressBar
       variant="admin"
       progress={rotProgressNow}
@@ -14523,6 +14691,8 @@ const tasksById = useMemo(() => {
   tasksById={tasksById}
   />
 )}
+    {/* 📣 Live-Ticker (einklappbar) */}
+    <LiveTicker code={code} variant="admin" maxItems={15} collapsible className="mt-2" />
     <RefreshCountdown
       lastAt={pollLastAt}
       intervalMs={POLL_MS}

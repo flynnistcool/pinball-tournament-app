@@ -7,7 +7,7 @@
 //  4) 🤝 Jubiläum: das kommende Duell ist das 50., 100., 150. …
 // Grundlage: Duelle wie in lib/rivals.ts (alle Formate außer DYP, ohne Bots/Platzhalter).
 
-import { pickRivals, type RivalStat } from "@/lib/rivals";
+import { pickRivals, RIVAL_MIN_DUELS, type RivalStat } from "@/lib/rivals";
 
 export const INSIGHT_MIN_STREAK = 3;
 /** Erzfeind-Duell nur bei klar schlechter Bilanz (höchstens so viel % gewonnen) */
@@ -156,6 +156,9 @@ export type PairState = {
   /** y ist x' Erzfeind (klar, ≤ 40 %) bzw. umgekehrt */
   yIsXsNemesis: boolean;
   xIsYsNemesis: boolean;
+  /** Siegquote (%) von x bzw. y gegen den eigenen bisherigen Erzfeind (null = keiner) */
+  xNemRate: number | null;
+  yNemRate: number | null;
 };
 
 export function buildPairStates(
@@ -164,9 +167,14 @@ export function buildPairStates(
 ): Record<string, PairState> {
   const statOf = new Map<string, Map<string, RivalStat>>();
   const nemesisOf = new Map<string, string | null>();
+  const nemRateOf = new Map<string, number | null>();
   statsByProfile.forEach((list, prof) => {
     statOf.set(prof, new Map(list.map((s) => [s.profileId, s])));
-    nemesisOf.set(prof, pickRivals(list).nemesis[0]?.profileId ?? null);
+    const nem = pickRivals(list).nemesis[0];
+    // nur ein "echter" Erzfeind (≤ 40 %) zählt
+    const real = nem && nem.winrate <= INSIGHT_NEMESIS_MAX_WINRATE ? nem : null;
+    nemesisOf.set(prof, real?.profileId ?? null);
+    nemRateOf.set(prof, real ? real.winrate : null);
   });
   const out: Record<string, PairState> = {};
   for (let i = 0; i < players.length; i++) {
@@ -187,6 +195,8 @@ export function buildPairStates(
         yStreak: sy?.currentStreak ?? 0,
         yIsXsNemesis: !!sx && nemesisOf.get(X.profileId) === Y.profileId && sx.winrate <= INSIGHT_NEMESIS_MAX_WINRATE,
         xIsYsNemesis: !!sy && nemesisOf.get(Y.profileId) === X.profileId && sy.winrate <= INSIGHT_NEMESIS_MAX_WINRATE,
+        xNemRate: nemRateOf.get(X.profileId) ?? null,
+        yNemRate: nemRateOf.get(Y.profileId) ?? null,
       };
     }
   }
@@ -196,7 +206,7 @@ export function buildPairStates(
 export type RivalryEvent = {
   /** eindeutig: Match + Art + Paar */
   id: string;
-  kind: "streakBroken" | "nemesisBeaten" | "jubilee" | "leadChange";
+  kind: "streakBroken" | "nemesisBeaten" | "jubilee" | "leadChange" | "streakGrow" | "newNemesis" | "evenReached";
   winner: string;
   loser: string;
   /** gerissene Serienlänge bzw. Nummer des Duells */
@@ -205,6 +215,8 @@ export type RivalryEvent = {
   winnerWins: number;
   loserWins: number;
   score: number;
+  /** true = nur für den 📣 Ticker, keine Einblendung (z. B. Serie 4, 6, 7 …) */
+  quiet?: boolean;
 };
 
 /** Ereignisse eines gerade fertig gewordenen Matches (alle Paare), spannendstes zuerst */
@@ -230,8 +242,47 @@ export function eventsForFinishedMatch(
       const loserIsWinnersNemesis = wIsX ? st.yIsXsNemesis : st.xIsYsNemesis;
       const base = { winner, loser, winnerWins: wWins, loserWins: lWins };
 
-      if (loserStreak >= EVENT_MIN_BROKEN_STREAK)
-        out.push({ id: `${matchId}|streak|${winner}|${loser}`, kind: "streakBroken", n: loserStreak, score: 300 + loserStreak, ...base });
+      // 💥 Serie gerissen: Ticker ab 3 Siegen, Einblendung (Vollbild/Karte) erst ab 5
+      if (loserStreak >= INSIGHT_MIN_STREAK)
+        out.push({
+          id: `${matchId}|streak|${winner}|${loser}`,
+          kind: "streakBroken",
+          n: loserStreak,
+          score: 300 + loserStreak,
+          quiet: loserStreak < EVENT_MIN_BROKEN_STREAK,
+          ...base,
+        });
+      // 🔥 Serie wächst: Ticker bei jedem Sieg ab 3; Einblendung nur bei 3, 5, 10, 15 …
+      const winnerStreak = (wIsX ? st.xStreak : st.yStreak) + 1;
+      if (winnerStreak >= 3) {
+        const milestone = winnerStreak === 3 || (winnerStreak >= 5 && winnerStreak % 5 === 0);
+        out.push({
+          id: `${matchId}|grow|${winner}|${loser}`,
+          kind: "streakGrow",
+          n: winnerStreak,
+          score: milestone ? 150 + winnerStreak : 50 + winnerStreak,
+          quiet: !milestone,
+          ...base,
+        });
+      }
+
+      // 📣 nur Ticker: 😈 Neuer Erzfeind – der Sieger wird zum (schlimmsten) Erzfeind des Verlierers
+      const duelsAfter = st.duels + 1;
+      const loserRate = duelsAfter ? (lWins / duelsAfter) * 100 : 0;
+      const loserWasNemesisVictim = wIsX ? st.xIsYsNemesis : st.yIsXsNemesis; // Sieger war schon Erzfeind des Verlierers
+      const loserNemRate = wIsX ? st.yNemRate : st.xNemRate;
+      if (
+        !loserWasNemesisVictim &&
+        duelsAfter >= RIVAL_MIN_DUELS &&
+        loserRate <= INSIGHT_NEMESIS_MAX_WINRATE &&
+        (loserNemRate == null || loserRate < loserNemRate)
+      )
+        out.push({ id: `${matchId}|newnem|${winner}|${loser}`, kind: "newNemesis", n: 0, score: 180, ...base });
+
+      // 📣 nur Ticker: ⚖️ Ebenbürtig – 20. Duell und Bilanz zwischen 45 und 55 %
+      if (duelsAfter === INSIGHT_EVEN_MIN_DUELS && Math.abs((wWins / duelsAfter) * 100 - 50) <= INSIGHT_EVEN_BAND)
+        out.push({ id: `${matchId}|even|${winner}|${loser}`, kind: "evenReached", n: duelsAfter, score: 120, ...base });
+
       // ⚖️ Führungswechsel / Gleichstand in einer ausgeglichenen Rivalität (≥ 20 Duelle):
       //    der Hintere zieht gleich, oder bei Gleichstand übernimmt jemand die Führung
       const wBefore = wIsX ? st.xWins : st.yWins;
@@ -297,6 +348,32 @@ export function eventText(
           : `${W} übernimmt die Führung gegen ${L} – ${bil}!`,
       };
     }
+    case "streakGrow":
+      return {
+        icon: "🔥",
+        title: "Serie geht weiter",
+        text: meWin
+          ? `Du gewinnst wieder gegen ${L} – jetzt ${ev.n} Siege in Folge!`
+          : meLose
+          ? `${W} gewinnt wieder gegen dich – jetzt ${ev.n} Siege in Folge.`
+          : `${W} gewinnt wieder gegen ${L} und setzt die Serie fort – jetzt ${ev.n} Siege in Folge.`,
+      };
+    case "newNemesis":
+      return {
+        icon: "😈",
+        title: "Neuer Erzfeind",
+        text: meWin
+          ? `Du bist jetzt ${gen(L)} Erzfeind (${bil}).`
+          : meLose
+          ? `${W} ist jetzt dein Erzfeind (${bil}).`
+          : `${W} ist jetzt ${gen(L)} Erzfeind (${bil}).`,
+      };
+    case "evenReached":
+      return {
+        icon: "⚖️",
+        title: "Ebenbürtig",
+        text: `${W} und ${L}: ${ev.n} Duelle, ${bil} – ebenbürtig!`,
+      };
     case "jubilee":
       return {
         icon: "🤝",
@@ -308,4 +385,40 @@ export function eventText(
           : `${W} gewinnt das ${ev.n}. Duell gegen ${L}.`,
       };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 📣 Gegner-Hinweis (Badge) einmal pro Turnier in den Live-Ticker – neu nur, wenn sich die Aussage ändert
+// (Serie: andere Zahl · Erzfeind: anderer Erzfeind · Ebenbürtig: einmal · Jubiläum: neue Nummer)
+
+const INSIGHT_TITLE: Record<RivalryInsight["kind"], string> = {
+  streak: "Duell-Serie",
+  nemesis: "Erzfeind-Duell",
+  even: "Ebenbürtiges Duell",
+  jubilee: "Duell-Jubiläum",
+};
+
+export function insightFeedItem(
+  ins: RivalryInsight,
+  nameOf: (playerId: string) => string,
+  machine?: string | null
+): { key: string; kind: string; icon: string; title: string; body: string; players: string[]; data: Record<string, unknown> } {
+  const { icon, text } = insightText(ins, nameOf);
+  const what =
+    ins.kind === "streak"
+      ? `${ins.a}:${ins.n}`
+      : ins.kind === "nemesis"
+      ? `${ins.a}`
+      : ins.kind === "jubilee"
+      ? `${ins.n}`
+      : "";
+  return {
+    key: `insight|${pairKey(ins.a, ins.b)}|${ins.kind}|${what}`,
+    kind: "rivalryInsight",
+    icon,
+    title: `Vor dem Match: ${INSIGHT_TITLE[ins.kind]}`,
+    body: machine ? `${text} – gleich an ${machine}` : text,
+    players: [ins.a, ins.b],
+    data: { ...ins },
+  };
 }

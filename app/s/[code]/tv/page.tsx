@@ -25,6 +25,9 @@ import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventTv, useRivalryEvents } from "@/components/RivalryEvents";
+import LiveTicker from "@/components/LiveTicker";
+import RoundSplash from "@/components/RoundSplash";
+import { DisplayDeviceProvider, useBadgeOn } from "@/components/DisplayDevice";
 import { notifSetting } from "@/lib/notifications";
 import { playSoundById } from "@/lib/playSound";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
@@ -291,7 +294,16 @@ const FORMAT_LABEL: Record<string, string> = {
   elimination: "Elimination",
 };
 
-export default function TournamentTvPage({ params }: { params: { code: string } }) {
+// 🏷️ Geräte-Kennung für dauerhafte Anzeigen (🔔 Meldungen & Sounds)
+export default function TournamentTvPage(props: { params: { code: string } }) {
+  return (
+    <DisplayDeviceProvider device="tv">
+      <TournamentTvPageInner {...props} />
+    </DisplayDeviceProvider>
+  );
+}
+
+function TournamentTvPageInner({ params }: { params: { code: string } }) {
   const code = String(params?.code ?? "").toUpperCase();
 
   const [data, setData] = useState<PublicTournament | null>(null);
@@ -1074,7 +1086,9 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
       className="fixed inset-0 z-50 overflow-auto bg-[radial-gradient(ellipse_at_top,#1e1b4b_0%,#0b1020_55%,#05070d_100%)] text-white"
     >
       {/* 🔵 Round the Pinball: kurze Einblendung bei neuem Durchgang / alle fertig */}
-      {isRotation ? <RotationTurnSplash progress={rotProgress} variant="tv" detectStart /> : null}
+      {isRotation ? <RotationTurnSplash progress={rotProgress} variant="tv" detectStart data={data as any} /> : null}
+      {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}
+      {!isRotation && data ? <RoundSplash data={data as any} variant="tv" soundOn={soundOn} /> : null}
       {/* Platzhalter in skalierter Größe (für Zentrierung + Scrollen nur im Notfall) */}
       <div
         style={{
@@ -1299,6 +1313,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
               rivalry={rivalryOn ? rivalry : null}
+              ticker={<LiveTicker code={code} variant="tv" maxItems={5} refreshMs={8000} soundOn={soundOn} />}
               recLookup={recLookup}
               pbLookup={pbLookup}
               mv={matchView}
@@ -1338,6 +1353,7 @@ export default function TournamentTvPage({ params }: { params: { code: string } 
                 {rtpRivalryOn ? (
                   <RivalryBar variant="tv" insights={rivalry} nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"} />
                 ) : null}
+                <LiveTicker code={code} variant="tv" maxItems={4} refreshMs={8000} soundOn={soundOn} />
               </div>
             ) : (
               <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
@@ -1645,6 +1661,7 @@ const pctFmt = (v: number | null) =>
 
 function MatchTvView({
   rivalry,
+  ticker,
   recLookup,
   pbLookup,
   mv,
@@ -1658,6 +1675,8 @@ function MatchTvView({
 }: {
   /** ⚔️ Gegner-Duell-Hinweise (null = aus) */
   rivalry?: Record<string, RivalryInsight> | null;
+  /** 📣 Live-Ticker (rechte Spalte unter dem Rundenfortschritt) */
+  ticker?: React.ReactNode;
   recLookup: RecLookup;
   pbLookup: PbLookup;
   mv: MatchViewData;
@@ -1789,6 +1808,7 @@ function MatchTvView({
         </div>
 
         <RoundProgressCard mv={mv} />
+        {ticker ? <div className="mt-4">{ticker}</div> : null}
       </div>
     </div>
   );
@@ -1884,7 +1904,8 @@ function ColumnScoreBox({ c, rec, phase }: { c: Column; rec: ReturnType<RecLooku
 
 /** Match-Karte: Zeile mit Allzeit-Rekord + 30-Tage-Highscore */
 function CardRecords({ rec }: { rec: ReturnType<RecLookup> }) {
-  if (!rec) return null;
+  const on = useBadgeOn("badge:records");
+  if (!rec || !on) return null;
   const item = (icon: string, label: string, r: ShownRecord | null, tone: string) => (
     <div className="flex min-w-0 items-baseline gap-1.5">
       <span>{icon}</span>
@@ -1914,6 +1935,7 @@ function MatchCardView({
   rec: ReturnType<RecLookup>;
   pb: (playerId: string) => ReturnType<PbLookup>;
 }) {
+  const favOn = useBadgeOn("badge:favorite");
   return (
     <div
       className={`overflow-hidden rounded-3xl ring-1 ${
@@ -1973,7 +1995,7 @@ function MatchCardView({
                     </span>
                   ) : null}
                   <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
-                  {p.favorite ? (
+                  {p.favorite && favOn ? (
                     <span
                       className="inline-flex shrink-0 items-center rounded-full bg-amber-400/20 px-2.5 py-0.5 text-sm font-bold text-amber-200 ring-1 ring-amber-300/60 drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]"
                       title={p.favoriteTitle ?? "Favorit"}

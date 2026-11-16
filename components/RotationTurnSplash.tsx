@@ -11,21 +11,31 @@ import { useEffect, useRef, useState } from "react";
 import type { RotationProgress } from "@/lib/rotationTurn";
 import { notifSetting } from "@/lib/notifications";
 import { playSoundById } from "@/lib/playSound";
+import type { MmData } from "@/lib/myMatch";
+import type { FeedItemInput } from "@/lib/feed";
+import { rotationWaveSummary, summaryText, type RoundSummary } from "@/lib/roundSummary";
+import { SummaryBlock } from "@/components/RoundSplash";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 
 const SHOW_MS = 4000;
 
 type Splash =
   | { kind: "start"; total: number }
-  | { kind: "turn"; current: number; total: number }
-  | { kind: "done"; total: number };
+  | { kind: "turn"; current: number; total: number; summary?: RoundSummary | null }
+  | { kind: "done"; total: number; summary?: RoundSummary | null };
 
 export default function RotationTurnSplash({
   progress,
   variant = "admin",
   startSignal,
   detectStart = false,
+  data,
+  onFeed,
 }: {
+  /** Turnierdaten → Rückblick des fertigen Durchgangs (Bester, höchster Score, Führender) */
+  data?: MmData | null;
+  /** 📣 Live-Ticker eintragen (nur Admin-Tablet) */
+  onFeed?: (items: FeedItemInput[]) => void;
   progress: RotationProgress | null;
   variant?: "admin" | "tv";
   /** Admin: neuer Wert (z. B. Date.now()) nach dem Erzeugen der Runden → Start-Meldung */
@@ -35,6 +45,8 @@ export default function RotationTurnSplash({
 }) {
   // 🔔 Meldungen & Sounds: an/aus + Dauer je Gerät
   const notif = notifSetting(useNotificationSettings(), "rotationSplash", variant === "tv" ? "tv" : "admin");
+  const onFeedRef = useRef(onFeed);
+  onFeedRef.current = onFeed;
   const prevRef = useRef<RotationProgress | null>(null);
   const pendingStartRef = useRef(false);
   const [splash, setSplash] = useState<Splash | null>(null);
@@ -63,10 +75,26 @@ export default function RotationTurnSplash({
     }
     if (!prev) return;
 
+    // Rückblick des gerade fertig gewordenen Durchgangs (+ Ticker)
+    const withSummary = (wave: number) => {
+      const s = data ? rotationWaveSummary(data, wave) : null;
+      if (s) {
+        onFeedRef.current?.([
+          {
+            key: `rotWave|${wave}|${total}`,
+            kind: "roundDone",
+            icon: "✅",
+            title: `Durchgang ${wave} / ${total} geschafft`,
+            body: summaryText(s, true) || "Alle Scores des Durchgangs sind da.",
+          },
+        ]);
+      }
+      return s;
+    };
     if (done && !prev.done) {
-      setSplash({ kind: "done", total });
+      setSplash({ kind: "done", total, summary: withSummary(total) });
     } else if (!done && (prev.total !== total || cur > prev.current)) {
-      setSplash({ kind: "turn", current: cur, total });
+      setSplash({ kind: "turn", current: cur, total, summary: cur > 1 && prev.total === total ? withSummary(cur - 1) : null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur, total, done]);
@@ -89,7 +117,8 @@ export default function RotationTurnSplash({
     if (notif.enabled && notif.sound !== "none") playSoundById(notif.sound, notif.volume);
     setAnim(false);
     const raf = window.requestAnimationFrame(() => setAnim(true));
-    const t = window.setTimeout(() => setSplash(null), notif.ms ?? SHOW_MS);
+    const hasSummary = splash.kind !== "start" && !!splash.summary;
+    const t = window.setTimeout(() => setSplash(null), Math.max(notif.ms ?? SHOW_MS, hasSummary ? 10_000 : 0));
     return () => {
       window.cancelAnimationFrame(raf);
       window.clearTimeout(t);
@@ -137,6 +166,7 @@ export default function RotationTurnSplash({
             <div className={"mt-2 font-semibold " + (tv ? "text-3xl text-white/80" : "text-lg text-white/85")}>
               Super gespielt – {splash.total} von {splash.total} 🎉
             </div>
+            {splash.summary ? <SummaryBlock s={splash.summary} tv={tv} rotation /> : null}
           </>
         ) : splash.kind === "start" ? (
           <>
@@ -150,12 +180,26 @@ export default function RotationTurnSplash({
           </>
         ) : (
           <>
-            <div className={"font-semibold uppercase tracking-widest " + (tv ? "text-2xl text-white/80" : "text-sm text-white/85")}>
-              🔵 Neuer Durchgang
-            </div>
-            <div className={"mt-2 font-black tabular-nums " + (tv ? "text-8xl" : "text-5xl")}>
-              Durchgang {splash.current} / {splash.total}
-            </div>
+            {splash.summary ? (
+              <>
+                <div className={"font-semibold uppercase tracking-widest " + (tv ? "text-2xl text-white/80" : "text-sm text-white/85")}>
+                  ✅ Durchgang {splash.current - 1} / {splash.total} geschafft
+                </div>
+                <SummaryBlock s={splash.summary} tv={tv} rotation />
+                <div className={"mt-4 font-black tabular-nums " + (tv ? "text-5xl" : "text-2xl")}>
+                  Gleich startet Durchgang {splash.current}!
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={"font-semibold uppercase tracking-widest " + (tv ? "text-2xl text-white/80" : "text-sm text-white/85")}>
+                  🔵 Neuer Durchgang
+                </div>
+                <div className={"mt-2 font-black tabular-nums " + (tv ? "text-8xl" : "text-5xl")}>
+                  Durchgang {splash.current} / {splash.total}
+                </div>
+              </>
+            )}
           </>
         )}
 

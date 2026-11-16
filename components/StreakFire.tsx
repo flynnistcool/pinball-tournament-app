@@ -1,6 +1,9 @@
+"use client";
+
 // 🔥 kleine Serien-Markierung hinter einem Namen ("on fire", siehe lib/winStreaks.ts).
 // variant "tv" = größer und für dunklen Hintergrund.
 
+import { useBadgeOn } from "@/components/DisplayDevice";
 import { streakFire, streakMin, streakText, type StreakMode } from "@/lib/winStreaks";
 
 export default function StreakFire({
@@ -12,7 +15,8 @@ export default function StreakFire({
   mode?: StreakMode;
   variant?: "admin" | "tv";
 }) {
-  if (mode === "none") return null;
+  const on = useBadgeOn("badge:onFire"); // 🏷️ an/aus je Gerät
+  if (!on || mode === "none") return null;
   const fire = streakFire(n, streakMin(mode));
   if (!fire) return null;
   const title = streakText(mode, Number(n));

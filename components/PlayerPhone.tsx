@@ -31,6 +31,8 @@ import BotEloBadge from "@/components/BotEloBadge";
 import { botEloOf } from "@/lib/myMatch";
 import { rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventPhone, useRivalryEvents } from "@/components/RivalryEvents";
+import LiveTicker from "@/components/LiveTicker";
+import PhoneFeedCards from "@/components/PhoneFeedCards";
 
 const POLL_MS = 6000;
 /** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 12 s) */
@@ -142,6 +144,11 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
         meId={String(me.playerId)}
         nameOf={(pid) => String(data.players.find((p) => String(p.id) === String(pid))?.name ?? "?")}
       />
+      {/* 📱 persönliche Einblendungen aus dem Ticker (Highscores für alle, Meilenstein/On fire für mich) –
+          warten, solange eine Gegner-Einblendung sichtbar ist */}
+      {finished ? null : (
+        <PhoneFeedCards code={code} meId={String(me.playerId)} paused={phRivEvents.events.length > 0} />
+      )}
       <header className="mb-3">
         <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
           {data.tournament?.name ?? "Turnier"}
@@ -248,6 +255,7 @@ function MatchTab({
           <div className="mt-1 text-xs text-neutral-400">Die Seite springt von selbst um, sobald du dran bist.</div>
         </div>
         <MatchCard info={waiting.info} data={data} meId={me.playerId} title="Dein nächster Flipper" />
+        <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
         <PhoneMatchInsights code={code} data={data} info={waiting.info} meId={me.playerId} />
       </div>
     );
@@ -265,8 +273,9 @@ function MatchTab({
           <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
             <div className="text-4xl">😢</div>
             <div className="mt-2 text-lg font-bold">Du bist ausgeschieden</div>
-            <div className="mt-1 text-sm text-neutral-500">Gut gespielt! Unter „Leaderboard“ kannst du weiter mitfiebern.</div>
+            <div className="mt-1 text-sm text-neutral-500">Gut gespielt! Unter „Turnier-Infos“ kannst du weiter mitfiebern.</div>
           </div>
+          <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
           {last ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
         </div>
       );
@@ -281,11 +290,14 @@ function MatchTab({
           </div>
           <div className="mt-1 text-sm text-neutral-500">
             {mode === "own" && last
-              ? "Du hast an allen Flippern deinen Score eingetragen. Den Stand siehst du unter „Leaderboard“."
+              ? "Du hast an allen Flippern deinen Score eingetragen. Den Stand siehst du unter „Turnier-Infos“."
               : "Warte auf die nächste Runde – die Seite springt dann von selbst weiter."}
           </div>
         </div>
-        {last ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
+        {/* 📣 schmaler Laufticker – auch beim Warten bzw. wenn alles gespielt ist */}
+        <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
+        {/* "Alle Flipper gespielt" (Round the Pinball): letztes Match ausblenden */}
+        {last && !(mode === "own") ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
       </div>
     );
   }
@@ -303,6 +315,8 @@ function MatchTab({
         mode={mode}
         reload={reload}
       />
+      {/* 📣 schmaler Laufticker unter der Match-Eintragung */}
+      <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
       {alsoActive.length ? (
         <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-800">
           ℹ️ Danach bist du auch an <b>{alsoActive.map((x) => x.machine?.name ?? "?").join(", ")}</b> dran.
@@ -880,6 +894,9 @@ function InfoTab({ code, data, meId }: { code: string; data: MmData; meId: strin
     <div>
       <InfoSection title="🏆 Leaderboard">
         <BoardTab data={data} meId={meId} />
+      </InfoSection>
+      <InfoSection title="📣 Live-Ticker">
+        <LiveTicker code={code} variant="phone" maxItems={15} refreshMs={15_000} title={false} />
       </InfoSection>
       <InfoSection title="🃏 Spielerkarten">
         <PlayerCardsSwipe code={code} meId={meId} order={order} />

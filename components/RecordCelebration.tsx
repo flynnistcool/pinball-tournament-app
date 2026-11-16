@@ -16,6 +16,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { notifSetting, type NotifDevice } from "@/lib/notifications";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
+import type { FeedItemInput } from "@/lib/feed";
+import ScopeChip from "@/components/ScopeChip";
 import { playDing } from "@/lib/synthSounds";
 import { playSoundById } from "@/lib/playSound";
 export { playDing };
@@ -47,6 +49,69 @@ type LiveData = Parameters<typeof liveEntriesFrom>[0] &
   Parameters<typeof computeStreaks>[0] & { tournament?: { status?: string | null; format?: string | null } };
 
 const fmt = (n: number) => n.toLocaleString("de-DE");
+
+/** "matchId|playerId" → playerId */
+const pidOfKey = (key: string) => String(key).split("|").pop() ?? "";
+
+/** 📣 Text für den Live-Ticker (+ beteiligte Spieler und Angaben für persönliche Handy-Einblendungen) */
+function feedItemOf(c: Shown): FeedItemInput {
+  const base = feedItemText(c);
+  if (c.kind === "record" || c.kind === "month" || c.kind === "personal") {
+    return {
+      ...base,
+      players: [pidOfKey(c.entry.key)],
+      data: { player: c.entry.playerName, machine: c.entry.machineName ?? "?", score: c.entry.score },
+    };
+  }
+  if (c.kind === "wins") return { ...base, players: [pidOfKey(c.key)], data: { player: c.playerName, n: c.n } };
+  // On fire: key = "playerId|n"
+  return { ...base, players: [String(c.key).split("|")[0]], data: { player: c.playerName, n: c.n, mode: c.mode } };
+}
+
+function feedItemText(c: Shown): FeedItemInput {
+  switch (c.kind) {
+    case "record":
+      return {
+        key: `record|${c.entry.key}|${c.entry.score}`,
+        kind: "record",
+        icon: "🏆",
+        title: "Allzeit-Highscore!",
+        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}`,
+      };
+    case "month":
+      return {
+        key: `month|${c.entry.key}|${c.entry.score}`,
+        kind: "month",
+        icon: "🥇",
+        title: "30-Tage-Highscore",
+        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}`,
+      };
+    case "personal":
+      return {
+        key: `personal|${c.entry.key}|${c.entry.score}`,
+        kind: "personal",
+        icon: "💪",
+        title: "Persönlicher Highscore",
+        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}`,
+      };
+    case "wins":
+      return {
+        key: `wins|${c.key}|${c.n}`,
+        kind: "wins",
+        icon: "🎉",
+        title: `${c.n}. Matchsieg`,
+        body: `${c.playerName} feiert den ${c.n}. Matchsieg`,
+      };
+    case "streak":
+      return {
+        key: `streak|${c.key}`,
+        kind: "streak",
+        icon: "🔥",
+        title: "On fire!",
+        body: `${c.playerName}: ${streakText(c.mode, c.n)} im Turnier`,
+      };
+  }
+}
 
 
 const CONFETTI_COLORS = ["#fbbf24", "#f472b6", "#60a5fa", "#34d399", "#a78bfa", "#fb923c", "#f87171"];
@@ -236,6 +301,7 @@ function RecordCelebrationInner({
   onRecordSound,
   dismissOnTap = false,
   device = "tv",
+  onEvents,
 }: {
   code: string;
   data: LiveData | null;
@@ -246,7 +312,11 @@ function RecordCelebrationInner({
   dismissOnTap?: boolean;
   /** für 🔔 Meldungen & Sounds (An/Aus, Dauer, Lautstärke je Gerät) */
   device?: NotifDevice;
+  /** 📣 Live-Ticker: erkannte Ereignisse melden (nur Admin-Tablet trägt ein) */
+  onEvents?: (items: FeedItemInput[]) => void;
 }) {
+  const onEventsRef = useRef(onEvents);
+  onEventsRef.current = onEvents;
   const notifSettings = useNotificationSettings();
   const [prior, setPrior] = useState<PriorRecords | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -448,6 +518,7 @@ function RecordCelebrationInner({
         // Rekorde zuerst, dann 30 Tage, Matchsiege, persönliche – jeweils höchster Wert zuerst
         found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || sortValue(b) - sortValue(a));
         setQueue((q) => [...q, ...found]);
+        onEventsRef.current?.(found.map(feedItemOf)); // 📣 Live-Ticker
       }
     }
     check();
@@ -488,6 +559,10 @@ function RecordCelebrationInner({
       ) : (
         <SmallPersonal c={current} onClose={close} />
       )}
+      {/* 🏷️ worauf bezieht sich die Meldung (Turnier / 30 Tage / Allzeit) */}
+      <div className="pointer-events-none fixed left-1/2 top-[2vh] z-[101] -translate-x-1/2">
+        <ScopeChip kind={current.kind} variant="dark" long className="!px-3 !py-1 !text-sm" />
+      </div>
       {dismissOnTap ? (
         <div className="pointer-events-none fixed bottom-[1.5vh] left-1/2 z-[101] -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80">
           Antippen zum Schließen

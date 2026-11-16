@@ -11,24 +11,52 @@ import { useEffect, useRef, useState } from "react";
 import { eventsForFinishedMatch, eventText, type PairState, type RivalryEvent } from "@/lib/rivalryInsights";
 import { notifSetting } from "@/lib/notifications";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
+import ScopeChip from "@/components/ScopeChip";
 import { playEventSound } from "@/lib/synthSounds";
 import { playSoundById } from "@/lib/playSound";
 export { playEventSound };
 
 type MpLike = { match_id: string | number; player_id: string | number; position: number | null | undefined };
 
+/** Arten mit Einblendung (Vollbild/Karte) – ob sie je Gerät erscheint, steht in 🔔 Meldungen & Sounds */
+const POPUP_KINDS = new Set<RivalryEvent["kind"]>([
+  "streakBroken",
+  "nemesisBeaten",
+  "leadChange",
+  "jubilee",
+  "streakGrow",
+  "newNemesis",
+  "evenReached",
+]);
+
+/** Arten mit Karte am Handy (siehe lib/notifications.ts: Platzierung "phone") */
+const PHONE_POPUP_KINDS = new Set<RivalryEvent["kind"]>([
+  "streakBroken",
+  "nemesisBeaten",
+  "leadChange",
+  "jubilee",
+  "streakGrow",
+  "newNemesis",
+  "evenReached",
+]);
+
 export function useRivalryEvents({
   matchPlayers,
   pairs,
   enabled,
   onlyFor,
+  onNew,
 }: {
   matchPlayers: readonly MpLike[] | null | undefined;
   pairs: Readonly<Record<string, PairState>>;
   enabled: boolean;
   /** Handy: nur Ereignisse, an denen dieser Spieler beteiligt ist */
   onlyFor?: string | null;
+  /** 📣 Live-Ticker: neue Ereignisse melden */
+  onNew?: (evs: RivalryEvent[]) => void;
 }) {
+  const onNewRef = useRef(onNew);
+  onNewRef.current = onNew;
   const [queue, setQueue] = useState<RivalryEvent[]>([]);
   const seenRef = useRef<Set<string> | null>(null);
   const firedRef = useRef<Set<string>>(new Set());
@@ -54,11 +82,16 @@ export function useRivalryEvents({
     }
     const seen = seenRef.current;
     const fresh: RivalryEvent[] = [];
+    const tickerEvs: RivalryEvent[] = [];
     for (const id of finishedNow) {
       if (seen.has(id)) continue;
       seen.add(id);
-      let evs = eventsForFinishedMatch(id, byMatch.get(id) ?? [], pairs);
-      if (onlyFor) evs = evs.filter((e) => e.winner === onlyFor || e.loser === onlyFor);
+      const all = eventsForFinishedMatch(id, byMatch.get(id) ?? [], pairs);
+      if (all.length) tickerEvs.push(...all); // 📣 Ticker: alle Ereignisse
+      let evs = all.filter((e) => POPUP_KINDS.has(e.kind) && !e.quiet); // Einblendung: nur diese Arten, ohne "leise"
+      // 📱 Handy: nur Arten, die dort eine Karte haben – sonst würde z. B. "Serie wächst" den einzigen Platz
+      //    belegen und die Karte (z. B. Jubiläum) fiele ganz weg
+      if (onlyFor) evs = evs.filter((e) => (e.winner === onlyFor || e.loser === onlyFor) && PHONE_POPUP_KINDS.has(e.kind));
       const top = evs[0]; // höchstens ein Ereignis pro Match
       if (top && !firedRef.current.has(top.id)) {
         firedRef.current.add(top.id);
@@ -66,16 +99,17 @@ export function useRivalryEvents({
       }
     }
     if (fresh.length) setQueue((q) => [...q, ...fresh]);
+    if (tickerEvs.length) onNewRef.current?.(tickerEvs);
   }, [matchPlayers, pairs, enabled, onlyFor]);
 
   const dismiss = (id: string) => setQueue((q) => q.filter((e) => e.id !== id));
   return { events: queue, dismiss };
 }
 
-/** schließt ein Ereignis nach ms automatisch */
-function useAutoDismiss(id: string | undefined, ms: number, dismiss: (id: string) => void) {
+/** schließt ein Ereignis nach ms automatisch (ms = null → bleibt, bis man es antippt) */
+function useAutoDismiss(id: string | undefined, ms: number | null, dismiss: (id: string) => void) {
   useEffect(() => {
-    if (!id) return;
+    if (!id || ms == null) return;
     const t = window.setTimeout(() => dismiss(id), ms);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,6 +119,10 @@ function useAutoDismiss(id: string | undefined, ms: number, dismiss: (id: string
 const KIND_TONE: Record<RivalryEvent["kind"], { tv: string; light: string }> = {
   streakBroken: { tv: "from-orange-500/90 to-rose-600/90", light: "border-orange-200 bg-orange-50 text-orange-900" },
   leadChange: { tv: "from-amber-500/90 to-yellow-600/90", light: "border-amber-200 bg-amber-50 text-amber-900" },
+  // nur Ticker (keine Einblendung) – Farben nur der Vollständigkeit halber
+  streakGrow: { tv: "from-orange-500/90 to-amber-600/90", light: "border-orange-200 bg-orange-50 text-orange-900" },
+  newNemesis: { tv: "from-rose-600/90 to-fuchsia-700/90", light: "border-rose-200 bg-rose-50 text-rose-900" },
+  evenReached: { tv: "from-amber-500/90 to-yellow-600/90", light: "border-amber-200 bg-amber-50 text-amber-900" },
   nemesisBeaten: { tv: "from-rose-600/90 to-fuchsia-700/90", light: "border-rose-200 bg-rose-50 text-rose-900" },
   jubilee: { tv: "from-sky-500/90 to-indigo-600/90", light: "border-sky-200 bg-sky-50 text-sky-900" },
 };
@@ -127,7 +165,10 @@ export function RivalryEventTv({
         }
       >
         <div className="text-8xl">{t.icon}</div>
-        <div className="mt-4 text-6xl font-black tracking-tight">{t.title}</div>
+        <div className="mt-3">
+          <ScopeChip kind={ev.kind} variant="dark" long className="!px-3 !py-1 !text-xl" />
+        </div>
+        <div className="mt-3 text-6xl font-black tracking-tight">{t.title}</div>
         <div className="mt-4 text-3xl font-semibold text-white/90">{t.text}</div>
       </div>
     </div>
@@ -161,7 +202,10 @@ function Toast({
     >
       <span className="text-2xl leading-none">{t.icon}</span>
       <span className="min-w-0">
-        <span className="block text-sm font-bold">{t.title}</span>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-bold">{t.title}</span>
+          <ScopeChip kind={ev.kind} />
+        </span>
         <span className="block text-xs">{t.text}</span>
       </span>
     </button>
@@ -203,7 +247,8 @@ export function RivalryEventPhone({
   const ns = useNotificationSettings();
   const ev = events[0];
   const st = ev ? notifSetting(ns, ev.kind, "phone") : null;
-  useAutoDismiss(ev?.id, st?.ms ?? 8000, dismiss);
+  // Handy: bleibt stehen, bis man draufdrückt (niemand schaut genau in den 8 Sekunden aufs Handy)
+  useAutoDismiss(ev?.id, st?.ms ?? null, dismiss);
   useEffect(() => {
     if (!ev || !st) return;
     if (!st.enabled) dismiss(ev.id); // 🔔 am Handy ausgeschaltet
@@ -221,8 +266,14 @@ export function RivalryEventPhone({
       >
         <span className="text-4xl leading-none">{t.icon}</span>
         <span className="min-w-0">
-          <span className="block text-base font-black">{t.title}</span>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-base font-black">{t.title}</span>
+            <ScopeChip kind={ev.kind} />
+          </span>
           <span className="block text-sm">{t.text}</span>
+          <span className="mt-0.5 block text-[10px] opacity-60">
+            Antippen zum Schließen{events.length > 1 ? ` · noch ${events.length - 1} weitere` : ""}
+          </span>
         </span>
       </button>
     </div>

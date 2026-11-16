@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  BADGES,
   DEVICE_LABEL,
   NOTIFICATIONS,
   defaultNotificationSettings,
@@ -18,8 +19,9 @@ import {
 import { SOUND_CATALOG } from "@/lib/soundCatalog";
 import { playSoundById } from "@/lib/playSound";
 import { publishNotificationSettings, useNotificationSettings } from "@/components/useNotificationSettings";
+import ScopeChip from "@/components/ScopeChip";
 
-const DEVICES: NotifDevice[] = ["tv", "admin", "phone"];
+const DEVICES: NotifDevice[] = ["tv", "admin", "phone", "ticker"];
 /** Mitteilungen, die woanders eingestellt werden */
 const ELSEWHERE: Record<string, string> = { timer: "Einstellungen über ⚙️ im Rotation Timer" };
 
@@ -33,6 +35,40 @@ export default function NotificationsOverview() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const stopRef = useRef<() => void>(() => {});
+  // 🎧 Sound-Test
+  const [testSound, setTestSound] = useState<string>("fanfare");
+  const [testPlaying, setTestPlaying] = useState(false);
+  const testTimerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(testTimerRef.current), []);
+
+  // Kopfzeile, Tabelle und unterer Scrollbalken scrollen seitwärts gemeinsam
+  const headRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [tableW, setTableW] = useState(1000);
+  const [overflowX, setOverflowX] = useState(false);
+  function syncScroll(src: HTMLDivElement) {
+    const x = src.scrollLeft;
+    for (const el of [headRef.current, bodyRef.current, barRef.current]) {
+      if (el && el !== src && el.scrollLeft !== x) el.scrollLeft = x;
+    }
+  }
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const measure = () => {
+      setTableW(body.scrollWidth);
+      setOverflowX(body.scrollWidth > body.clientWidth + 1);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(body);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
 
   // geladene Werte übernehmen, solange nichts geändert wurde
   useEffect(() => {
@@ -94,9 +130,71 @@ export default function NotificationsOverview() {
         dann stehen sie hier unter „Eigene Sounds“ zur Auswahl{OWN_SOUNDS.length ? ` (aktuell ${OWN_SOUNDS.length})` : ""}.
       </div>
 
-      <div className="overflow-x-auto rounded-xl border">
-        <table className="w-full min-w-[900px] text-sm">
-          <thead className="bg-neutral-50 text-left text-xs text-neutral-500">
+      {/* 🎧 Sound-Test: beliebigen Sound anhören */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-neutral-50 px-3 py-2">
+        <span className="text-sm font-semibold">🎧 Sound-Test</span>
+        <select
+          value={testSound}
+          onChange={(e) => {
+            stopRef.current();
+            setTestPlaying(false);
+            setTestSound(e.target.value);
+          }}
+          className="h-8 min-w-0 flex-1 rounded-lg border bg-white px-2 text-sm sm:max-w-xs"
+        >
+          <optgroup label="Standard">
+            {STANDARD_SOUNDS.filter((s) => s.id !== "none").map((s) => (
+              <option key={s.id} value={s.id}>
+                🔊 {s.label}
+              </option>
+            ))}
+          </optgroup>
+          {OWN_SOUNDS.length ? (
+            <optgroup label="Eigene Sounds">
+              {OWN_SOUNDS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  🎵 {s.label}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
+        </select>
+        <button
+          type="button"
+          onClick={() => {
+            if (testPlaying) {
+              stopRef.current();
+              setTestPlaying(false);
+              return;
+            }
+            preview(testSound, 1);
+            setTestPlaying(true);
+            // kurze Klänge sind von selbst fertig → Knopf nach ein paar Sekunden zurücksetzen
+            window.clearTimeout(testTimerRef.current);
+            testTimerRef.current = window.setTimeout(() => setTestPlaying(false), 12_000);
+          }}
+          className={
+            "h-8 rounded-lg px-3 text-sm font-semibold text-white " +
+            (testPlaying ? "bg-red-600 hover:bg-red-700" : "bg-neutral-900 hover:bg-neutral-800")
+          }
+        >
+          {testPlaying ? "⏹ Stopp" : "▶ Start"}
+        </button>
+      </div>
+
+      {/* Kopfzeile bleibt oben am Bildschirm stehen; läuft beim Seitwärts-Scrollen mit */}
+      <div
+        ref={headRef}
+        className="sticky top-0 z-20 overflow-hidden rounded-t-xl border bg-neutral-50 shadow-sm"
+      >
+        <table className="w-full min-w-[1000px] table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: "14rem" }} />
+            {DEVICES.map((d) => (
+              <col key={d} />
+            ))}
+          </colgroup>
+          <thead className="text-left text-xs text-neutral-500">
             <tr>
               <th className="px-3 py-2">Mitteilung</th>
               {DEVICES.map((d) => (
@@ -106,6 +204,20 @@ export default function NotificationsOverview() {
               ))}
             </tr>
           </thead>
+        </table>
+      </div>
+      <div
+        ref={bodyRef}
+        onScroll={(e) => syncScroll(e.currentTarget)}
+        className="-mt-3 overflow-x-auto rounded-b-xl border border-t-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <table className="w-full min-w-[1000px] table-fixed text-sm">
+          <colgroup>
+            <col style={{ width: "14rem" }} />
+            {DEVICES.map((d) => (
+              <col key={d} />
+            ))}
+          </colgroup>
           <tbody>
             {NOTIFICATIONS.map((n) => (
               <tr key={n.id} className="border-t align-top">
@@ -113,7 +225,10 @@ export default function NotificationsOverview() {
                   <div className="font-semibold">
                     {n.icon} {n.title}
                   </div>
-                  <div className="mt-0.5 text-[11px] text-neutral-500">{n.when}</div>
+                  <div className="mt-1">
+                    <ScopeChip kind={n.id} />
+                  </div>
+                  <div className="mt-1 text-[11px] text-neutral-500">{n.when}</div>
                 </td>
                 {DEVICES.map((d) => {
                   const p = n.devices[d];
@@ -126,6 +241,85 @@ export default function NotificationsOverview() {
                   }
                   const base: NotifDeviceSetting = { enabled: true, seconds: p.seconds, volume: 1, sound: defaultSoundId(p.sound) };
                   const st = draft[n.id]?.[d] ?? base;
+                  const soundBlock = (silentNow: boolean) => (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={st.sound}
+                          onChange={(e) => update(n.id, d, base, { sound: e.target.value })}
+                          className={
+                            "h-7 min-w-0 max-w-[11rem] flex-1 rounded-md border px-1.5 text-[11px] " +
+                            (silentNow ? "bg-neutral-50 text-neutral-500" : "bg-amber-50 font-semibold text-amber-900")
+                          }
+                          title="Sound für diese Mitteilung auf diesem Gerät"
+                        >
+                          <optgroup label="Standard">
+                            {STANDARD_SOUNDS.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.id === "none" ? s.label : "🔊 " + s.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                          {OWN_SOUNDS.length ? (
+                            <optgroup label="Eigene Sounds">
+                              {OWN_SOUNDS.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  🎵 {s.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                        </select>
+                        {!silentNow ? (
+                          <button
+                            type="button"
+                            onClick={() => preview(st.sound, st.volume)}
+                            className="shrink-0 rounded-md border bg-white px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                            title="Ton mit eingestellter Lautstärke anhören"
+                          >
+                            ▶
+                          </button>
+                        ) : null}
+                      </div>
+                      {!silentNow ? (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="range"
+                            min={0}
+                            max={1.5}
+                            step={0.05}
+                            value={st.volume}
+                            onChange={(e) => update(n.id, d, base, { volume: Number(e.target.value) })}
+                            className="h-1.5 w-24 cursor-pointer accent-neutral-900"
+                            title="Lautstärke (100 % = wie bisher)"
+                          />
+                          <span className="w-10 text-right text-[11px] tabular-nums text-neutral-500">
+                            {Math.round(st.volume * 100)} %
+                          </span>
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                  if (d === "ticker") {
+                    // 📣 Ticker: an/aus + optional Ton (TV bei aktivem Ton, Admin)
+                    const tOff = !st.enabled;
+                    return (
+                      <td key={d} className={"px-3 py-2.5 " + (tOff ? "bg-neutral-50/80" : "")}>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={st.enabled}
+                            onChange={(e) => update(n.id, d, base, { enabled: e.target.checked })}
+                          />
+                          <span className={tOff ? "text-neutral-400 line-through" : "text-neutral-700"}>im Ticker</span>
+                        </label>
+                        {p.note ? <div className="mt-0.5 text-[11px] text-neutral-400">{p.note}</div> : null}
+                        <div className={"mt-1.5 space-y-1.5 " + (tOff ? "pointer-events-none opacity-40" : "")}>
+                          {soundBlock(st.sound === "none")}
+                        </div>
+                      </td>
+                    );
+                  }
                   const elsewhere = ELSEWHERE[n.id];
                   const off = !st.enabled;
                   const silent = st.sound === "none";
@@ -231,6 +425,77 @@ export default function NotificationsOverview() {
             ))}
           </tbody>
         </table>
+      </div>
+      {/* Scrollbalken zum Seitwärts-Scrollen bleibt unten am Bildschirm sichtbar */}
+      {overflowX ? (
+        <div
+          ref={barRef}
+          onScroll={(e) => syncScroll(e.currentTarget)}
+          className="sticky bottom-0 z-20 -mt-3 overflow-x-auto rounded-b-xl bg-white/90 backdrop-blur"
+        >
+          <div style={{ width: tableW, height: 1 }} />
+        </div>
+      ) : null}
+
+      {/* 🏷️ Dauerhafte Anzeigen (Badges): nur an/aus je Gerät */}
+      <div className="rounded-xl border">
+        <div className="border-b bg-neutral-50 px-3 py-2">
+          <div className="text-sm font-semibold">🏷️ Dauerhafte Anzeigen</div>
+          <div className="text-[11px] text-neutral-500">
+            Keine Mitteilungen, sondern Badges/Zeilen, die stehen bleiben, solange der Zustand gilt – hier nur an/aus je
+            Gerät.
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="text-left text-xs text-neutral-500">
+              <tr>
+                <th className="px-3 py-2">Anzeige</th>
+                {(["tv", "admin", "phone"] as NotifDevice[]).map((d) => (
+                  <th key={d} className="px-3 py-2">
+                    {DEVICE_LABEL[d]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {BADGES.map((b) => (
+                <tr key={b.id} className="border-t align-top">
+                  <td className="px-3 py-2">
+                    <div className="font-semibold">
+                      {b.icon} {b.title}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-neutral-500">{b.when}</div>
+                  </td>
+                  {(["tv", "admin", "phone"] as NotifDevice[]).map((d) => {
+                    const p = b.devices[d];
+                    if (!p) {
+                      return (
+                        <td key={d} className="px-3 py-2 text-neutral-300">
+                          –
+                        </td>
+                      );
+                    }
+                    const base: NotifDeviceSetting = { enabled: true, seconds: null, volume: 1, sound: "none" };
+                    const st = draft[b.id]?.[d] ?? base;
+                    return (
+                      <td key={d} className={"px-3 py-2 " + (!st.enabled ? "bg-neutral-50/80" : "")}>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={st.enabled}
+                            onChange={(e) => update(b.id, d, base, { enabled: e.target.checked })}
+                          />
+                          <span className={!st.enabled ? "text-neutral-400 line-through" : "text-neutral-700"}>{p.where}</span>
+                        </label>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {msg ? (

@@ -5,6 +5,7 @@
 // und alle 5 Minuten aufgefrischt. Scores des laufenden Turniers zählen sofort mit.
 // Bei Timeplay/DYP oder Turnieren ohne Location wird nichts angezeigt.
 
+import { useBadgeOn } from "@/components/DisplayDevice";
 import { useEffect, useState } from "react";
 import type { LiveEntry, PriorRecords } from "@/lib/recordWatch";
 import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
@@ -88,7 +89,8 @@ export default function MatchRecordsLine(props: {
   machineName: string | null | undefined;
   liveEntries: readonly LiveEntry[];
 }) {
-  if (props.hidden) return null;
+  const on = useBadgeOn("badge:records"); // 🏷️ an/aus je Gerät
+  if (props.hidden || !on) return null;
   return <MatchRecordsLineInner {...props} />;
 }
 

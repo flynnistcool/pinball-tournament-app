@@ -15,6 +15,7 @@ import { liveEntriesFrom } from "@/lib/recordWatch";
 import { topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import StreakFire from "@/components/StreakFire";
+import { useBadgeOn } from "@/components/DisplayDevice";
 import RivalryBadge, { rtpRefreshKey, useRivalry } from "@/components/RivalryBadge";
 import { pairKey, type RivalryInsight } from "@/lib/rivalryInsights";
 import BotEloBadge from "@/components/BotEloBadge";
@@ -156,6 +157,9 @@ export default function PhoneMatchInsights({
     );
   }
   const favorite: string | null = favRes ? favRes.key : null;
+  // 🏷️ dauerhafte Anzeigen an/aus (🔔 Meldungen & Sounds)
+  const favOn = useBadgeOn("badge:favorite");
+  const recordsOn = useBadgeOn("badge:records");
 
   const recs = records?.enabled && machineName ? recordsForMachine(machineName, records.prior, live) : null;
   // 🔥 On fire – dieselbe Rechnung wie im Handy-Leaderboard (aus den ohnehin geladenen Daten)
@@ -189,7 +193,7 @@ export default function PhoneMatchInsights({
             <span>{info.machine?.icon_emoji || "🎰"}</span>
             <span className="truncate">{machineName}</span>
           </div>
-          {!finished && recs ? (
+          {!finished && recs && recordsOn ? (
             <div className="mt-2 grid grid-cols-2 gap-2">
               <RecordItem icon="🏆" label="Highscore" rec={recs.best} />
               <RecordItem icon="📅" label="30 Tage" rec={recs.month} />
@@ -234,7 +238,7 @@ export default function PhoneMatchInsights({
                   </span>
                 ) : null}
                 <StreakFire n={streaks[pid]} mode={sMode} />
-                {favorite === pid ? (
+                {favorite === pid && favOn ? (
                   <span
                     className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
                     title={favRes ? favoriteTitle(favRes) : "Favorit"}
