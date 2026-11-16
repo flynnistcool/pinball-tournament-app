@@ -32,6 +32,15 @@ import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdow
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
 import { bestInsightForMatch } from "@/lib/rivalryInsights";
+import {
+  SPEECH_LOCALE,
+  eliminationSpeech,
+  pickSpeechVoice,
+  rotationSpeech,
+  roundSpeech,
+  speechLangOf,
+  type SpeechLang,
+} from "@/lib/speechTexts";
 import { findHalfSavedMatches } from "@/lib/halfSaved";
 import RotationRoundsDialog from "@/components/RotationRoundsDialog";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
@@ -7103,7 +7112,7 @@ function elimUnlockSpeechOnce() {
 
 
 
-function elimSpeak(text: string) {
+function elimSpeak(text: string, lang: SpeechLang = "en") {
   try {
     if (typeof window === "undefined") return;
 
@@ -7118,7 +7127,7 @@ function elimSpeak(text: string) {
     const voices = synth.getVoices?.() ?? [];
     synth.cancel();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "en-US";
+    utter.lang = SPEECH_LOCALE[lang];
 
     // Stimmen laden (wichtig v.a. Safari/iOS)
   
@@ -7129,8 +7138,11 @@ function elimSpeak(text: string) {
     const en =
       voices.find((v) => (v.lang || "").toLowerCase().startsWith("en")) ?? null;
 
-    if (vicki) utter.voice = vicki;
-    else if (en) utter.voice = en;
+    // 🔊 Stimme passend zur Turnier-Sprache (Englisch: "Vicki" bevorzugt)
+    const pv = pickSpeechVoice(voices, lang);
+    if (pv) utter.voice = pv;
+    else if (lang === "en" && vicki) utter.voice = vicki;
+    else if (lang === "en" && en) utter.voice = en;
 
     synth.speak(utter);
   } catch (e) {
@@ -7199,7 +7211,11 @@ const j = await res.json().catch(() => ({}));
 
 try {
   if (j?.speak?.text && j?.speak?.kind === "elimination_next_round") {
-    elimSpeak(j.speak.text);
+    // 🔊 Ansage in der Turnier-Sprache bauen (Server liefert Fall + Namen); sonst englischer Text vom Server
+    const sLang = speechLangOf(tournament?.speech_lang);
+    const sp = j.speak;
+    const txt = sp.case && sp.name ? eliminationSpeech(sLang, sp.case, sp.name, sp.scorerName) : sp.text;
+    elimSpeak(txt, sLang);
   }
 } catch (e: any) {
   console.error("setScore failed:", e);
@@ -10682,6 +10698,33 @@ useEffect(() => {
   }
 }, [data?.tournament?.speech_round_enabled]);
 
+// 🔊 Sprache der Sprachausgabe pro Turnier (tournaments.speech_lang, Standard Englisch)
+const [speechLangUi, setSpeechLangUi] = useState<SpeechLang>("en");
+const speechLangRef = useRef<SpeechLang>("en");
+speechLangRef.current = speechLangUi;
+useEffect(() => {
+  setSpeechLangUi(speechLangOf(data?.tournament?.speech_lang));
+}, [data?.tournament?.speech_lang]);
+
+async function setSpeechLang(next: SpeechLang) {
+  if (!isAdmin || next === speechLangUi) return;
+  const prev = speechLangUi;
+  setSpeechLangUi(next);
+  const res = await fetch("/api/tournaments/set-speech-round", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({ code, lang: next, _ts: Date.now() }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j?.ok) {
+    setSpeechLangUi(prev);
+    alert(j?.error ?? "Konnte die Sprache der Sprachausgabe nicht speichern.");
+  } else {
+    await reloadAll();
+  }
+}
+
 async function setSpeechRoundEnabled(next: boolean) {
   if (!isAdmin) return; // Zuschauer nicht
   setSpeechRoundEnabledUi(next);
@@ -12395,7 +12438,10 @@ function rotPrepareEndSound(): Promise<boolean> {
     };
   }, []);
 
-    function rotPickVoice(preferredLangs: string[] = ["en-US", "de-DE"]) {
+    function rotPickVoice(_preferredLangs: string[] = ["en-US", "de-DE"]) {
+    // 🔊 Stimme passend zur Turnier-Sprache (lib/speechTexts.ts); keine passende → Browser-Standard
+    const picked = pickSpeechVoice(rotVoicesRef.current ?? [], speechLangRef.current);
+    if (picked || speechLangRef.current === "de") return picked;
     const voices = rotVoicesRef.current ?? [];
 
     // Windows: Vicki/Vicky (nur wenn vorhanden)
@@ -12438,9 +12484,9 @@ function rotPrepareEndSound(): Promise<boolean> {
       const v = rotPickVoice(["en-US", "de-DE"]);
       if (v) {
         u.voice = v;
-        u.lang = v.lang || "en-US";
+        u.lang = v.lang || SPEECH_LOCALE[speechLangRef.current];
       } else {
-        u.lang = "en-US";
+        u.lang = SPEECH_LOCALE[speechLangRef.current];
       }
 
       synth.speak(u);
@@ -12473,9 +12519,9 @@ function roundUnlockSpeechOnce() {
     const v = rotPickVoice(["en-US", "de-DE"]);
     if (v) {
       u.voice = v;
-      u.lang = v.lang || "en-US";
+      u.lang = v.lang || SPEECH_LOCALE[speechLangRef.current];
     } else {
-      u.lang = "en-US";
+      u.lang = SPEECH_LOCALE[speechLangRef.current];
     }
 
     synth.speak(u);
@@ -12507,9 +12553,9 @@ function roundSpeak(text: string) {
     const v = rotPickVoice(["en-US", "de-DE"]);
     if (v) {
       utter.voice = v;
-      utter.lang = v.lang || "en-US";
+      utter.lang = v.lang || SPEECH_LOCALE[speechLangRef.current];
     } else {
-      utter.lang = "en-US";
+      utter.lang = SPEECH_LOCALE[speechLangRef.current];
     }
 
     synth.speak(utter);
@@ -12572,9 +12618,9 @@ function rotSpeak(text: string) {
     const v = rotPickVoice(["en-US", "de-DE"]);
     if (v) {
       utter.voice = v;
-      utter.lang = v.lang || "en-US";
+      utter.lang = v.lang || SPEECH_LOCALE[speechLangRef.current];
     } else {
-      utter.lang = "en-US";
+      utter.lang = SPEECH_LOCALE[speechLangRef.current];
     }
 
     let restore = () => rotMusicUnduck();
@@ -12658,9 +12704,7 @@ useEffect(() => {
     // Time's up (einmal)
     if (!rotFinishedAnnouncedRef.current) {
       rotFinishedAnnouncedRef.current = true;
-      rotSpeak(
-        "Time's up! Stop playing pinball immediately and enter your high scores! Thank you!"
-      );
+      rotSpeak(rotationSpeech.timesUp(speechLangRef.current));
     }
   };
 
@@ -12801,13 +12845,13 @@ useEffect(() => {
   // 🟠 Halbzeit (einmal)
   if (!rotHalfAnnouncedRef.current && leftMs <= totalMs / 2) {
     rotHalfAnnouncedRef.current = true;
-    rotSpeak("Hurry up and try harder, take risks or stay pussies forever.");
+    rotSpeak(rotationSpeech.halftime(speechLangRef.current));
   }
 
   // 🔴 Noch 1 Minute (einmal)
   if (!rotOneMinuteAnnouncedRef.current && leftMs <= 60_000) {
     rotOneMinuteAnnouncedRef.current = true;
-    rotSpeak("Attention, only one minute left.");
+    rotSpeak(rotationSpeech.oneMinute(speechLangRef.current));
   }
 
   // 🔊 Letzte 10 Sekunden runterzählen
@@ -12843,7 +12887,7 @@ useEffect(() => {
   // bei 10s: Ready-Ansage (einmal)
   if (secondsLeft <= 10 && !rotPrestartReadySpokenRef.current) {
     rotPrestartReadySpokenRef.current = true;
-    rotSpeak("Get ready, it starts in a few seconds!");
+    rotSpeak(rotationSpeech.getReady(speechLangRef.current));
   }
 
   // bei 3,2,1: runterzählen (jeweils einmal)
@@ -12864,7 +12908,7 @@ useEffect(() => {
   // bei 0: Let's flip + Haupttimer starten (einmal)
   if (secondsLeft <= 0 && !rotLetsFlipSpokenRef.current) {
     rotLetsFlipSpokenRef.current = true;
-    rotSpeak("Let's go and have fun!");
+    rotSpeak(rotationSpeech.letsGo(speechLangRef.current));
 
     if (rotPendingDurationSec == null) {
       // Sicherheitsgurt – sollte eigentlich nie passieren
@@ -13195,7 +13239,8 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
 
     // 4) Speech zusammenbauen
     const parts: string[] = [];
-    parts.push(`Round ${roundNo}.`);
+    const sLang = speechLangRef.current;
+    parts.push(roundSpeech.intro(sLang, roundNo));
 
     matches.forEach((m: any, idx: number) => {
       const machineName = machinesById[String(m.machine_id)] ?? "Unknown machine";
@@ -13206,7 +13251,7 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
         .filter(Boolean);
 
       const playersText = players.map((p: any) => p.name).join(", ");
-      let line = `Match ${idx + 1} on machine ${machineName} with the playing order: ${playersText}.`;
+      let line = roundSpeech.match(sLang, idx + 1, machineName, playersText);
 
       // ★ Favorit nach derselben Regel wie das Abzeichen (lib/favorite.ts)
       const favCands = mpList
@@ -13230,10 +13275,7 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
       const favName = favRes ? playersByIdLocal[favRes.key]?.name : null;
 
       if (favRes && favName) {
-        line +=
-          favRes.reason === "winrate"
-            ? ` The favorite in this match, with the best win rates, is ${favName}.`
-            : ` The favorite in this match, with the highest Elo, is ${favName}.`;
+        line += roundSpeech.favorite(sLang, favRes.reason, favName);
       }
 
       parts.push(line);
@@ -13694,6 +13736,30 @@ const tasksById = useMemo(() => {
         />
         <span>🔊 Sprachausgabe pro Runde</span>
       </label>
+
+      {/* 🔊 Sprache der Sprachausgabe (pro Turnier) */}
+      <div
+        className="inline-flex overflow-hidden rounded-lg border border-neutral-200 bg-white text-xs"
+        title={!isAdmin ? "Nur Admins können das ändern" : "Sprache der Sprachausgabe für dieses Turnier"}
+      >
+        {([
+          ["en", "🇬🇧 English"],
+          ["de", "🇩🇪 Deutsch"],
+        ] as [SpeechLang, string][]).map(([l, label]) => (
+          <button
+            key={l}
+            type="button"
+            disabled={!isAdmin}
+            onClick={() => setSpeechLang(l)}
+            className={
+              "px-2.5 py-1.5 font-semibold disabled:cursor-not-allowed " +
+              (speechLangUi === l ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50")
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
     </div>
 
     <div className="flex flex-col items-end gap-1">

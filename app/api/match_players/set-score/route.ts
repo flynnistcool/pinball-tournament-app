@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { realDbError } from "@/lib/dbErrors";
 import { entryAuthor, recordEntryChange } from "@/lib/entryLogServer";
+import { eliminationSpeech, type EliminationSpeechCase } from "@/lib/speechTexts";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -110,6 +111,10 @@ export async function POST(req: Request) {
   const isElimination = tournamentFormat === "elimination" || roundFormat === "elimination";
   let speakText: string | null = null;
   let speakPlayerId: string | null = null;
+  // 🔊 Fall + Namen, damit das Tablet die Ansage in der Turnier-Sprache bauen kann
+  let speakCase: EliminationSpeechCase | null = null;
+  let speakName: string | null = null;
+  let speakScorerName: string | null = null;
 
   let newlyAdvancedPlayerId: string | null = null;
 
@@ -296,35 +301,24 @@ const scorerAdvanced =
 
 
 
+          // 🔊 Text in der Turnier-Sprache baut das Tablet (lib/speechTexts.ts) aus Fall + Namen;
+          //    speakText (Englisch) bleibt als Rückfall für ältere Seiten
+          speakName = speechPlayerName;
+          speakScorerName = scorerName;
           if (isFinalWin) {
             // 🏆 Text C
-            speakText = `Wow, what a performance! ${speechPlayerName}! You played brilliantly, your pinball skills are exceptional! Let yourself be celebrated! ${speechPlayerName}, you won the tournament!
-`;
-
+            speakCase = "final";
           } else if (!scorerAdvanced && newlyAdvancedPlayerId) {
             // 🔴 Neuer Fall: Scorer ist raus, jemand anderes kommt weiter
-            speakText =
-              `${scorerName}, that was close. ` +
-              `Next time you'll get a higher score. ` +
-              `${speechPlayerName}. ` +
-              `You're in the next round. ` +
-              `Try to beat the cutoff score on the next round's pinball machine to stay in the game.`;
-
+            speakCase = "closeLoss";
+          } else if (isFirstInNextRound) {
+            // ✅ Text A: er ist der erste in der neuen Runde
+            speakCase = "firstNext";
           } else {
-            if (isFirstInNextRound) {
-              // ✅ Text A: er ist der erste in der neuen Runde
-              speakText =
-                `Great play! ${speechPlayerName}. ` +
-                `You're the firt player in the next round. ` +
-                `Go to the next round's pinball machine and set your score.`;
-            } else {
-              // ✅ Text B: es ist schon jemand in der neuen Runde
-              speakText =
-                `Very well played! ${speechPlayerName}. ` +
-                `You're in the next round. ` +
-                `Try to beat the cutoff score on the next round's pinball machine to stay in the game.`;
-            }
+            // ✅ Text B: es ist schon jemand in der neuen Runde
+            speakCase = "next";
           }
+          speakText = eliminationSpeech("en", speakCase, speechPlayerName, scorerName);
         }
       }
 
@@ -582,7 +576,14 @@ return new NextResponse(
     ok: true,
     row: updated,
     speak: speakText
-      ? { kind: "elimination_next_round", playerId: speakPlayerId, text: speakText }
+      ? {
+          kind: "elimination_next_round",
+          playerId: speakPlayerId,
+          text: speakText,
+          case: speakCase,
+          name: speakName,
+          scorerName: speakScorerName,
+        }
       : null,
   }),
   {

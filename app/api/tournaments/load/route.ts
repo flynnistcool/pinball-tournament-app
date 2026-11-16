@@ -27,6 +27,11 @@ async function handle(codeRaw: string) {
     );
   }
 
+  // 🔊 Sprache der Sprachausgabe – eigene Abfrage, damit das Laden auch ohne die Spalte
+  //    (supabase_speech_lang.sql noch nicht ausgeführt) funktioniert → dann "en"
+  const { data: sl } = await sb.from("tournaments").select("speech_lang").eq("id", t.id).maybeSingle();
+  (t as any).speech_lang = (sl as any)?.speech_lang === "de" ? "de" : "en";
+
   // 2) Runden laden
   const { data: rounds, error: rErr } = await sb
     .from("rounds")
