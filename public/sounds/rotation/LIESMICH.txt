@@ -1,0 +1,33 @@
+🎵 HINTERGRUNDMUSIK FÜR DEN ROUND-THE-PINBALL-TIMER
+====================================================
+
+NEUE LIEDER HINZUFÜGEN
+1. MP3-Datei(en) in diesen Ordner kopieren:
+      public/sounds/rotation/
+   Dateiname nach dem Schema:
+      Künstler - Titel-Art.mp3
+   Beispiel:
+      Randy Sharp - Slime Time-Arcade.mp3   →  Art "Arcade"
+   (Die Art ist immer der Teil nach dem LETZTEN Bindestrich.)
+
+2. Im Terminal im Projektordner ausführen:
+      npm run musik
+
+   Das macht automatisch:
+   - Originale sichern auf dem Desktop: pinball-musik-original\rotation
+   - umwandeln auf 128 kbps (kleinere Datei, klingt gleich)
+   - Lautstärke angleichen (alle Lieder gleich laut)
+   - Liederliste in der App aktualisieren
+
+3. Hochladen (oder Claude sagen: "hochladen").
+
+LIED ENTFERNEN
+   Datei hier löschen und wieder  npm run musik  ausführen.
+
+GUT ZU WISSEN
+   - Instrumental (ohne Gesang) passt am besten – sonst stört es die Ansagen.
+   - Lizenz beachten (öffentliche Wiedergabe bei Turnieren), z. B. Artlist-Abo,
+     Pixabay Music, YouTube Audio Library.
+   - ffmpeg wird gebraucht. Falls es fehlt, einmalig:  winget install Gyan.FFmpeg
+   - Bereits bearbeitete Lieder merkt sich die Datei .bearbeitet.json (nicht löschen).
+   - Das Standardlied liegt eine Ebene höher: public/sounds/timer.mp3

@@ -33,6 +33,14 @@ import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } f
 import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
 import { bestInsightForMatch } from "@/lib/rivalryInsights";
 import {
+  ROTATION_CATEGORIES,
+  ROTATION_TRACKS,
+  loadMusicChoice,
+  pickTrack,
+  saveMusicChoice,
+  type MusicChoice,
+} from "@/lib/rotationMusic";
+import {
   SPEECH_LOCALE,
   eliminationSpeech,
   pickSpeechVoice,
@@ -5258,6 +5266,8 @@ function RotationGlobalTimerSticky({
   onPauseToggle,
   onReset,
   onFullscreen,
+  musicChoice,
+  onMusicChoice,
 }: {
   locked: boolean;
   timeLeftLabel: string;
@@ -5269,6 +5279,9 @@ function RotationGlobalTimerSticky({
   onPauseToggle: () => void;
   onReset: () => void;
   onFullscreen?: () => void;
+  /** 🎵 Hintergrundmusik: "random" | "off" | Lied-id */
+  musicChoice?: MusicChoice;
+  onMusicChoice?: (c: MusicChoice) => void;
 }) {
   const [minutes, setMinutes] = useState(10);
 
@@ -5301,7 +5314,7 @@ function RotationGlobalTimerSticky({
             <Select
               value={String(minutes)}
               onChange={(e) => setMinutes(Number(e.target.value) || 10)}
-              className="h-10 w-full text-xs"
+              className="!h-8 w-full !rounded-lg !py-0 !text-xs"
               title="Dauer (Minuten)"
               disabled={locked || running || paused}
             >
@@ -5316,8 +5329,8 @@ function RotationGlobalTimerSticky({
   <div
     className={[
       "inline-flex items-center justify-center rounded-full",
-      "px-6 py-2",
-      "text-3xl font-semibold tabular-nums",
+      "px-5 py-1.5",
+      "text-2xl font-semibold tabular-nums",
       "transition-colors",
       badgeClass,
     ].join(" ")}
@@ -5330,7 +5343,7 @@ function RotationGlobalTimerSticky({
               <Button
                 type="button"
                 variant="secondary"
-                className="h-9 px-3 text-sm w-full"
+                className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
                 disabled={locked || (!running && !paused)}
                 onClick={onPauseToggle}
                 title={paused ? "Timer weiterlaufen lassen" : "Timer anhalten"}
@@ -5341,7 +5354,7 @@ function RotationGlobalTimerSticky({
               <Button
                 type="button"
                 variant="ghost"
-                className="h-9 px-3 text-sm w-full"
+                className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
                 disabled={locked}
                 onClick={onReset}
               >
@@ -5349,10 +5362,41 @@ function RotationGlobalTimerSticky({
               </Button>
             </div>
 
+            {/* 🎵 Hintergrundmusik (gilt ab dem nächsten Start, "Aus" sofort) */}
+            {onMusicChoice ? (
+              <Select
+                value={musicChoice ?? "random"}
+                onChange={(e) => onMusicChoice(e.target.value)}
+                className="!h-8 w-full !rounded-lg !py-0 !text-xs"
+                title="Hintergrundmusik – gilt ab dem nächsten Start (Aus sofort)"
+                disabled={locked}
+              >
+                <option value="random">🎲 Musik: Zufall (alle)</option>
+                <optgroup label="🎲 Zufall aus einer Art">
+                  {ROTATION_CATEGORIES.map((c) => (
+                    <option key={"cat:" + c} value={"cat:" + c}>
+                      🎲 Zufall: {c} ({ROTATION_TRACKS.filter((t) => t.category === c).length})
+                    </option>
+                  ))}
+                </optgroup>
+                {ROTATION_CATEGORIES.map((c) => (
+                  <optgroup key={c} label={"🎵 " + c}>
+                    {ROTATION_TRACKS.filter((t) => t.category === c).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title}
+                        {t.artist ? ` – ${t.artist}` : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <option value="off">🔇 Musik: Aus</option>
+              </Select>
+            ) : null}
+
             <Button
               type="button"
               variant="secondary"
-              className="h-9 px-3 text-sm w-full"
+              className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
               disabled={locked || running}
               onClick={async () => {
                 await onStart(minutes);
@@ -5363,7 +5407,7 @@ function RotationGlobalTimerSticky({
             <Button
               type="button"
               variant="ghost"
-              className="h-9 px-3 text-sm w-full"
+              className="!h-8 !rounded-lg !px-3 !py-0 !text-sm w-full"
               disabled={locked || !onFullscreen}
               onClick={() => onFullscreen?.()}
               title="Timer groß anzeigen (Overlay)"
@@ -10094,7 +10138,8 @@ if (joined)
                 {/* Desktop Header – auf Mobile ausblenden (sonst zu eng) */}
                 <div className="hidden sm:grid sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
                   <div className="sm:col-[span_5_/_span_5]">Name</div>
-                  <div className="sm:col-[span_6_/_span_6]">Kategorie / Serie</div>
+                  {/* pl-3 = Innenabstand der Kategorie-Chips → Überschrift fluchtet mit dem Text */}
+                  <div className="sm:col-[span_6_/_span_6] pl-3">Kategorie / Serie</div>
                   <div className="sm:col-[span_6_/_span_6]">Format</div>
                   <div className="sm:col-[span_3_/_span_3]">Location</div>
                   <div className="sm:col-[span_2_/_span_2]">Status</div>
@@ -10104,9 +10149,13 @@ if (joined)
                   <div
                     key={t.id}
                     onClick={() => joinTournament(t.code)}
-                    className="grid grid-cols-1 sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-2 px-4 py-3 border-b last:border-b-0 items-start sm:items-center
-                              cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition"
+                    className="group cursor-pointer border-b px-1.5 py-2 last:border-b-0"
                   >
+                    {/* Turnierzeile (Name … Datum) mit dezentem Hintergrund */}
+                    <div
+                      className="grid grid-cols-1 sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-2 items-start sm:items-center
+                                rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-2.5 transition group-hover:bg-neutral-100 group-active:bg-neutral-200/70"
+                    >
                     <div className="sm:col-[span_5_/_span_5] flex min-w-0 items-center gap-2 font-medium">
                       <span className="truncate">{t.name}</span>
                       {t.status === "finished" && isAdmin ? (
@@ -10238,21 +10287,21 @@ if (joined)
                         : "—"}
                     </div>
 
+                    </div>
+
                     {/* 👥 Wer hat mitgespielt (beendet: nach Endplatz, 🏆 = Sieger) */}
                     {Array.isArray(t.players) && t.players.length ? (
-                      <div className="sm:col-[span_24_/_span_24] -mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-neutral-500">
+                      <div className="mt-1.5 px-2.5 flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 text-[11px] text-neutral-500">
                         {t.players.map((p: any, i: number) => (
                           <span
                             key={i}
                             className={
-                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 " +
+                              "inline-flex items-center gap-0.5 rounded-full px-1.5 py-px " +
                               (p.kind === "bot"
                                 ? "bg-violet-50 text-violet-700"
                                 : p.kind === "placeholder"
                                 ? "bg-neutral-100 text-neutral-400 line-through"
-                                : p.rank === 1
-                                ? "bg-amber-50 font-semibold text-amber-800"
-                                : "bg-neutral-50 text-neutral-600")
+                                : "bg-white text-neutral-500 ring-1 ring-neutral-100")
                             }
                             title={p.rank ? `${p.rank}. Platz` : undefined}
                           >
@@ -12227,17 +12276,54 @@ const rotTimerAutoOpenedRef = useRef(false);
     const elimSpeechUnlockedRef = useRef(false);
 
 
-// 🎵 Rotation Background Music (MP3 loop)
-// Datei: /public/sounds/rotation-loop.mp3
+// 🎵 Rotation Background Music (MP3 loop) – Lieder + Auswahl: lib/rotationMusic.ts
 const rotMusicRef = useRef<HTMLAudioElement | null>(null);
-const ROT_MUSIC_VOL = 0.25;      // normale Lautstärke (eher leise)
+// Auswahl 🎲 Zufall / festes Lied / 🔇 Aus (merkt sich das Gerät)
+const [rotMusicChoice, setRotMusicChoiceState] = useState<MusicChoice>("random");
+const rotMusicChoiceRef = useRef<MusicChoice>("random");
+rotMusicChoiceRef.current = rotMusicChoice;
+const rotMusicOffRef = useRef(false); // für den laufenden Timer: keine Musik
+const rotTrackIdRef = useRef<string | null>(null); // zuletzt gewähltes Lied
+useEffect(() => {
+  setRotMusicChoiceState(loadMusicChoice());
+}, []);
+function setRotMusicChoice(c: MusicChoice) {
+  setRotMusicChoiceState(c);
+  saveMusicChoice(c);
+  // "Aus" wirkt sofort, ein anderes Lied ab dem nächsten Start
+  if (c === "off") {
+    rotMusicOffRef.current = true;
+    rotMusicStop();
+  }
+}
+/** beim Start (im Tippen!) das Lied festlegen */
+function rotMusicSelectForStart() {
+  const track = pickTrack(rotMusicChoiceRef.current, rotTrackIdRef.current);
+  rotMusicOffRef.current = !track;
+  if (!track) return;
+  rotTrackIdRef.current = track.id;
+  const a = rotMusicRef.current;
+  if (a && !a.src.endsWith(track.src)) {
+    try {
+      a.pause();
+      a.src = track.src;
+      a.load();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+// Lieder sind auf -16 LUFS angeglichen (ca. 5 dB leiser als das alte timer.mp3) → Lautstärke angehoben,
+// damit es so laut klingt wie vorher (0.25 * ~1.7)
+const ROT_MUSIC_VOL = 0.43;      // normale Lautstärke (eher leise)
 //const ROT_MUSIC_VOL_PLAY = 0.25;  // während Play
-const ROT_MUSIC_DUCK = 0.10;     // während Sprache (noch leiser)
+const ROT_MUSIC_DUCK = 0.17;     // während Sprache (noch leiser)
 
 function rotMusicEnsure() {
   if (typeof window === "undefined") return null;
   if (!rotMusicRef.current) {
-    const a = new Audio("/sounds/timer.mp3");
+    const first = ROTATION_TRACKS.find((t) => t.id === rotTrackIdRef.current) ?? ROTATION_TRACKS[0];
+    const a = new Audio(first?.src ?? "/sounds/timer.mp3");
     a.loop = true;
     a.preload = "auto";
     a.volume = ROT_MUSIC_VOL;
@@ -12274,6 +12360,8 @@ function rotPrepareMusic() {
 
 
 function rotPrepareMusicStartInTap() {
+  rotMusicSelectForStart();
+  if (rotMusicOffRef.current) return; // 🔇 Aus
   const a = rotMusicEnsure();
   if (!a) return;
 
@@ -12302,6 +12390,7 @@ function rotPrepareMusicStartInTap() {
 
 
 function rotMusicPlay() {
+  if (rotMusicOffRef.current) return; // 🔇 Aus
   const a = rotMusicEnsure();
   if (!a) return;
   try {
@@ -13743,8 +13832,8 @@ const tasksById = useMemo(() => {
         title={!isAdmin ? "Nur Admins können das ändern" : "Sprache der Sprachausgabe für dieses Turnier"}
       >
         {([
-          ["en", "🇬🇧 English"],
-          ["de", "🇩🇪 Deutsch"],
+          ["en", "EN"],
+          ["de", "DE"],
         ] as [SpeechLang, string][]).map(([l, label]) => (
           <button
             key={l}
@@ -14287,6 +14376,8 @@ const tasksById = useMemo(() => {
       onStart={rotStartGlobal}
       onPauseToggle={rotPauseToggleGlobal}
       onReset={rotResetGlobal}
+      musicChoice={rotMusicChoice}
+      onMusicChoice={setRotMusicChoice}
       onFullscreen={() => {
         rotTimerAutoOpenedRef.current = true;
         setRotTimerFullscreen(true);
