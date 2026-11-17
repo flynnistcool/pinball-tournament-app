@@ -39,6 +39,24 @@ export function recordsForMachine(
 }
 
 /**
+ * 🎰 Flipper-Premiere: Spieler hat diesen Flipper an der Location noch nie gespielt –
+ * weder in beendeten Turnieren noch in einem ANDEREN Match dieses Turniers.
+ */
+export function isPremiere(
+  profileId: string | null | undefined,
+  machineName: string | null | undefined,
+  personal: Record<string, number>,
+  live: readonly LiveEntry[],
+  matchId: string | null | undefined
+): boolean {
+  const key = machineKey(machineName);
+  if (!profileId || !key) return false;
+  if (personalKey(String(profileId), key) in personal) return false;
+  const own = matchId ? `${matchId}|` : null;
+  return !live.some((e) => e.machineKey === key && e.profileId === String(profileId) && !(own && e.key.startsWith(own)));
+}
+
+/**
  * Persönlicher Highscore eines Spielers (Profil) auf einem Flipper:
  * - before: bester Score aus früheren, beendeten Turnieren an der Location (null = nie gespielt)
  * - today: bester eigener Score im laufenden Turnier auf diesem Flipper (null = noch keiner)

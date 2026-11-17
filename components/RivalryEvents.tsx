@@ -232,6 +232,67 @@ export function RivalryEventToasts({
   );
 }
 
+/** 👀 Vorschau (🔔 Meldungen & Sounds): Beispiel-Ereignis in TV- bzw. Admin-Darstellung, Klick schließt */
+export function RivalryEventPreview({
+  kind,
+  variant,
+  onClose,
+}: {
+  kind: RivalryEvent["kind"];
+  variant: "tv" | "admin";
+  onClose: () => void;
+}) {
+  const ev: RivalryEvent = {
+    id: "preview",
+    kind,
+    winner: "a",
+    loser: "b",
+    n: kind === "jubilee" ? 50 : kind === "streakGrow" ? 5 : 6,
+    winnerWins: 14,
+    loserWins: 12,
+    score: 0,
+  };
+  const nameOf = (pid: string) => (pid === "a" ? "Andre" : "Christian");
+  const t = eventText(ev, nameOf);
+  if (variant === "tv") {
+    return (
+      <div className="fixed inset-0 z-[130] flex cursor-pointer items-center justify-center bg-black/50" onClick={onClose}>
+        <div
+          className={
+            "max-w-[70vw] rounded-[2.5rem] bg-gradient-to-br px-16 py-12 text-center text-white shadow-2xl ring-4 ring-white/20 " +
+            KIND_TONE[kind].tv
+          }
+        >
+          <div className="text-8xl">{t.icon}</div>
+          <div className="mt-3">
+            <ScopeChip kind={kind} variant="dark" long className="!px-3 !py-1 !text-xl" />
+          </div>
+          <div className="mt-3 text-6xl font-black tracking-tight">{t.title}</div>
+          <div className="mt-4 text-3xl font-semibold text-white/90">{t.text}</div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+16px)] right-4 z-[130] w-[min(90vw,340px)]">
+      <button
+        type="button"
+        onClick={onClose}
+        className={"flex w-full items-start gap-2 rounded-xl border px-3 py-2 text-left shadow-lg " + KIND_TONE[kind].light}
+      >
+        <span className="text-2xl leading-none">{t.icon}</span>
+        <span className="min-w-0">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-bold">{t.title}</span>
+            <ScopeChip kind={kind} />
+          </span>
+          <span className="block text-xs">{t.text}</span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 /** 📱 Handy: Karte oben, persönliche Sicht ("Du …") */
 export function RivalryEventPhone({
   events,

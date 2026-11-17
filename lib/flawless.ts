@@ -119,7 +119,9 @@ export function isUnbeaten(run: PlayerRun | undefined, mode: FlawlessMode): bool
 export function rotationAllDone(data: RunData): boolean {
   const mids = new Set((data.matches ?? []).map((m) => String(m.id)));
   const mps = (data.match_players ?? []).filter((mp) => mids.has(String(mp.match_id)));
-  return mps.length > 0 && mps.every((mp) => toScore(mp.score) != null);
+  // wie der Durchgangs-Zähler (lib/rotationTurn.ts): auch ein Score von 0 gilt als eingetragen
+  const entered = (v: unknown) => v != null && v !== "" && Number.isFinite(Number(v));
+  return mps.length > 0 && mps.every((mp) => entered(mp.score));
 }
 
 /** Wer hat am Ende alles gewonnen? (mind. FLAWLESS_MIN Matches/Flipper) */

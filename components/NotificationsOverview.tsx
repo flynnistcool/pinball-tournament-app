@@ -20,6 +20,7 @@ import { SOUND_CATALOG } from "@/lib/soundCatalog";
 import { playSoundById } from "@/lib/playSound";
 import { publishNotificationSettings, useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
+import NotificationPreview, { hasRealPreview } from "@/components/NotificationPreview";
 
 const DEVICES: NotifDevice[] = ["tv", "admin", "phone", "ticker"];
 /** Mitteilungen, die woanders eingestellt werden */
@@ -40,6 +41,10 @@ export default function NotificationsOverview() {
   const [testPlaying, setTestPlaying] = useState(false);
   const testTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(testTimerRef.current), []);
+  // 👀 Vorschau einer Einblendung
+  const [previewKind, setPreviewKind] = useState<string>("flawless");
+  const [previewDevice, setPreviewDevice] = useState<"tv" | "admin">("tv");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Kopfzeile, Tabelle und unterer Scrollbalken scrollen seitwärts gemeinsam
   const headRef = useRef<HTMLDivElement | null>(null);
@@ -181,6 +186,56 @@ export default function NotificationsOverview() {
           {testPlaying ? "⏹ Stopp" : "▶ Start"}
         </button>
       </div>
+
+      {/* 👀 Vorschau: Einblendung mit Beispieldaten ansehen (mit dem eingestellten Sound) */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-neutral-50 px-3 py-2">
+        <span className="text-sm font-semibold">👀 Vorschau</span>
+        <select
+          value={previewKind}
+          onChange={(e) => setPreviewKind(e.target.value)}
+          className="h-8 min-w-0 flex-1 rounded-lg border bg-white px-2 text-sm sm:max-w-xs"
+        >
+          {NOTIFICATIONS.filter((n) => n.devices.tv || n.devices.admin).map((n) => (
+            <option key={n.id} value={n.id}>
+              {n.icon} {n.title}
+              {hasRealPreview(n.id) ? "" : " (vereinfacht)"}
+            </option>
+          ))}
+        </select>
+        <div className="flex overflow-hidden rounded-lg border bg-white text-sm">
+          {(["tv", "admin"] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setPreviewDevice(d)}
+              className={"px-2.5 py-1 " + (previewDevice === d ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100")}
+            >
+              {d === "tv" ? "📺 TV" : "🖥️ Admin"}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            stopRef.current();
+            setTestPlaying(false);
+            setPreviewOpen(true);
+          }}
+          className="h-8 rounded-lg bg-neutral-900 px-3 text-sm font-semibold text-white hover:bg-neutral-800"
+        >
+          ▶ Anzeigen
+        </button>
+        <span className="text-[11px] text-neutral-500">Klick auf die Einblendung schließt sie</span>
+      </div>
+      {previewOpen ? (
+        <NotificationPreview
+          key={previewKind + previewDevice}
+          kind={previewKind}
+          device={previewDevice}
+          settings={draft}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
 
       {/* Kopfzeile bleibt oben am Bildschirm stehen; läuft beim Seitwärts-Scrollen mit */}
       <div

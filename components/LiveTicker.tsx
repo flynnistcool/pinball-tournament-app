@@ -17,6 +17,7 @@ const sent = new Set<string>();
 let pending: { code: string; items: FeedItemInput[] } | null = null;
 let flushTimer: number | undefined;
 const refreshListeners = new Set<() => void>();
+const FEED_CHUNK = 20; // = Obergrenze je Anfrage in /api/feed/add
 
 export function postFeedItems(code: string, items: FeedItemInput[]) {
   const fresh = items.filter((it) => it && !sent.has(`${code}|${it.key}`));
@@ -29,13 +30,26 @@ export function postFeedItems(code: string, items: FeedItemInput[]) {
     const p = pending;
     pending = null;
     if (!p) return;
-    fetch("/api/feed/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: p.code, items: p.items }),
-    })
-      .then(() => refreshListeners.forEach((l) => l())) // eigener Ticker sofort aktualisieren
-      .catch(() => {});
+    // Server nimmt höchstens 20 je Anfrage → in Pakete teilen (sonst gingen z. B. am Ende von
+    // Round the Pinball, wenn viele Meldungen gleichzeitig kommen, die hinteren verloren)
+    const chunks: FeedItemInput[][] = [];
+    for (let i = 0; i < p.items.length; i += FEED_CHUNK) chunks.push(p.items.slice(i, i + FEED_CHUNK));
+    Promise.all(
+      chunks.map((items) =>
+        fetch("/api/feed/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: p.code, items }),
+        })
+          .then((r) => {
+            if (!r.ok) throw new Error(String(r.status));
+          })
+          .catch(() => {
+            // fehlgeschlagen → beim nächsten Erkennen erneut versuchen dürfen
+            items.forEach((it) => sent.delete(`${p.code}|${it.key}`));
+          })
+      )
+    ).then(() => refreshListeners.forEach((l) => l())); // eigener Ticker sofort aktualisieren
   }, 600);
 }
 
@@ -228,12 +242,17 @@ export default function LiveTicker({
         >
           {shown.map((x) => {
             const isNew = fresh.has(x.id);
+            const gold = x.kind === "flawless"; // 🥋 Flawless Victory: goldener Eintrag
             return (
               <li
                 key={x.id}
                 className={
                   "flex items-start gap-2 rounded-xl transition-colors duration-1000 " +
-                  (tv
+                  (gold
+                    ? tv
+                      ? "bg-gradient-to-r from-amber-400/40 via-yellow-300/30 to-amber-500/40 px-3 py-2 ring-2 ring-amber-300/70"
+                      : "bg-gradient-to-r from-amber-100 via-yellow-50 to-amber-200 px-2 py-1.5 ring-2 ring-amber-300"
+                    : tv
                     ? "px-3 py-2 " + (isNew ? "bg-amber-400/20 ring-1 ring-amber-300/50" : "bg-white/[0.03]")
                     : "px-2 py-1.5 " + (isNew ? "bg-amber-50 ring-1 ring-amber-200" : "bg-neutral-50"))
                 }

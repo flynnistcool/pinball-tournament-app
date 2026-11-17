@@ -43,12 +43,16 @@ import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/P
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
-import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
+import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 /** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
 type RecLookup = (machineName: string) => { best: ShownRecord | null; month: ShownRecord | null } | null;
 /** persönlicher Highscore eines Spielers auf einem Flipper (null = nichts anzeigen) */
-type PbLookup = (playerId: string, machineName: string) => { before: number | null; today: number | null } | null;
+type PbLookup = (
+  playerId: string,
+  machineName: string,
+  matchId?: string
+) => { before: number | null; today: number | null; premiere: boolean } | null;
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -833,10 +837,12 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     () => new Map((data?.players ?? []).map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null])),
     [data?.players]
   );
-  const pbLookup: PbLookup = (playerId, machineName) => {
+  const pbLookup: PbLookup = (playerId, machineName, matchId) => {
     if (isFinished || !machineRecords?.enabled) return null;
-    const r = personalForMachine(profileByPlayer.get(String(playerId)), machineName, machineRecords.personal, liveRecordEntries);
-    return r.before != null || r.today != null ? r : null;
+    const prof = profileByPlayer.get(String(playerId));
+    const r = personalForMachine(prof, machineName, machineRecords.personal, liveRecordEntries);
+    const premiere = isPremiere(prof, machineName, machineRecords.personal, liveRecordEntries, matchId); // 🎰
+    return r.before != null || r.today != null || premiere ? { ...r, premiere } : null;
   };
 
   // 📱 QR-Codes der Spieler: nur wenn dieser Browser als Admin angemeldet ist (Admin-Schnittstelle)
@@ -1300,6 +1306,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 /* ohne Ton weiter */
               }
             }}
+            elo={Object.fromEntries(view.rows.map((r) => [String(r.id), { start: r.eloStart, now: r.eloNow }]))} // = TV-Leaderboard
           />
           {/* Fallback-Einblenden (nur ohne echtes Überblenden): neuer key = neue Ansicht */}
           <div
@@ -1747,7 +1754,7 @@ function MatchTvView({
                   rivalry={rivalry && !m.finished ? bestInsightForMatch(m.players.map((p) => p.id), rivalry) : null}
                   rowById={rowById}
                   rec={recLookup(m.machineName)}
-                  pb={(playerId) => pbLookup(playerId, m.machineName)}
+                  pb={(playerId) => pbLookup(playerId, m.machineName, m.matchId)}
                 />
               ))}
             </div>
@@ -1940,6 +1947,7 @@ function MatchCardView({
   rec: ReturnType<RecLookup>;
   pb: (playerId: string) => ReturnType<PbLookup>;
 }) {
+  const premiereOn = useBadgeOn("badge:premiere"); // 🏷️ 🎰 Premiere an/aus (Dauerhafte Anzeigen)
   const favOn = useBadgeOn("badge:favorite");
   return (
     <div
@@ -2025,7 +2033,12 @@ function MatchCardView({
                 ) : null}
                 {/* 💪 persönlicher Highscore auf diesem Flipper (+ heute) */}
                 {myPb ? (
-                  <div className="flex flex-wrap gap-x-1.5 text-[13px] tabular-nums text-white/45">
+                  <div className="flex flex-wrap items-center gap-x-1.5 text-[13px] tabular-nums text-white/45">
+                    {myPb.premiere && premiereOn ? (
+                      <span className="rounded-full bg-pink-500/25 px-2 py-px font-semibold text-pink-200 ring-1 ring-pink-300/40">
+                        🎰 Premiere
+                      </span>
+                    ) : null}
                     <span>💪 Pers. Highscore</span>
                     {myPb.before != null ? (
                       <span className="font-semibold text-indigo-200">{scoreFmt.format(myPb.before)}</span>

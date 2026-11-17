@@ -91,6 +91,7 @@ import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
 import FlawlessCelebration from "@/components/FlawlessCelebration";
+import { rotationAllDone } from "@/lib/flawless";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
@@ -8931,6 +8932,7 @@ return (
         profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
         machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
         liveEntries={liveRecordEntries}
+        matchId={m?.id ? String(m.id) : null}
       />
     </div>
 </div>
@@ -12381,6 +12383,8 @@ async function reloadAll() {
   // 📣 Round the Pinball: "Duelle des Abends" (Top 3) einmal in den Ticker – nur Admin
   useEffect(() => {
     if (!rtpRivalryOn || !isAdmin || !code) return;
+    // alle Durchgänge fertig → es gibt kein "vor dem Match" mehr
+    if (data && rotationAllDone(data as any)) return;
     const top = Object.values(rtpRivalry ?? {})
       .sort((a: any, b: any) => b.score - a.score)
       .slice(0, 3);
@@ -13862,6 +13866,17 @@ const tasksById = useMemo(() => {
         dismissOnTap
         device="admin"
         onEvents={isAdmin ? (items) => postFeedItems(code, items) : undefined}
+        // Elo genau wie im Leaderboard daneben: Turnierbeginn (tournament_ratings) → jetzt (Profil)
+        elo={Object.fromEntries(
+          (data?.players ?? []).map((p: any) => {
+            const prof: any = (profiles ?? []).find((x: any) => String(x.id) === String(p.profile_id));
+            const start = p.profile_id ? tournamentStartRatings?.[p.profile_id] : undefined;
+            return [
+              String(p.id),
+              { start: typeof start === "number" ? start : null, now: typeof prof?.rating === "number" ? prof.rating : null },
+            ];
+          })
+        )}
       />
       {/* 🥋 Flawless Victory am Turnierende (RtP: wenn alle Durchgänge fertig) */}
       <FlawlessCelebration data={data} variant="admin" onFeed={isAdmin ? (items) => postFeedItems(code, items) : undefined} />

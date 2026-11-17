@@ -61,7 +61,7 @@ export default function AchievementsPanel({ profileId }: { profileId: string }) 
         <div>
           <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="rounded-full bg-gradient-to-r from-amber-200 to-yellow-300 px-2.5 py-0.5 text-sm font-bold text-amber-950">
-              🥋 Flawless Victory{list.length ? ` ×${list.length}` : ""}
+              <span className="mr-1 align-[-2px] text-base">🥋</span>Flawless Victory{list.length ? ` ×${list.length}` : ""}
             </span>
             <span className="text-[11px] text-neutral-400">
               ganzes Turnier ohne einzige Niederlage (mind. 3 Siege)
@@ -79,18 +79,42 @@ export default function AchievementsPanel({ profileId }: { profileId: string }) 
                   key={a.tournamentId}
                   className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-100 p-2.5"
                 >
-                  <div className="truncate text-sm font-bold text-amber-950" title={a.name}>
-                    🥋 {a.name}
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 text-xl leading-none">🥋</span>
+                    <span className="shrink truncate text-sm font-bold text-amber-950" title={a.name}>
+                      {a.name}
+                    </span>
+                    {a.category ? (
+                      <span
+                        className="min-w-0 truncate rounded-full border border-amber-300 bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
+                        title={a.category}
+                      >
+                        🏷️ {a.category}
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="text-[11px] text-amber-900/70">
+                  <div className="mt-0.5 text-[11px] text-amber-900/70">
                     {fmtDate(a.at)}
                     {FORMAT_LABEL[a.format] ? ` · ${FORMAT_LABEL[a.format]}` : ""}
                   </div>
-                  <div className="mt-1 text-xs font-semibold text-amber-900">
+                  <div className="mt-1.5 text-[13px] font-bold text-amber-900">
                     {a.mode === "leads"
                       ? `an allen ${a.wins} Flippern vorn`
                       : `${a.wins} Siege ohne Niederlage (${a.matches} ${a.matches === 1 ? "Match" : "Matches"})`}
                   </div>
+                  {a.opponents?.length ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      <span className="text-[10px] text-amber-900/60">gegen:</span>
+                      {a.opponents.map((n, i) => (
+                        <span
+                          key={i}
+                          className="rounded-full border border-amber-200 bg-white/60 px-1.5 py-px text-[10px] font-medium text-amber-900"
+                        >
+                          {n}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

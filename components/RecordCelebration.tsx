@@ -23,8 +23,10 @@ import { playSoundById } from "@/lib/playSound";
 export { playDing };
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert (createPortal funktioniert trotzdem)
 import { createPortal } from "react-dom";
-import { evaluateEntry, liveEntriesFrom, type Celebration, type PriorRecords } from "@/lib/recordWatch";
+import { evaluateEntry, liveEntriesFrom, personalKey, type Celebration, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
+import { completedMatchIds, momentMode, momentsForMatch, type MatchMoment } from "@/lib/matchMoments";
+import { liveLeaderboard } from "@/lib/myMatch";
 import { flawlessMode, isUnbeaten, playerRuns, runCount, unbeatenStep, type FlawlessMode, type PlayerRun } from "@/lib/flawless";
 import { computeStreaks, lastFinishedMatchOf, streakRunIds, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
 
@@ -55,7 +57,27 @@ type UnbeatenEndShown = {
   machine: string | null;
   key: string;
 };
-type Shown = Celebration | WinShown | StreakShown | StreakEndShown | UnbeatenShown | UnbeatenEndShown;
+/** 🧊 / 📸 / 💣 besonderer Match-Moment */
+type MomentShown = {
+  [K in MatchMoment["kind"]]: { kind: K; m: Extract<MatchMoment, { kind: K }>; winnerName: string; loserName: string; key: string };
+}[MatchMoment["kind"]];
+/** 👑 neuer Tabellenführer */
+type LeaderShown = { kind: "leader"; playerName: string; playerId: string; points: number; prevName: string | null; key: string };
+/** 🎰 Flipper-Premiere: erster Score eines Spielers auf diesem Flipper (an der Location) */
+type PremiereShown = { kind: "premiere"; playerName: string; playerId: string; machineName: string; score: number; key: string };
+/** 📈 Elo-Meilenstein: Live-Elo knackt eine Hunderter-Marke (again = im Turnier schon mal darüber) */
+type EloMarkShown = { kind: "eloMark"; playerName: string; playerId: string; mark: number; elo: number; again: boolean; key: string };
+type Shown =
+  | Celebration
+  | WinShown
+  | StreakShown
+  | StreakEndShown
+  | UnbeatenShown
+  | UnbeatenEndShown
+  | MomentShown
+  | LeaderShown
+  | PremiereShown
+  | EloMarkShown;
 
 const SHOW_MS: Record<Shown["kind"], number> = {
   record: 16_000,
@@ -65,6 +87,13 @@ const SHOW_MS: Record<Shown["kind"], number> = {
   streakEnd: 6_000,
   unbeaten: 7_000,
   unbeatenEnd: 7_000,
+  leader: 6_000,
+  upset: 7_000,
+  photo: 7_000,
+  blowout: 7_000,
+  revenge: 6_000,
+  premiere: 6_000,
+  eloMark: 6_000,
   personal: 10_000,
 };
 const KIND_ORDER: Record<Shown["kind"], number> = {
@@ -72,12 +101,20 @@ const KIND_ORDER: Record<Shown["kind"], number> = {
   month: 1,
   unbeatenEnd: 2,
   unbeaten: 3,
-  wins: 4,
-  streak: 5,
-  streakEnd: 6,
-  personal: 7,
+  upset: 4,
+  photo: 5,
+  blowout: 6,
+  revenge: 7,
+  leader: 8,
+  eloMark: 9,
+  wins: 10,
+  streak: 11,
+  streakEnd: 12,
+  premiere: 13,
+  personal: 14,
 };
-const sortValue = (x: Shown) => ("n" in x ? x.n : x.entry.score);
+const sortValue = (x: Shown) =>
+  "n" in x ? x.n : "entry" in x ? x.entry.score : "points" in x ? x.points : "mark" in x ? x.mark : "score" in x ? x.score : 0;
 
 type LiveData = Parameters<typeof liveEntriesFrom>[0] &
   Parameters<typeof liveWinsFrom>[0] &
@@ -102,6 +139,13 @@ function feedItemOf(c: Shown): FeedItemInput {
   if (c.kind === "unbeaten") return { ...base, players: [c.playerId], data: { player: c.playerName, n: c.n, matches: c.matches, mode: c.mode } };
   if (c.kind === "unbeatenEnd")
     return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n, mode: c.mode, machine: c.machine } };
+  if (c.kind === "leader") return { ...base, players: [c.playerId], data: { player: c.playerName, points: c.points } };
+  if (c.kind === "premiere")
+    return { ...base, players: [c.playerId], data: { player: c.playerName, machine: c.machineName, score: c.score } };
+  if (c.kind === "eloMark")
+    return { ...base, players: [c.playerId], data: { player: c.playerName, mark: c.mark, elo: c.elo, again: c.again } };
+  if (c.kind === "upset" || c.kind === "photo" || c.kind === "blowout" || c.kind === "revenge")
+    return { ...base, players: [c.m.winnerId], data: { player: c.winnerName, other: c.loserName, ...momentData(c.m) } };
   // 🧯 Handy-Karte nur für den, der die Serie beendet hat
   if (c.kind === "streakEnd")
     return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n } };
@@ -150,6 +194,37 @@ function feedItemText(c: Shown): FeedItemInput {
         icon: "🔥",
         title: "On fire!",
         body: `${c.playerName}: ${streakText(c.mode, c.n)} im Turnier`,
+      };
+    case "leader":
+      return {
+        key: `leader|${c.key}`,
+        kind: "leader",
+        icon: "👑",
+        title: "Neuer Tabellenführer",
+        body: c.prevName
+          ? `${c.playerName} übernimmt die Spitze von ${c.prevName} (${c.points} Pkt.)`
+          : `${c.playerName} führt jetzt allein (${c.points} Pkt.)`,
+      };
+    case "upset":
+    case "photo":
+    case "blowout":
+    case "revenge":
+      return { key: `${c.kind}|${c.key}`, kind: c.kind, icon: MOMENT_ICON[c.kind], title: MOMENT_TITLE[c.kind], body: momentText(c) };
+    case "premiere":
+      return {
+        key: `premiere|${c.key}`,
+        kind: "premiere",
+        icon: "🎰",
+        title: "Flipper-Premiere",
+        body: `${c.playerName} spielt zum ersten Mal ${c.machineName} – Einstand mit ${fmt(c.score)} Punkten!`,
+      };
+    case "eloMark":
+      return {
+        key: `eloMark|${c.key}`,
+        kind: "eloMark",
+        icon: "📈",
+        title: c.again ? "Elo-Marke erneut geknackt" : "Elo-Meilenstein",
+        body: `${c.playerName} knackt ${c.again ? "erneut " : ""}die ${c.mark} – jetzt ${c.elo} Elo`,
       };
     case "unbeaten":
       return {
@@ -424,6 +499,128 @@ function UnbeatenEndCard({ c, onClose }: { c: UnbeatenEndShown; onClose?: () => 
   );
 }
 
+const MOMENT_ICON = { upset: "🧊", photo: "📸", blowout: "💣", revenge: "🔄" } as const;
+const MOMENT_TITLE = { upset: "Favoritensturz", photo: "Fotofinish", blowout: "Kantersieg", revenge: "Revanche" } as const;
+
+function momentData(m: MatchMoment): Record<string, unknown> {
+  if (m.kind === "upset") return { winnerElo: m.winnerElo, loserElo: m.loserElo, machine: m.machine };
+  if (m.kind === "photo") return { gapPct: m.gapPct, machine: m.machine };
+  if (m.kind === "revenge") return { prevRound: m.prevRound, machine: m.machine };
+  return { factor: m.factor, machine: m.machine };
+}
+
+function momentText(c: MomentShown): string {
+  const m = c.m;
+  const at = m.machine ? ` an ${m.machine}` : "";
+  if (m.kind === "upset")
+    return `${c.winnerName} (${m.winnerElo}) schlägt Favorit ${c.loserName} (${m.loserElo})${at} – ${m.loserElo - m.winnerElo} Elo Unterschied!`;
+  if (m.kind === "photo")
+    return `${c.winnerName} gewinnt${at} hauchdünn gegen ${c.loserName} – nur ${String(m.gapPct).replace(".", ",")} % Vorsprung (${fmt(m.winnerScore)} zu ${fmt(m.loserScore)})`;
+  if (m.kind === "revenge")
+    return `${c.winnerName} revanchiert sich${at} bei ${c.loserName}${m.prevRound ? ` – in Runde ${m.prevRound} hatte ${c.loserName} noch gewonnen` : ""}`;
+  return `${c.winnerName} zerlegt${at} ${c.loserName} – ${String(m.factor).replace(".", ",")}× so viele Punkte (${fmt(m.winnerScore)} zu ${fmt(m.loserScore)})`;
+}
+
+const MOMENT_TONE = {
+  upset: "from-cyan-500 to-blue-700 ring-cyan-200/60",
+  photo: "from-slate-600 to-zinc-800 ring-slate-300/60",
+  blowout: "from-orange-500 to-red-700 ring-orange-300/60",
+  revenge: "from-violet-500 to-purple-800 ring-violet-300/60",
+} as const;
+
+function MomentCard({ c, onClose }: { c: MomentShown; onClose?: () => void }) {
+  const m = c.m;
+  const line =
+    m.kind === "upset"
+      ? `schlägt Favorit ${c.loserName}`
+      : m.kind === "photo"
+      ? `gewinnt mit nur ${String(m.gapPct).replace(".", ",")} % Vorsprung`
+      : m.kind === "revenge"
+      ? `revanchiert sich bei ${c.loserName}`
+      : `${String(m.factor).replace(".", ",")}× so viele Punkte wie ${c.loserName}`;
+  const sub =
+    m.kind === "upset"
+      ? `${m.winnerElo} gegen ${m.loserElo} Elo${m.machine ? ` · ${m.machine}` : ""}`
+      : m.kind === "revenge"
+      ? `${m.prevRound ? `in Runde ${m.prevRound} verloren – jetzt gewonnen` : "letztes Duell verloren – jetzt gewonnen"}${m.machine ? ` · ${m.machine}` : ""}`
+      : `${fmt(m.winnerScore)} zu ${fmt(m.loserScore)}${m.machine ? ` · ${m.machine}` : ""}`;
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className={"rounded-3xl bg-gradient-to-br px-7 py-5 text-white shadow-2xl ring-4 " + MOMENT_TONE[m.kind]}>
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-white/80">
+          {MOMENT_ICON[m.kind]} {MOMENT_TITLE[m.kind]}
+        </div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.winnerName}</div>
+        <div className="text-[1.8vw] font-extrabold">{line}</div>
+        <div className="mt-1 text-[1.2vw] font-semibold text-white/80">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function PremiereCard({ c, onClose }: { c: PremiereShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-pink-500 to-rose-700 px-7 py-5 text-white shadow-2xl ring-4 ring-pink-300/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-pink-100">🎰 Flipper-Premiere</div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[1.8vw] font-extrabold">zum ersten Mal an {c.machineName}</div>
+        <div className="mt-1 text-[1.2vw] font-semibold text-pink-100">Einstand mit {fmt(c.score)} Punkten</div>
+      </div>
+    </div>
+  );
+}
+
+function EloMarkCard({ c, onClose }: { c: EloMarkShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-green-800 px-7 py-5 text-white shadow-2xl ring-4 ring-emerald-300/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-emerald-100">
+          📈 {c.again ? "Erneut geknackt" : "Elo-Meilenstein"}
+        </div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[1.8vw] font-extrabold">knackt {c.again ? "erneut " : ""}die {c.mark}</div>
+        <div className="mt-1 text-[1.2vw] font-semibold text-emerald-100">jetzt {c.elo} Elo</div>
+      </div>
+    </div>
+  );
+}
+
+function LeaderCard({ c, onClose }: { c: LeaderShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-yellow-400 to-amber-600 px-7 py-5 text-amber-950 shadow-2xl ring-4 ring-yellow-200/70">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-amber-900">👑 Neuer Tabellenführer</div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[1.8vw] font-extrabold">
+          {c.prevName ? `übernimmt die Spitze von ${c.prevName}` : "führt jetzt allein"}
+        </div>
+        <div className="mt-1 text-[1.2vw] font-semibold text-amber-900/80">{c.points} Punkte</div>
+      </div>
+    </div>
+  );
+}
+
 const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
 
 function RecordCelebrationInner({
@@ -434,6 +631,7 @@ function RecordCelebrationInner({
   dismissOnTap = false,
   device = "tv",
   onEvents,
+  elo,
 }: {
   code: string;
   data: LiveData | null;
@@ -446,7 +644,11 @@ function RecordCelebrationInner({
   device?: NotifDevice;
   /** 📣 Live-Ticker: erkannte Ereignisse melden (nur Admin-Tablet trägt ein) */
   onEvents?: (items: FeedItemInput[]) => void;
+  /** Elo je Spieler-ID – GENAU die Werte, die das Leaderboard daneben zeigt (Turnierbeginn / jetzt) */
+  elo?: Record<string, { start: number | null; now: number | null }>;
 }) {
+  const eloRef = useRef(elo);
+  eloRef.current = elo;
   const onEventsRef = useRef(onEvents);
   onEventsRef.current = onEvents;
   const backfilledRef = useRef(false); // 📣 vorhandene Highscores einmal nachgetragen?
@@ -473,6 +675,18 @@ function RecordCelebrationInner({
   const celebratedUnbeatenRef = useRef<Set<string>>(new Set());
   // "Serie beendet" nicht zusätzlich melden, wenn schon "Traum geplatzt" kam (pid|matchId)
   const suppressStreakEndRef = useRef<Set<string>>(new Set());
+  // ⚡ Match-Momente: schon bewertete fertige Matches + noch nicht stabile
+  const seenCompleteRef = useRef<Set<string> | null>(null);
+  const pendingCompleteRef = useRef<Map<string, number>>(new Map());
+  const celebratedMomentRef = useRef<Set<string>>(new Set());
+  // 👑 Tabellenführer: zuletzt bestätigter alleiniger Führender (undefined = noch nicht geladen)
+  // last = letzter ALLEINIGER Führender (bleibt bei kurzem Gleichstand erhalten)
+  const leaderRef = useRef<{ id: string | null; lastId: string | null; lastName: string | null } | undefined>(undefined);
+  const pendingLeaderRef = useRef<{ id: string | null; since: number } | null>(null);
+  // 🎰 schon gemeldete Premieren (Eintrag-Key)
+  const celebratedPremiereRef = useRef<Set<string>>(new Set());
+  // 📈 Live-Elo je Spieler: letzter Wert + höchster Wert im Turnier (inkl. Start)
+  const eloSeenRef = useRef<Map<string, { last: number; max: number }>>(new Map());
   // aktueller Stand für die lokale 2-s-Prüfung
   const dataRef = useRef<LiveData | null>(null);
   const priorRef = useRef<PriorRecords | null>(null);
@@ -550,13 +764,26 @@ function RecordCelebrationInner({
       const streakKey = (pid: string, n: number) => (runIds[pid] ? `${pid}|${runIds[pid]}|${n}` : `${pid}|${n}`);
       const fMode = flawlessMode(d.tournament?.format);
       const runs = playerRuns(d as any, fMode);
+      const mMode = momentMode(d.tournament?.format);
+      const complete = completedMatchIds(d as any, mMode);
+      // 👑 alleiniger Führender im Live-Leaderboard (bei Gleichstand: niemand)
+      let lead: { id: string | null; name: string | null; points: number } = { id: null, name: null, points: 0 };
+      try {
+        const lr = liveLeaderboard(d as any).rows;
+        if (lr[0] && lr[0].total > 0 && (!lr[1] || lr[0].total > lr[1].total))
+          lead = { id: String(lr[0].id), name: lr[0].name, points: lr[0].total };
+      } catch {
+        /* unvollständige Daten → diesmal ohne */
+      }
 
       // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
-      if (!seenRef.current || !seenWinsRef.current || !seenStreakRef.current || !seenRunsRef.current) {
+      if (!seenRef.current || !seenWinsRef.current || !seenStreakRef.current || !seenRunsRef.current || !seenCompleteRef.current) {
         seenRef.current = new Map(entries.map((e) => [e.key, e.score]));
         seenWinsRef.current = new Map(wins.map((w) => [w.key, w.profileId]));
         seenStreakRef.current = new Map(Object.entries(streaks));
         seenRunsRef.current = new Map(Object.entries(runs));
+        seenCompleteRef.current = new Set(complete);
+        leaderRef.current = { id: lead.id, lastId: lead.id, lastName: lead.name };
         return;
       }
       const seen = seenRef.current;
@@ -602,6 +829,25 @@ function RecordCelebrationInner({
         if (!enabledRef.current || finished) continue;
         const c = evaluateEntry(e, pr, entries);
         if (c) found.push(c);
+        // 🎰 Flipper-Premiere: noch nie an diesem Flipper (Location: beendete Turniere + dieses Turnier)
+        if (e.profileId && !celebratedPremiereRef.current.has(e.key)) {
+          const pk = personalKey(e.profileId, e.machineKey);
+          const excludedP = new Set(pr.excludedProfiles ?? []);
+          const playedBefore =
+            pk in pr.personal ||
+            entries.some((o) => o.key !== e.key && o.profileId === e.profileId && o.machineKey === e.machineKey);
+          if (!playedBefore && !excludedP.has(e.profileId)) {
+            celebratedPremiereRef.current.add(e.key);
+            found.push({
+              kind: "premiere",
+              playerName: e.playerName,
+              playerId: pidOfKey(e.key),
+              machineName: e.machineName ?? "?",
+              score: e.score,
+              key: e.key,
+            });
+          }
+        }
       }
       // gelöschte Scores vergessen
       const live = new Set(entries.map((e) => e.key));
@@ -640,6 +886,106 @@ function RecordCelebrationInner({
         for (const pid of Array.from(seenWins.values())) if (pid === w.profileId) liveCount++;
         const n = (pw[w.profileId] ?? 0) + liveCount;
         if (isWinMilestone(n)) found.push({ kind: "wins", n, playerName: w.playerName, key: w.key });
+      }
+
+      // 📈 Elo-Meilensteine: Live-Elo (wie im Leaderboard) knackt eine Hunderter-Marke nach oben
+      {
+        const es = eloSeenRef.current;
+        const nmE = new Map((d.players ?? []).map((p) => [String(p.id), String(p.name ?? "?")]));
+        for (const [pid, e] of Object.entries(eloRef.current ?? {})) {
+          const v = e?.now;
+          if (v == null || !Number.isFinite(v)) continue;
+          const prevE = es.get(pid);
+          if (!prevE) {
+            // erster Wert: nur merken (Start-Elo zählt als "schon mal erreicht")
+            es.set(pid, { last: v, max: Math.max(v, e?.start ?? v) });
+            continue;
+          }
+          if (v === prevE.last) continue;
+          const markNew = Math.floor(v / 100) * 100;
+          if (v > prevE.last && markNew > Math.floor(prevE.last / 100) * 100 && !finished) {
+            found.push({
+              kind: "eloMark",
+              playerName: nmE.get(pid) ?? "?",
+              playerId: pid,
+              mark: markNew,
+              elo: Math.round(v),
+              again: markNew <= prevE.max,
+              key: `${pid}|${markNew}|${Math.round(v)}`,
+            });
+          }
+          es.set(pid, { last: v, max: Math.max(prevE.max, v) });
+        }
+      }
+
+      // ⚡ Match-Momente (🧊 Favoritensturz, 📸 Fotofinish, 💣 Kantersieg): Match frisch fertig + STABLE_MS stabil
+      if (mMode !== "none" && seenCompleteRef.current) {
+        const seenC = seenCompleteRef.current;
+        const pendC = pendingCompleteRef.current;
+        const nowComplete = new Set(complete);
+        // wieder offen (Korrektur) → vergessen, damit es danach neu bewertet wird
+        for (const id of Array.from(seenC)) if (!nowComplete.has(id)) seenC.delete(id);
+        for (const id of Array.from(pendC.keys())) if (!nowComplete.has(id)) pendC.delete(id);
+        const nm = new Map((d.players ?? []).map((p) => [String(p.id), String(p.name ?? "?")]));
+        const eloStart: Record<string, number | null> = {};
+        for (const [pid, e] of Object.entries(eloRef.current ?? {})) eloStart[pid] = e?.start ?? null;
+        for (const id of complete) {
+          if (seenC.has(id)) continue;
+          const since = pendC.get(id);
+          if (since == null) {
+            pendC.set(id, now);
+            continue;
+          }
+          if (now - since < STABLE_MS) continue;
+          pendC.delete(id);
+          seenC.add(id);
+          if (finished) continue;
+          for (const m of momentsForMatch(d as any, id, mMode, eloStart)) {
+            const mk = `${m.kind}|${id}`;
+            if (celebratedMomentRef.current.has(mk)) continue;
+            celebratedMomentRef.current.add(mk);
+            found.push({
+              kind: m.kind,
+              m,
+              winnerName: nm.get(m.winnerId) ?? "?",
+              loserName: nm.get(m.loserId) ?? "?",
+              key: id,
+            } as MomentShown);
+          }
+        }
+      }
+
+      // 👑 Neuer Tabellenführer (alleinige Spitze, STABLE_MS stabil)
+      if (leaderRef.current !== undefined) {
+        const prev = leaderRef.current;
+        if (lead.id === prev.id) {
+          pendingLeaderRef.current = null;
+        } else {
+          const pl = pendingLeaderRef.current;
+          if (!pl || pl.id !== lead.id) {
+            pendingLeaderRef.current = { id: lead.id, since: now };
+          } else if (now - pl.since >= STABLE_MS) {
+            pendingLeaderRef.current = null;
+            if (!lead.id) {
+              // Gleichstand an der Spitze: keine Meldung, bisherigen Führenden merken
+              leaderRef.current = { ...prev, id: null };
+            } else {
+              leaderRef.current = { id: lead.id, lastId: lead.id, lastName: lead.name };
+              // nur ein ECHTER Wechsel: jemand anderes als der bisherige alleinige Führende
+              // (nicht der allererste Führende am Turnieranfang)
+              if (prev.lastId && prev.lastId !== lead.id && !finished) {
+                found.push({
+                  kind: "leader",
+                  playerName: lead.name ?? "?",
+                  playerId: lead.id,
+                  points: lead.points,
+                  prevName: prev.lastName,
+                  key: `${lead.id}|${complete.length}|${lead.points}`,
+                });
+              }
+            }
+          }
+        }
       }
 
       // 🛡️ Unbesiegt / 💔 Traum geplatzt (nach STABLE_MS stabil, wie die anderen Meldungen)
@@ -820,7 +1166,12 @@ function RecordCelebrationInner({
 
   if (!mounted || !current) return null;
   const close = dismissOnTap ? () => setQueue((q) => (q[0] === current ? q.slice(1) : q)) : undefined;
-  return createPortal(
+  return createPortal(<ShownView current={current} close={close} />, document.body);
+}
+
+/** Darstellung einer Einblendung (auch für die 👀 Vorschau) */
+function ShownView({ current, close }: { current: Shown; close?: () => void }) {
+  return (
     <>
       <style>{CSS}</style>
       {current.kind === "record" ? (
@@ -837,6 +1188,14 @@ function RecordCelebrationInner({
         <UnbeatenCard c={current} onClose={close} />
       ) : current.kind === "unbeatenEnd" ? (
         <UnbeatenEndCard c={current} onClose={close} />
+      ) : current.kind === "upset" || current.kind === "photo" || current.kind === "blowout" || current.kind === "revenge" ? (
+        <MomentCard c={current} onClose={close} />
+      ) : current.kind === "premiere" ? (
+        <PremiereCard c={current} onClose={close} />
+      ) : current.kind === "eloMark" ? (
+        <EloMarkCard c={current} onClose={close} />
+      ) : current.kind === "leader" ? (
+        <LeaderCard c={current} onClose={close} />
       ) : (
         <SmallPersonal c={current} onClose={close} />
       )}
@@ -844,12 +1203,111 @@ function RecordCelebrationInner({
       <div className="pointer-events-none fixed left-1/2 top-[2vh] z-[101] -translate-x-1/2">
         <ScopeChip kind={current.kind} variant="dark" long className="!px-3 !py-1 !text-sm" />
       </div>
-      {dismissOnTap ? (
+      {close ? (
         <div className="pointer-events-none fixed bottom-[1.5vh] left-1/2 z-[101] -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80">
           Antippen zum Schließen
         </div>
       ) : null}
-    </>,
+    </>
+  );
+}
+
+/** Arten, die RecordCelebration darstellt (für die 👀 Vorschau) */
+export const CELEBRATION_KINDS = [
+  "record",
+  "month",
+  "personal",
+  "wins",
+  "streak",
+  "streakEnd",
+  "unbeaten",
+  "unbeatenEnd",
+  "leader",
+  "upset",
+  "photo",
+  "blowout",
+  "revenge",
+  "premiere",
+  "eloMark",
+] as const;
+
+/** Beispiel-Einblendung je Art */
+function sampleShown(kind: (typeof CELEBRATION_KINDS)[number]): Shown {
+  const entry = {
+    key: "preview|a",
+    machineKey: "preview",
+    machineName: "Godzilla Premium",
+    profileId: null,
+    playerName: "Andre",
+    score: 123_456_780,
+  };
+  switch (kind) {
+    case "record":
+      return { kind, entry, previous: { score: 98_765_430, holder: "Christian" } };
+    case "month":
+      return { kind, entry, previous: { score: 98_765_430, holder: "Christian" } };
+    case "personal":
+      return { kind, entry, previous: 87_654_320 };
+    case "wins":
+      return { kind, n: 50, playerName: "Andre", key: "preview" };
+    case "streak":
+      return { kind, n: 5, mode: "wins", playerName: "Andre", key: "preview" };
+    case "streakEnd":
+      return { kind, n: 5, victimName: "Christian", breakerName: "Andre", breakerIds: [], key: "preview" };
+    case "unbeaten":
+      return { kind, n: 8, matches: 8, mode: "wins", playerName: "Andre", playerId: "a", key: "preview" };
+    case "unbeatenEnd":
+      return { kind, n: 8, mode: "wins", victimName: "Christian", breakerName: "Andre", breakerIds: [], machine: null, key: "preview" };
+    case "leader":
+      return { kind, playerName: "Andre", playerId: "a", points: 14, prevName: "Christian", key: "preview" };
+    case "upset":
+      return {
+        kind,
+        m: { kind, matchId: "p", winnerId: "a", loserId: "b", winnerElo: 1512, loserElo: 1758, machine: "Godzilla Premium" },
+        winnerName: "Levin",
+        loserName: "Andre",
+        key: "preview",
+      };
+    case "photo":
+      return {
+        kind,
+        m: { kind, matchId: "p", winnerId: "a", loserId: "b", winnerScore: 50_120_000, loserScore: 49_480_000, gapPct: 1.3, machine: "Elvira" },
+        winnerName: "Christian",
+        loserName: "Leon",
+        key: "preview",
+      };
+    case "blowout":
+      return {
+        kind,
+        m: { kind, matchId: "p", winnerId: "a", loserId: "b", winnerScore: 412_000_000, loserScore: 121_000_000, factor: 3.4, machine: "Jaws Premium" },
+        winnerName: "Andre",
+        loserName: "Leon",
+        key: "preview",
+      };
+    case "revenge":
+      return {
+        kind,
+        m: { kind, matchId: "p", winnerId: "a", loserId: "b", prevRound: 3, machine: "Black Knight LE" },
+        winnerName: "Leon",
+        loserName: "Levin",
+        key: "preview",
+      };
+    case "premiere":
+      return { kind, playerName: "Christian", playerId: "a", machineName: "Godzilla Premium", score: 12_345_670, key: "preview" };
+    case "eloMark":
+      return { kind, playerName: "Andre", playerId: "a", mark: 1600, elo: 1604, again: false, key: "preview" };
+  }
+}
+
+/** 👀 Vorschau (🔔 Meldungen & Sounds): zeigt die Einblendung mit Beispieldaten, Klick schließt */
+export function CelebrationPreview({ kind, onClose }: { kind: (typeof CELEBRATION_KINDS)[number]; onClose: () => void }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[130]" onClick={onClose}>
+      <ShownView current={sampleShown(kind)} close={onClose} />
+    </div>,
     document.body
   );
 }

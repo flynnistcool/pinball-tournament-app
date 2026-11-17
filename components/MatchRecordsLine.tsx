@@ -8,7 +8,7 @@
 import { useBadgeOn } from "@/components/DisplayDevice";
 import { useEffect, useState } from "react";
 import type { LiveEntry, PriorRecords } from "@/lib/recordWatch";
-import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
+import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 type Loaded = { enabled: boolean; prior: Pick<PriorRecords, "records" | "monthly" | "excludedProfiles">; personal: PriorRecords["personal"] };
 
@@ -127,6 +127,8 @@ export function PersonalBestLine(props: {
   profileId: string | null | undefined;
   machineName: string | null | undefined;
   liveEntries: readonly LiveEntry[];
+  /** dieses Match (für 🎰 Premiere: Scores aus genau diesem Match zählen nicht als "schon gespielt") */
+  matchId?: string | null;
 }) {
   if (props.hidden) return null;
   return <PersonalBestLineInner {...props} />;
@@ -137,19 +139,31 @@ function PersonalBestLineInner({
   profileId,
   machineName,
   liveEntries,
+  matchId,
 }: {
   code: string;
   profileId: string | null | undefined;
   machineName: string | null | undefined;
   liveEntries: readonly LiveEntry[];
+  matchId?: string | null;
 }) {
   const loaded = useMachineRecords(code);
+  const premiereOn = useBadgeOn("badge:premiere"); // 🏷️ an/aus je Gerät
   if (!profileId || !machineName || !loaded?.enabled) return null;
 
   const { before, today } = personalForMachine(profileId, machineName, loaded.personal, liveEntries);
   const beaten = before != null && today != null && today > before;
+  const premiere = premiereOn && isPremiere(profileId, machineName, loaded.personal, liveEntries, matchId);
   return (
     <div className="pb-personal flex flex-wrap items-center gap-x-1.5 text-[11px] tabular-nums text-neutral-500">
+      {premiere ? (
+        <span
+          className="rounded-full border border-pink-200 bg-pink-50 px-1.5 py-px font-semibold text-pink-700"
+          title="Erstes Spiel an diesem Flipper (an dieser Location)"
+        >
+          🎰 Premiere
+        </span>
+      ) : null}
       <span>💪 Pers. Highscore</span>
       {/* leer = noch nie an dieser Location auf dem Flipper gespielt */}
       {before != null ? <span className="font-semibold text-indigo-600">{fmt(before)}</span> : null}

@@ -14,7 +14,7 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 
 const FOR_ALL = new Set(["record", "month", "flawless"]);
-const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd"]);
+const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "eloMark"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -28,6 +28,13 @@ const TONE: Record<string, string> = {
   unbeaten: "border-emerald-200 bg-emerald-50 text-emerald-900",
   unbeatenEnd: "border-rose-200 bg-rose-50 text-rose-900",
   flawless: "border-amber-300 bg-gradient-to-r from-amber-50 to-yellow-100 text-amber-900",
+  leader: "border-yellow-300 bg-yellow-50 text-amber-900",
+  upset: "border-cyan-200 bg-cyan-50 text-cyan-900",
+  photo: "border-slate-300 bg-slate-50 text-slate-900",
+  blowout: "border-orange-200 bg-orange-50 text-orange-900",
+  revenge: "border-violet-200 bg-violet-50 text-violet-900",
+  premiere: "border-pink-200 bg-pink-50 text-pink-900",
+  eloMark: "border-emerald-200 bg-emerald-50 text-emerald-900",
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
@@ -69,6 +76,41 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
       return {
         title: "Du hast den Traum gestoppt! 💔",
         text: d.victim != null ? `${d.victim} ist nicht mehr unbesiegt – dank dir.` : x.body,
+      };
+    case "leader":
+      return { title: "Du führst! 👑", text: d.points != null ? `Du bist allein an der Spitze – ${d.points} Punkte.` : x.body };
+    case "upset":
+      return {
+        title: "Favoritensturz! 🧊",
+        text:
+          d.other != null && d.loserElo != null
+            ? `Du hast Favorit ${d.other} (${d.loserElo} Elo) geschlagen – stark!`
+            : x.body,
+      };
+    case "photo":
+      return {
+        title: "Fotofinish! 📸",
+        text: d.other != null && d.gapPct != null ? `Hauchdünn gegen ${d.other} gewonnen – nur ${String(d.gapPct).replace(".", ",")} % Vorsprung.` : x.body,
+      };
+    case "blowout":
+      return {
+        title: "Kantersieg! 💣",
+        text: d.other != null && d.factor != null ? `${String(d.factor).replace(".", ",")}× so viele Punkte wie ${d.other}.` : x.body,
+      };
+    case "revenge":
+      return {
+        title: "Revanche geglückt! 🔄",
+        text: d.other != null ? `Diesmal hast du ${d.other} geschlagen${d.prevRound ? ` – in Runde ${d.prevRound} lief es noch andersrum` : ""}.` : x.body,
+      };
+    case "premiere":
+      return {
+        title: "Flipper-Premiere! 🎰",
+        text: d.machine != null ? `Dein erstes Spiel an ${machine} – Einstand mit ${fmt(d.score)} Punkten.` : x.body,
+      };
+    case "eloMark":
+      return {
+        title: d.again ? "Marke erneut geknackt! 📈" : "Elo-Meilenstein! 📈",
+        text: d.mark != null ? `Du hast ${d.again ? "erneut " : ""}die ${d.mark} geknackt – jetzt ${d.elo} Elo.` : x.body,
       };
     case "flawless":
       return me

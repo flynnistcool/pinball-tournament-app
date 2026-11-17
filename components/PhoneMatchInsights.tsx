@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
-import { personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
+import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import { topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
@@ -160,6 +160,7 @@ export default function PhoneMatchInsights({
   // 🏷️ dauerhafte Anzeigen an/aus (🔔 Meldungen & Sounds)
   const favOn = useBadgeOn("badge:favorite");
   const recordsOn = useBadgeOn("badge:records");
+  const premiereOn = useBadgeOn("badge:premiere"); // 🎰
 
   const recs = records?.enabled && machineName ? recordsForMachine(machineName, records.prior, live) : null;
   // 🔥 On fire – dieselbe Rechnung wie im Handy-Leaderboard (aus den ohnehin geladenen Daten)
@@ -262,6 +263,11 @@ export default function PhoneMatchInsights({
               </div>
               {pb ? (
                 <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-xs tabular-nums text-neutral-500">
+                  {premiereOn && isPremiere(profileOf(pid), machineName, records!.personal, live, info.match.id) ? (
+                    <span className="rounded-full border border-pink-200 bg-pink-50 px-1.5 py-px font-semibold text-pink-700">
+                      🎰 Premiere
+                    </span>
+                  ) : null}
                   <span>💪 Pers. Highscore</span>
                   {pb.before != null ? (
                     <span className="font-semibold text-indigo-600">{fmt.format(pb.before)}</span>

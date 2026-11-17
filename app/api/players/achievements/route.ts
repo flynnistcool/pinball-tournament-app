@@ -19,6 +19,9 @@ export type FlawlessAward = {
   name: string;
   at: string | null;
   format: string;
+  category: string | null;
+  /** alle Mitspieler im Turnier (ohne den Sieger selbst) */
+  opponents: string[];
   /** Siege gegen Gegner (Round the Pinball: Flipper) */
   wins: number;
   matches: number;
@@ -34,7 +37,10 @@ async function allFlawless() {
     created_at: string | null;
     format: string | null;
     status: string | null;
-  }>(() => sb.from("tournaments").select("id, name, created_at, format, status").eq("status", "finished").order("id"));
+    category: string | null;
+  }>(() =>
+    sb.from("tournaments").select("id, name, created_at, format, status, category").eq("status", "finished").order("id")
+  );
   if (tErr) return fail(`Turniere laden fehlgeschlagen: ${tErr.message}`, 500);
   const done = tours.filter((t) => flawlessMode(t.format) !== "none");
   if (!done.length) return NextResponse.json({ ok: true, checked: 0, found: [] }, { headers: NO_STORE });
@@ -75,7 +81,15 @@ async function allFlawless() {
   const mpsByMatch = new Map<string, typeof mps>();
   for (const mp of mps) mpsByMatch.set(String(mp.match_id), [...(mpsByMatch.get(String(mp.match_id)) ?? []), mp]);
 
-  const found: { tournament: string; at: string | null; format: string; player: string; wins: number; matches: number }[] = [];
+  const found: {
+    tournament: string;
+    category: string | null;
+    at: string | null;
+    format: string;
+    player: string;
+    wins: number;
+    matches: number;
+  }[] = [];
   for (const t of done) {
     const mode = flawlessMode(t.format);
     const tMatches = matchesByTour.get(String(t.id)) ?? [];
@@ -83,6 +97,7 @@ async function allFlawless() {
     for (const w of flawlessWinners({ matches: tMatches, match_players: tMps }, mode)) {
       found.push({
         tournament: String(t.name ?? "Turnier"),
+        category: t.category ? String(t.category) : null,
         at: t.created_at,
         format: String(t.format ?? ""),
         player: nameOf.get(w.playerId) ?? "?",
@@ -117,7 +132,10 @@ export async function GET(req: Request) {
     created_at: string | null;
     format: string | null;
     status: string | null;
-  }>(tIds, (chunk) => sb.from("tournaments").select("id, name, created_at, format, status").in("id", chunk).order("id"));
+    category: string | null;
+  }>(tIds, (chunk) =>
+    sb.from("tournaments").select("id, name, created_at, format, status, category").in("id", chunk).order("id")
+  );
   if (tErr) return fail(`Turniere laden fehlgeschlagen: ${tErr.message}`, 500);
   const done = tours.filter((t) => t.status === "finished" && flawlessMode(t.format) !== "none");
   if (!done.length) return NextResponse.json({ ok: true, flawless: [] }, { headers: NO_STORE });
@@ -154,6 +172,13 @@ export async function GET(req: Request) {
   );
   if (mpErr) return fail(`Ergebnisse laden fehlgeschlagen: ${mpErr.message}`, 500);
 
+  // Teilnehmer (für "mit dabei")
+  const { data: tPlayers, error: tpErr } = await fetchAllIn<{ id: string; name: string | null; tournament_id: string }>(
+    done.map((t) => String(t.id)),
+    (chunk) => sb.from("players").select("id, name, tournament_id").in("tournament_id", chunk).order("id")
+  );
+  if (tpErr) return fail(`Teilnehmer laden fehlgeschlagen: ${tpErr.message}`, 500);
+
   // 4) je Turnier: hat dieses Profil alles gewonnen?
   const flawless: FlawlessAward[] = [];
   for (const t of done) {
@@ -167,11 +192,18 @@ export async function GET(req: Request) {
       myPlayerIds.has(w.playerId)
     );
     if (!winner) continue;
+    const opponents = tPlayers
+      .filter((p) => String(p.tournament_id) === tid && String(p.id) !== winner.playerId)
+      .map((p) => String(p.name ?? "?"))
+      .filter((n) => n.toLowerCase() !== "ghost")
+      .sort((a, b) => a.localeCompare(b, "de"));
     flawless.push({
       tournamentId: tid,
       name: String(t.name ?? "Turnier"),
       at: t.created_at,
       format: String(t.format ?? ""),
+      category: t.category ? String(t.category) : null,
+      opponents,
       wins: runCount(winner.run, mode),
       matches: winner.run.played,
       mode,
