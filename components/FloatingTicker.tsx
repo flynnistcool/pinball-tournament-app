@@ -47,7 +47,7 @@ function useNarrow(): boolean | null {
   return narrow;
 }
 
-function MobileTickerDock({ code }: { code: string }) {
+function MobileTickerDock({ code, onWindow }: { code: string; onWindow?: () => void }) {
   const ns = useNotificationSettings();
   const [latest, setLatest] = useState<FeedItem | null>(null);
   const [flash, setFlash] = useState(false);
@@ -175,6 +175,16 @@ function MobileTickerDock({ code }: { code: string }) {
             )}
             <span className="shrink-0 text-xs text-neutral-400">{open ? "▼" : "▲"}</span>
           </button>
+          {onWindow ? (
+            <button
+              type="button"
+              onClick={onWindow}
+              className="shrink-0 rounded-md border px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100"
+              title="Als verschiebbares Fenster anzeigen"
+            >
+              🗗 Fenster
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -193,13 +203,37 @@ function MobileTickerDock({ code }: { code: string }) {
 }
 
 /** schmal → angeheftete Leiste, breit → verschiebbares Fenster */
+// 🔀 breite Bildschirme (iPad quer, PC): Fenster ODER Leiste unten – Wahl merkt sich das Gerät
+const MODE_KEY = "pb_tickerMode";
+
 export default function FloatingTicker({ code }: { code: string }) {
   const narrow = useNarrow();
+  const [mode, setMode] = useState<"window" | "dock">("window");
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(MODE_KEY) === "dock") setMode("dock");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const choose = (m: "window" | "dock") => {
+    setMode(m);
+    try {
+      window.localStorage.setItem(MODE_KEY, m);
+    } catch {
+      /* ignore */
+    }
+  };
   if (narrow == null) return null;
-  return narrow ? <MobileTickerDock code={code} /> : <FloatingTickerWindow code={code} />;
+  if (narrow) return <MobileTickerDock code={code} />;
+  return mode === "dock" ? (
+    <MobileTickerDock code={code} onWindow={() => choose("window")} />
+  ) : (
+    <FloatingTickerWindow code={code} onDock={() => choose("dock")} />
+  );
 }
 
-function FloatingTickerWindow({ code }: { code: string }) {
+function FloatingTickerWindow({ code, onDock }: { code: string; onDock?: () => void }) {
   const [box, setBox] = useState<Box | null>(null);
   const boxRef = useRef<Box | null>(null);
   boxRef.current = box;
@@ -361,6 +395,16 @@ function FloatingTickerWindow({ code }: { code: string }) {
       >
         <span className="text-sm font-semibold">📣 Live-Ticker</span>
         <span className="flex items-center gap-1">
+          {onDock ? (
+            <button
+              type="button"
+              onClick={onDock}
+              className="rounded-md px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-200"
+              title="Als Leiste unten anzeigen (über der Menüleiste)"
+            >
+              ⬇ Leiste
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => update({ open: !box.open })}
