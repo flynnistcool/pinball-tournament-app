@@ -98,7 +98,7 @@ export default function FlawlessCelebration({
     const t = window.setTimeout(() => {
       onFeedRef.current?.(feedItems(shown, mode));
       setQueue((q) => [...q, ...shown]);
-    }, Math.max(12_000, delayMs(variant, mode === "leads")));
+    }, Math.max(14_000, delayMs(variant, mode === "leads"))); // nach "Runde abgeschlossen" (12 s)
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ended, !!data]);

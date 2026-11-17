@@ -15,7 +15,8 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { cleanFeedItem } from "@/lib/feed";
-import { feedCandidates, feedFingerprint } from "@/lib/feedReplay";
+import { feedCandidates, feedFingerprint, type FeedContext } from "@/lib/feedReplay";
+import { loadMachineRecords, loadPriorWins, loadStartElo } from "@/lib/feedContextServer";
 import { NOTIFICATION_SETTINGS_KEY, normalizeNotificationSettings, notifSetting, serverFeedOn } from "@/lib/notifications";
 import type { MmData } from "@/lib/myMatch";
 
@@ -53,7 +54,7 @@ export async function POST(req: Request) {
 
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, name, status, format")
+    .select("id, name, status, format, location_id")
     .eq("code", code)
     .maybeSingle();
   if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
@@ -112,8 +113,20 @@ export async function POST(req: Request) {
     match_players: mps,
   };
 
+  // Zusatzdaten (Schritt 2: Highscores, Premiere, Matchsiege, Elo) – nur laden, wenn wirklich nachgerechnet wird
+  const loadCtx = async (): Promise<FeedContext> => {
+    const [records, priorWins, startElo] = await Promise.all([
+      loadMachineRecords(sb, { id: tid, location_id: t.location_id ? String(t.location_id) : null, format: t.format ?? null }).catch(
+        () => null
+      ),
+      loadPriorWins(sb, tid).catch(() => null),
+      loadStartElo(sb, tid).catch(() => null),
+    ]);
+    return { records, priorWins, startElo };
+  };
+
   if (dry) {
-    const all = feedCandidates(data);
+    const all = feedCandidates(data, await loadCtx());
     return ok({
       dry: true,
       candidates: all.map((c) => ({ key: c.item.key, kind: c.item.kind, title: c.item.title, body: c.item.body })),
@@ -127,7 +140,7 @@ export async function POST(req: Request) {
   }
 
   // Kandidaten: nur Arten, die im Ticker eingeschaltet sind
-  const cands = feedCandidates(data).filter(
+  const cands = feedCandidates(data, await loadCtx()).filter(
     (c) => !existing.has(c.item.key) && notifSetting(settings, c.item.kind, "ticker").enabled
   );
 

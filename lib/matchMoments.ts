@@ -184,3 +184,30 @@ export function momentsForMatch(
   }
   return out;
 }
+
+// ── Texte (gemeinsam für Geräte + Server-Ticker) ─────────────────────────────
+
+export const MOMENT_ICON = { upset: "🧊", photo: "📸", blowout: "💣", revenge: "🔄" } as const;
+export const MOMENT_TITLE = { upset: "Favoritensturz", photo: "Fotofinish", blowout: "Kantersieg", revenge: "Revanche" } as const;
+
+const fmtScore = (n: number) => n.toLocaleString("de-DE");
+
+/** Zusatzangaben für die Handy-Karte */
+export function momentData(m: MatchMoment): Record<string, unknown> {
+  if (m.kind === "upset") return { winnerElo: m.winnerElo, loserElo: m.loserElo, machine: m.machine };
+  if (m.kind === "photo") return { gapPct: m.gapPct, machine: m.machine };
+  if (m.kind === "revenge") return { prevRound: m.prevRound, machine: m.machine };
+  return { factor: m.factor, machine: m.machine };
+}
+
+/** Ticker-Text */
+export function momentText(m: MatchMoment, winnerName: string, loserName: string): string {
+  const at = m.machine ? ` an ${m.machine}` : "";
+  if (m.kind === "upset")
+    return `${winnerName} (${m.winnerElo}) schlägt Favorit ${loserName} (${m.loserElo})${at} – ${m.loserElo - m.winnerElo} Elo Unterschied!`;
+  if (m.kind === "photo")
+    return `${winnerName} gewinnt${at} hauchdünn gegen ${loserName} – nur ${String(m.gapPct).replace(".", ",")} % Vorsprung (${fmtScore(m.winnerScore)} zu ${fmtScore(m.loserScore)})`;
+  if (m.kind === "revenge")
+    return `${winnerName} revanchiert sich${at} bei ${loserName}${m.prevRound ? ` – in Runde ${m.prevRound} hatte ${loserName} noch gewonnen` : ""}`;
+  return `${winnerName} zerlegt${at} ${loserName} – ${String(m.factor).replace(".", ",")}× so viele Punkte (${fmtScore(m.winnerScore)} zu ${fmtScore(m.loserScore)})`;
+}

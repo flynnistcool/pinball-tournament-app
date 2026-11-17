@@ -553,7 +553,25 @@ export function serverFeedOn(settings: NotificationSettings | null | undefined):
  * Round the Pinball: Serien zählen dort "gehaltene Highscores" (keine Reihenfolge) → nur über die Admin-Seite.
  */
 export function serverHandlesKind(kind: string, rotation: boolean): boolean {
-  if (["roundStart", "roundDone", "tournamentEnd", "flawless"].includes(kind)) return true;
+  if (
+    [
+      "roundStart",
+      "roundDone",
+      "tournamentEnd",
+      "flawless",
+      // Schritt 2
+      "record",
+      "month",
+      "personal",
+      "premiere",
+      "wins",
+      "upset",
+      "photo",
+      "blowout",
+      "revenge",
+    ].includes(kind)
+  )
+    return true;
   if (rotation) return false;
   return ["streak", "streakEnd", "unbeaten", "unbeatenEnd"].includes(kind);
 }

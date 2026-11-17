@@ -28,6 +28,9 @@ function roundFinished(data: MmData, roundId: string): boolean {
   });
 }
 
+/** Ticker-Eintrag "Runde abgeschlossen" erst nach den anderen Meldungen der Runde (10 s Schutz + Puffer) */
+export const FEED_DONE_DELAY_MS = 12_000;
+
 export function SummaryBlock({ s, tv, rotation = false }: { s: RoundSummary; tv: boolean; rotation?: boolean }) {
   const line = tv ? "text-2xl" : "text-sm";
   const fmt = (n: number) => n.toLocaleString("de-DE");
@@ -131,7 +134,12 @@ export default function RoundSplash({
         body: `${matches.length} ${matches.length === 1 ? "Match" : "Matches"} an ${machines} ${machines === 1 ? "Flipper" : "Flippern"} – viel Spaß!`,
       });
     }
-    if (feed.length) onFeedRef.current?.(feed);
+    // 📣 "Runde generiert" sofort; "Runde abgeschlossen" erst nach FEED_DONE_DELAY_MS – die Meldungen der
+    //    Runde (Premiere, Matchsieg, Highscore … mit 10-s-Tippfehler-Schutz) stehen so darunter, der Rückblick oben
+    const startItems = feed.filter((x) => x.kind !== "roundDone");
+    const doneItems = feed.filter((x) => x.kind === "roundDone");
+    if (startItems.length) onFeedRef.current?.(startItems);
+    if (doneItems.length) window.setTimeout(() => onFeedRef.current?.(doneItems), FEED_DONE_DELAY_MS);
     if (fresh.length) setQueue((q) => [...q, ...fresh]);
   }, [data]);
 

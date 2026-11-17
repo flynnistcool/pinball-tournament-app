@@ -25,7 +25,16 @@ export { playDing };
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type Celebration, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
-import { completedMatchIds, momentMode, momentsForMatch, type MatchMoment } from "@/lib/matchMoments";
+import {
+  completedMatchIds,
+  MOMENT_ICON,
+  MOMENT_TITLE,
+  momentData,
+  momentMode,
+  momentsForMatch,
+  momentText,
+  type MatchMoment,
+} from "@/lib/matchMoments";
 import { liveLeaderboard } from "@/lib/myMatch";
 import { flawlessMode, isUnbeaten, playerRuns, runCount, unbeatenStep, type FlawlessMode, type PlayerRun } from "@/lib/flawless";
 import { computeStreaks, lastFinishedMatchOf, streakRunIds, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
@@ -210,7 +219,13 @@ function feedItemText(c: Shown): FeedItemInput {
     case "photo":
     case "blowout":
     case "revenge":
-      return { key: `${c.kind}|${c.key}`, kind: c.kind, icon: MOMENT_ICON[c.kind], title: MOMENT_TITLE[c.kind], body: momentText(c) };
+      return {
+        key: `${c.kind}|${c.key}`,
+        kind: c.kind,
+        icon: MOMENT_ICON[c.kind],
+        title: MOMENT_TITLE[c.kind],
+        body: momentText(c.m, c.winnerName, c.loserName),
+      };
     case "premiere":
       return {
         key: `premiere|${c.key}`,
@@ -503,27 +518,7 @@ function UnbeatenEndCard({ c, onClose }: { c: UnbeatenEndShown; onClose?: () => 
   );
 }
 
-const MOMENT_ICON = { upset: "🧊", photo: "📸", blowout: "💣", revenge: "🔄" } as const;
-const MOMENT_TITLE = { upset: "Favoritensturz", photo: "Fotofinish", blowout: "Kantersieg", revenge: "Revanche" } as const;
-
-function momentData(m: MatchMoment): Record<string, unknown> {
-  if (m.kind === "upset") return { winnerElo: m.winnerElo, loserElo: m.loserElo, machine: m.machine };
-  if (m.kind === "photo") return { gapPct: m.gapPct, machine: m.machine };
-  if (m.kind === "revenge") return { prevRound: m.prevRound, machine: m.machine };
-  return { factor: m.factor, machine: m.machine };
-}
-
-function momentText(c: MomentShown): string {
-  const m = c.m;
-  const at = m.machine ? ` an ${m.machine}` : "";
-  if (m.kind === "upset")
-    return `${c.winnerName} (${m.winnerElo}) schlägt Favorit ${c.loserName} (${m.loserElo})${at} – ${m.loserElo - m.winnerElo} Elo Unterschied!`;
-  if (m.kind === "photo")
-    return `${c.winnerName} gewinnt${at} hauchdünn gegen ${c.loserName} – nur ${String(m.gapPct).replace(".", ",")} % Vorsprung (${fmt(m.winnerScore)} zu ${fmt(m.loserScore)})`;
-  if (m.kind === "revenge")
-    return `${c.winnerName} revanchiert sich${at} bei ${c.loserName}${m.prevRound ? ` – in Runde ${m.prevRound} hatte ${c.loserName} noch gewonnen` : ""}`;
-  return `${c.winnerName} zerlegt${at} ${c.loserName} – ${String(m.factor).replace(".", ",")}× so viele Punkte (${fmt(m.winnerScore)} zu ${fmt(m.loserScore)})`;
-}
+// Texte der Match-Momente: lib/matchMoments.ts (gemeinsam mit dem Server-Ticker)
 
 const MOMENT_TONE = {
   upset: "from-cyan-500 to-blue-700 ring-cyan-200/60",

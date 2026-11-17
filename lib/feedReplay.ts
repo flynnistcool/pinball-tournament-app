@@ -5,9 +5,12 @@
 // RecordCelebration, FlawlessCelebration, postEndFeed) → beim Umschalten entsteht nichts doppelt.
 //
 // Abgedeckt (siehe serverHandlesKind in lib/notifications.ts):
-//   🎲 Runde generiert (inkl. "Los geht's!"), ✅ Runde abgeschlossen / Durchgang geschafft (mit Rückblick),
-//   🔥 On fire, 🧯 Serie beendet, 🛡️ Noch unbesiegt, 💔 Traum geplatzt (nicht Round the Pinball),
-//   🥋 Flawless Victory, 🏁 Turnier beendet
+//   Schritt 1 – nur Turnierdaten: 🎲 Runde generiert (inkl. "Los geht's!"), ✅ Runde abgeschlossen /
+//     Durchgang geschafft (mit Rückblick), 🔥 On fire, 🧯 Serie beendet, 🛡️ Noch unbesiegt, 💔 Traum geplatzt
+//     (nicht Round the Pinball), 🥋 Flawless Victory, 🏁 Turnier beendet
+//   Schritt 2 – mit Zusatzdaten (FeedContext): 🏆 🥇 💪 Highscores, 🎰 Flipper-Premiere, 🎉 Matchsieg-Meilenstein,
+//     🧊 Favoritensturz, 📸 Fotofinish, 💣 Kantersieg, 🔄 Revanche
+//   Nicht (hängen am zeitlichen Verlauf): 👑 Tabellenführer, 📈 Elo-Meilenstein, ⚔️ Duelle → nur Admin-Seite
 //
 // sig = die Daten, an denen eine Meldung hängt – ändert sich sig, startet der 10-s-Tippfehler-Schutz neu.
 
@@ -17,6 +20,21 @@ import { rotationProgress, rotationWaveMap } from "@/lib/rotationTurn";
 import { roundSummary, rotationWaveSummary, summaryText } from "@/lib/roundSummary";
 import { matchWinValue, streakMin, streakMode, streakText } from "@/lib/winStreaks";
 import { flawlessMode, flawlessText, flawlessWinners, rotationAllDone, unbeatenStep } from "@/lib/flawless";
+import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type PriorRecords } from "@/lib/recordWatch";
+import { isWinMilestone } from "@/lib/winMilestones";
+import { completedMatchIds, MOMENT_ICON, MOMENT_TITLE, momentData, momentMode, momentsForMatch, momentText } from "@/lib/matchMoments";
+
+/** Zusatzdaten für Schritt 2 (vom Server geladen: lib/feedContextServer.ts) */
+export type FeedContext = {
+  /** bisherige Rekorde + persönliche Bestwerte + "schon gespielt" (enabled=false: keine Location / Timeplay / DYP) */
+  records: (PriorRecords & { enabled: boolean }) | null;
+  /** bisherige Matchsiege je Profil (andere Turniere) + ausgeschlossene Profile (Bots/Platzhalter) */
+  priorWins: { wins: Record<string, number>; excluded: string[] } | null;
+  /** Elo zu Turnierbeginn je Profil */
+  startElo: Record<string, number> | null;
+};
+
+const fmtNum = (n: number) => n.toLocaleString("de-DE");
 
 export type FeedCandidate = { item: FeedItemInput; sig: string };
 
@@ -47,7 +65,8 @@ function upToRound(data: MmData, roundNo: number): MmData {
 }
 
 // ── 🎲 / ✅ Runden (Matchplay & Co.) ─────────────────────────────────────────
-function roundItems(data: MmData, out: FeedCandidate[]) {
+// done = "Runde abgeschlossen" (wird nach den Einzelmeldungen angehängt → steht im Ticker darüber)
+function roundItems(data: MmData, out: FeedCandidate[], doneOut: FeedCandidate[] = out) {
   const by = mpsByMatch(data);
   const rounds = data.rounds.slice().sort((a, b) => Number(a.number ?? 0) - Number(b.number ?? 0));
   for (const r of rounds) {
@@ -74,7 +93,7 @@ function roundItems(data: MmData, out: FeedCandidate[]) {
     const sig = matches
       .map((m) => (by.get(String(m.id)) ?? []).map((mp) => `${mp.player_id}:${mp.position}`).join(","))
       .join("|");
-    out.push({
+    doneOut.push({
       item: {
         key: `roundDone|${id}`,
         kind: "roundDone",
@@ -88,7 +107,7 @@ function roundItems(data: MmData, out: FeedCandidate[]) {
 }
 
 // ── 🏁 / ✅ Round the Pinball: Start + Durchgänge ────────────────────────────
-function rotationItems(data: MmData, out: FeedCandidate[]) {
+function rotationItems(data: MmData, out: FeedCandidate[], done: FeedCandidate[] = out) {
   const matchIds = data.matches.map((m) => String(m.id));
   if (!matchIds.length) return;
   const mps = data.match_players as Parameters<typeof rotationProgress>[1];
@@ -121,7 +140,7 @@ function rotationItems(data: MmData, out: FeedCandidate[]) {
       ),
     };
     const s = rotationWaveSummary(then, w);
-    out.push({
+    done.push({
       item: {
         key: `rotWave|${w}|${total}`,
         kind: "roundDone",
@@ -310,13 +329,178 @@ function endItems(data: MmData, out: FeedCandidate[]) {
   }
 }
 
+// ── Schritt 2: Highscores, Premiere, Matchsieg-Meilensteine, Match-Momente ──
+
+/** Matches in Spielreihenfolge (Rundennummer, dann Reihenfolge der Daten) */
+function sortedMatches(data: MmData) {
+  const roundNo = new Map(data.rounds.map((r) => [String(r.id), Number(r.number ?? 0)]));
+  const order = new Map(data.matches.map((m, i) => [String(m.id), i]));
+  return data.matches
+    .slice()
+    .sort(
+      (a, b) =>
+        (roundNo.get(String(a.round_id)) ?? 0) - (roundNo.get(String(b.round_id)) ?? 0) ||
+        (order.get(String(a.id)) ?? 0) - (order.get(String(b.id)) ?? 0)
+    );
+}
+
+/** 🏆 🥇 💪 Highscores – gleiche Bewertung wie die Geräte (lib/recordWatch evaluateEntry) */
+function recordItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
+  const pr = ctx.records;
+  if (!pr || !pr.enabled) return;
+  const entries = liveEntriesFrom(data);
+  const meta = {
+    record: { icon: "🏆", title: "Allzeit-Highscore!" },
+    month: { icon: "🥇", title: "30-Tage-Highscore" },
+    personal: { icon: "💪", title: "Persönlicher Highscore" },
+  } as const;
+  for (const e of entries) {
+    const c = evaluateEntry(e, pr, entries);
+    if (!c) continue;
+    const pid = String(e.key).split("|").pop() ?? "";
+    out.push({
+      item: {
+        key: `${c.kind}|${e.key}|${e.score}`,
+        kind: c.kind,
+        icon: meta[c.kind].icon,
+        title: meta[c.kind].title,
+        body: `${e.playerName} an ${e.machineName ?? "?"} – ${fmtNum(e.score)}`,
+        players: [pid],
+        data: { player: e.playerName, machine: e.machineName ?? "?", score: e.score },
+      },
+      sig: `${e.score}`,
+    });
+  }
+}
+
+/** 🎰 Flipper-Premiere: erstes Spiel eines Profils an einem Flipper (Location: alle Turniere dort + dieses) */
+function premiereItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
+  const pr = ctx.records;
+  if (!pr || !pr.enabled) return;
+  const excluded = new Set(pr.excludedProfiles ?? []);
+  const played = new Set(pr.played ?? []);
+  const nm = nameMap(data);
+  const profOf = new Map(data.players.map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
+  const machineName = new Map(data.machines.map((m) => [String(m.id), m.name ?? null]));
+  const by = mpsByMatch(data);
+  const seen = new Set<string>(); // in diesem Turnier schon gespielt (Profil|Flipper)
+  for (const m of sortedMatches(data)) {
+    const mid = String(m.id);
+    const mName = machineName.get(String(m.machine_id ?? "")) ?? null;
+    const mk = machineKey(mName);
+    if (!mk) continue;
+    for (const mp of by.get(mid) ?? []) {
+      const hasScore = entered(mp.score);
+      if (!hasScore && mp.position == null) continue; // noch nicht gespielt
+      const pid = String(mp.player_id);
+      const prof = profOf.get(pid);
+      if (!prof) continue;
+      const pk = personalKey(prof, mk);
+      if (seen.has(pk)) continue;
+      seen.add(pk);
+      if (pk in pr.personal || played.has(pk) || excluded.has(prof)) continue;
+      const score = hasScore ? Number(mp.score) : null;
+      out.push({
+        item: {
+          key: `premiere|${mid}|${pid}`,
+          kind: "premiere",
+          icon: "🎰",
+          title: "Flipper-Premiere",
+          body:
+            score != null
+              ? `${nm.get(pid) ?? "?"} spielt zum ersten Mal ${mName ?? "?"} – Einstand mit ${fmtNum(score)} Punkten!`
+              : `${nm.get(pid) ?? "?"} spielt zum ersten Mal ${mName ?? "?"}!`,
+          players: [pid],
+          data: { player: nm.get(pid) ?? "?", machine: mName ?? "?", score },
+        },
+        sig: `${mp.score ?? ""}:${mp.position ?? ""}`,
+      });
+    }
+  }
+}
+
+/** 🎉 Matchsieg-Meilensteine (1, 10, 25, 50, 100 …): bisherige Siege + Siege in diesem Turnier */
+function winItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
+  const pw = ctx.priorWins;
+  if (!pw) return;
+  const excluded = new Set(pw.excluded);
+  const nm = nameMap(data);
+  const profOf = new Map(data.players.map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
+  const by = mpsByMatch(data);
+  const live = new Map<string, number>();
+  for (const m of sortedMatches(data)) {
+    const mid = String(m.id);
+    for (const mp of by.get(mid) ?? []) {
+      if (Number(mp.position) !== 1) continue;
+      const pid = String(mp.player_id);
+      const prof = profOf.get(pid);
+      if (!prof || excluded.has(prof)) continue;
+      const cnt = (live.get(prof) ?? 0) + 1;
+      live.set(prof, cnt);
+      const n = (pw.wins[prof] ?? 0) + cnt;
+      if (!isWinMilestone(n)) continue;
+      out.push({
+        item: {
+          key: `wins|${mid}|${pid}|${n}`,
+          kind: "wins",
+          icon: "🎉",
+          title: `${n}. Matchsieg`,
+          body: `${nm.get(pid) ?? "?"} feiert den ${n}. Matchsieg`,
+          players: [pid],
+          data: { player: nm.get(pid) ?? "?", n },
+        },
+        sig: (by.get(mid) ?? []).map((x) => `${x.player_id}:${x.position}`).join(","),
+      });
+    }
+  }
+}
+
+/** 🧊 📸 💣 🔄 Match-Momente – gleiche Rechnung wie die Geräte (lib/matchMoments) */
+function momentItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
+  const mode = momentMode(data.tournament.format);
+  if (mode === "none") return;
+  const nm = nameMap(data);
+  const eloStart: Record<string, number | null> = {};
+  for (const p of data.players) {
+    const e = p.profile_id ? ctx.startElo?.[String(p.profile_id)] : undefined;
+    eloStart[String(p.id)] = typeof e === "number" ? e : null;
+  }
+  const by = mpsByMatch(data);
+  for (const id of completedMatchIds(data, mode)) {
+    for (const m of momentsForMatch(data, id, mode, eloStart)) {
+      const winnerName = nm.get(m.winnerId) ?? "?";
+      const loserName = nm.get(m.loserId) ?? "?";
+      out.push({
+        item: {
+          key: `${m.kind}|${id}`,
+          kind: m.kind,
+          icon: MOMENT_ICON[m.kind],
+          title: MOMENT_TITLE[m.kind],
+          body: momentText(m, winnerName, loserName),
+          players: [m.winnerId],
+          data: { player: winnerName, other: loserName, ...momentData(m) },
+        },
+        sig: (by.get(id) ?? []).map((x) => `${x.player_id}:${x.position}:${x.score}`).join(","),
+      });
+    }
+  }
+}
+
 /** Alle Meldungen, die nach dem aktuellen Stand im Ticker stehen müssten (Reihenfolge = Eintragsreihenfolge) */
-export function feedCandidates(data: MmData): FeedCandidate[] {
+export function feedCandidates(data: MmData, ctx?: FeedContext | null): FeedCandidate[] {
   const out: FeedCandidate[] = [];
+  const done: FeedCandidate[] = []; // Runde abgeschlossen / Durchgang geschafft – nach den Einzelmeldungen
   const rotation = String(data.tournament.format ?? "") === "rotation";
-  if (rotation) rotationItems(data, out);
-  else roundItems(data, out);
+  if (rotation) rotationItems(data, out, done);
+  else roundItems(data, out, done);
   if (!rotation) streakItems(data, out);
+  if (ctx) {
+    premiereItems(data, ctx, out);
+    recordItems(data, ctx, out);
+    winItems(data, ctx, out);
+    momentItems(data, ctx, out);
+  }
+  out.push(...done);
   endItems(data, out);
   return out;
 }

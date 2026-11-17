@@ -6120,6 +6120,46 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
     }
   }
 
+  // ◯ Paarungen, die in der AKTUELLEN Hauptrunde noch fehlen (leerer Kreis in der Farbe der Hauptrunde)
+  const openPairing = (() => {
+    const per = Number(roundsPerCycle || 0);
+    const empty = { keys: new Set<string>(), extra: [] as { key: string; label: string; count: number }[], color: "#a3a3a3" };
+    if (!per || !maxRoundNumber) return empty;
+    const cycle = Math.floor((maxRoundNumber - 1) / per);
+    const isDypP = formatRaw === "dyp_round_robin" || formatRaw === "dyp round robin" || formatRaw === "dyp";
+    const size = isDypP ? 2 : matchSize; // DYP: Team-Paare
+    const ids = (players ?? [])
+      .filter((p: any) => p?.id && p?.active !== false && String(p?.name ?? "").toLowerCase() !== "ghost")
+      .map((p: any) => String(p.id))
+      .sort();
+    if (ids.length < size) return empty;
+    // alle Gruppen (bei sehr vielen Kombinationen nicht anzeigen)
+    const combos: string[][] = [];
+    const pick = (start: number, cur: string[]) => {
+      if (combos.length > 200) return;
+      if (cur.length === size) {
+        combos.push(cur.slice());
+        return;
+      }
+      for (let i = start; i < ids.length; i++) pick(i + 1, [...cur, ids[i]]);
+    };
+    pick(0, []);
+    if (combos.length > 200) return empty;
+    const nameOf = (pid: string) => playersById?.[pid]?.name ?? (players ?? []).find((p: any) => String(p.id) === pid)?.name ?? "—";
+    const known = new Set((pairingRowsAll ?? []).map((r: any) => r.key));
+    const out = { keys: new Set<string>(), extra: [] as { key: string; label: string; count: number }[], color: COLORS[cycle % COLORS.length] };
+    for (const c of combos) {
+      const key = isDypP ? c.join("+") : c.join("::");
+      const playedThisCycle = (pairingOccAll.get(key) ?? []).some((o) => Math.floor((o.no - 1) / per) === cycle);
+      if (playedThisCycle) continue;
+      out.keys.add(key);
+      if (!known.has(key)) {
+        const names = c.map(nameOf);
+        out.extra.push({ key, label: names.join(isDypP ? " + " : size === 2 ? " vs " : " / "), count: 0 });
+      }
+    }
+    return out;
+  })();
 
   return (
     <>
@@ -6236,8 +6276,9 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
   ) : (
     <div className="max-h-[260px] overflow-auto px-2.5 py-3">
       <div className="flex flex-col gap-2">
-        {(pairingRowsAll ?? []).map((row) => {
+        {[...(pairingRowsAll ?? []), ...openPairing.extra].map((row) => {
           const occs = (pairingOccAll.get(row.key) ?? []).slice().sort((a, b) => a.no - b.no);
+          const isOpen = openPairing.keys.has(row.key);
           const per = Number(roundsPerCycle || 0);
           const colorOf = (no: number) => (per > 0 ? COLORS[Math.floor((no - 1) / per) % COLORS.length] : "#a3a3a3");
           const live = occs.find((o) => o.running);
@@ -6271,6 +6312,14 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
                       }
                     />
                   ))}
+                  {/* ◯ in dieser Hauptrunde noch nicht gespielt */}
+                  {isOpen ? (
+                    <span
+                      className="inline-block h-2 w-2 rounded-full"
+                      style={{ boxShadow: `inset 0 0 0 1.5px ${openPairing.color}` }}
+                      title="in dieser Hauptrunde noch offen"
+                    />
+                  ) : null}
                 </span>
                 {/* Zahl nur noch, wenn die Punkte nicht reichen (sehr viele Spiele / Runde unbekannt) */}
                 {occs.length !== row.count || occs.length > 8 ? (
