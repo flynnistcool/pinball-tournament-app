@@ -4,6 +4,7 @@
 //   public/sounds/rotation/  → Hintergrundmusik Round-the-Pinball-Timer  ("Künstler - Titel-Art.mp3")
 //   public/sounds/effekte/   → eigene Sounds für 🔔 Meldungen & Sounds    (Dateiname = Anzeigename)
 //
+// 0. andere Formate (WAV, M4A, OGG, FLAC, AIFF, WMA) werden zuerst in MP3 umgewandelt (Original → Desktop-Sicherung)
 // 1. findet NEUE MP3s (bereits bearbeitete stehen in .bearbeitet.json im jeweiligen Ordner)
 // 2. sichert die Originale auf dem Desktop (pinball-musik-original/rotation bzw. /effekte)
 // 3. wandelt in 128 kbps um und gleicht die Lautheit an (-16 LUFS, 2 Durchgänge, Klang bleibt)
@@ -160,6 +161,45 @@ for (const F of FOLDERS) {
   fs.mkdirSync(F.dir, { recursive: true });
   const MANIFEST = path.join(F.dir, ".bearbeitet.json");
   const manifest = fs.existsSync(MANIFEST) ? JSON.parse(fs.readFileSync(MANIFEST, "utf8")) : {};
+
+  // andere Formate (WAV, M4A, OGG …) → als MP3 aufbereiten; das Original bleibt nur als Sicherung auf dem Desktop
+  const OTHER = /\.(wav|m4a|aac|ogg|flac|aiff?|wma)$/i;
+  const others = fs.readdirSync(F.dir).filter((f) => OTHER.test(f));
+  if (others.length) {
+    const ff = findFfmpeg();
+    if (!ff) {
+      console.error(`\n${F.title}\n   ❌ ffmpeg nicht gefunden. Einmalig installieren:  winget install Gyan.FFmpeg`);
+      failed = true;
+    } else {
+      fs.mkdirSync(F.backup, { recursive: true });
+      console.log(`\n${F.title}\n   ${others.length} Datei(en) in anderem Format → werden zu MP3 (Original gesichert in ${F.backup})`);
+      for (const f of others) {
+        const src = path.join(F.dir, f);
+        const outName = f.replace(OTHER, "").trim() + ".mp3";
+        const dst = path.join(F.dir, outName);
+        if (fs.existsSync(dst)) {
+          console.log(`   ⚠️ ${f}: "${outName}" gibt es schon – übersprungen`);
+          continue;
+        }
+        const bak = path.join(F.backup, f);
+        try {
+          if (!fs.existsSync(bak)) fs.copyFileSync(src, bak);
+          const lufs = normalize(ff, bak, dst);
+          fs.unlinkSync(src);
+          manifest[outName] = { size: fs.statSync(dst).size };
+          console.log(`   ✅ ${f} → ${outName} · Lautheit ${lufs.toFixed(1)} → ${TARGET_I} LUFS`);
+        } catch (e) {
+          try {
+            if (fs.existsSync(dst)) fs.unlinkSync(dst);
+          } catch {
+            /* egal */
+          }
+          console.log(`   ❌ ${f}: ${String(e?.message || e).slice(0, 200)} – Datei bleibt unverändert`);
+        }
+      }
+    }
+  }
+
   const files = fs
     .readdirSync(F.dir)
     .filter((f) => f.toLowerCase().endsWith(".mp3"))

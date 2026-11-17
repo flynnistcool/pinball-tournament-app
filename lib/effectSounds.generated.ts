@@ -2,5 +2,24 @@
 // Quelle: Dateien in public/sounds/effekte/ (Dateiname = Anzeigename).
 
 export const GENERATED_EFFECTS: readonly { id: string; label: string; src: string }[] = [
-
+  { id: "fx:achievement-unlocked-delayed-pling", label: "Achievement Unlocked Delayed Pling", src: "/sounds/effekte/" + encodeURIComponent("Achievement Unlocked Delayed Pling.mp3") },
+  { id: "fx:battle-drums", label: "Battle Drums", src: "/sounds/effekte/" + encodeURIComponent("Battle Drums.mp3") },
+  { id: "fx:cartoon-sad-trumpet", label: "Cartoon Sad Trumpet", src: "/sounds/effekte/" + encodeURIComponent("Cartoon Sad Trumpet.mp3") },
+  { id: "fx:coins-achieved-musical-dreamy", label: "Coins Achieved Musical Dreamy", src: "/sounds/effekte/" + encodeURIComponent("Coins Achieved Musical Dreamy.mp3") },
+  { id: "fx:flawless-victory", label: "Flawless Victory", src: "/sounds/effekte/" + encodeURIComponent("Flawless Victory.mp3") },
+  { id: "fx:game-item-acquired-chimes-pop", label: "Game Item Acquired Chimes Pop", src: "/sounds/effekte/" + encodeURIComponent("Game Item Acquired Chimes Pop.mp3") },
+  { id: "fx:gaming-mission", label: "Gaming - mission", src: "/sounds/effekte/" + encodeURIComponent("Gaming - mission.mp3") },
+  { id: "fx:high-score-winning", label: "High Score Winning", src: "/sounds/effekte/" + encodeURIComponent("High Score Winning.mp3") },
+  { id: "fx:mission-completed", label: "Mission Completed", src: "/sounds/effekte/" + encodeURIComponent("Mission Completed.mp3") },
+  { id: "fx:oh-my-gosh", label: "Oh My Gosh", src: "/sounds/effekte/" + encodeURIComponent("Oh My Gosh.mp3") },
+  { id: "fx:power-up-magic-bowl-win-sound", label: "Power Up Magic Bowl Win Sound", src: "/sounds/effekte/" + encodeURIComponent("Power Up Magic Bowl Win Sound.mp3") },
+  { id: "fx:reaction-cheer-loudly-applause", label: "Reaction Cheer Loudly Applause", src: "/sounds/effekte/" + encodeURIComponent("Reaction Cheer Loudly Applause.mp3") },
+  { id: "fx:reward-received-positive-alert", label: "Reward Received Positive Alert", src: "/sounds/effekte/" + encodeURIComponent("Reward Received Positive Alert.mp3") },
+  { id: "fx:royal-entrance-fanfare-trumpet", label: "Royal Entrance Fanfare Trumpet", src: "/sounds/effekte/" + encodeURIComponent("Royal Entrance Fanfare Trumpet.mp3") },
+  { id: "fx:royal-entrance-trumpets-fanfare-motif-harmonized", label: "Royal Entrance Trumpets Fanfare Motif Harmonized", src: "/sounds/effekte/" + encodeURIComponent("Royal Entrance Trumpets Fanfare Motif Harmonized.mp3") },
+  { id: "fx:ta-da-positive-notification-fanfare", label: "Ta Da Positive Notification Fanfare", src: "/sounds/effekte/" + encodeURIComponent("Ta Da Positive Notification Fanfare.mp3") },
+  { id: "fx:this-is-amazing-whisper", label: "This Is Amazing Whisper", src: "/sounds/effekte/" + encodeURIComponent("This Is Amazing Whisper.mp3") },
+  { id: "fx:victory-trumpet", label: "Victory Trumpet", src: "/sounds/effekte/" + encodeURIComponent("Victory Trumpet.mp3") },
+  { id: "fx:vocal-you-win", label: "Vocal You Win", src: "/sounds/effekte/" + encodeURIComponent("Vocal You Win.mp3") },
+  { id: "fx:we-hope-you-enjoy-the-show", label: "We Hope You Enjoy The Show", src: "/sounds/effekte/" + encodeURIComponent("We Hope You Enjoy The Show.mp3") },
 ];
