@@ -15296,6 +15296,8 @@ const tasksById = useMemo(() => {
 
 <div
   data-pb-bottombar=""
+  // 📣 über der Ticker-Zeile am Handy/iPad hochkant (Höhe setzt der Ticker, sonst 0)
+  style={{ bottom: "var(--pb-ticker-dock, 0px)" }}
   className={`fixed bottom-0 left-1/2 -translate-x-1/2 z-50
     w-full max-w-[990px]
     transition-transform duration-200
