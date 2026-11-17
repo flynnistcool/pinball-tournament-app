@@ -91,6 +91,7 @@ import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
 import FlawlessCelebration from "@/components/FlawlessCelebration";
+import { useFeedSync } from "@/components/useFeedSync";
 import { rotationAllDone } from "@/lib/flawless";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
@@ -12380,6 +12381,8 @@ async function reloadAll() {
     rivEventsOn
   );
   const rtpRivalry = rivData.insights;
+  // 📡 Ticker über den Server (falls eingeschaltet): regelmäßig anklopfen + eigene Einträge dieser Arten weglassen
+  useFeedSync(code, { rotation: isRotationFormat });
   // 📣 Round the Pinball: "Duelle des Abends" (Top 3) einmal in den Ticker – nur Admin
   useEffect(() => {
     if (!rtpRivalryOn || !isAdmin || !code) return;

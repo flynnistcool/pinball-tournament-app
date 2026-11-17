@@ -105,7 +105,12 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
     case "premiere":
       return {
         title: "Flipper-Premiere! 🎰",
-        text: d.machine != null ? `Dein erstes Spiel an ${machine} – Einstand mit ${fmt(d.score)} Punkten.` : x.body,
+        text:
+          d.machine != null
+            ? d.score != null
+              ? `Dein erstes Spiel an ${machine} – Einstand mit ${fmt(d.score)} Punkten.`
+              : `Dein erstes Spiel an ${machine}!`
+            : x.body,
       };
     case "eloMark":
       return {

@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BADGES,
   DEVICE_LABEL,
+  SERVER_FEED_ID,
   NOTIFICATIONS,
   defaultNotificationSettings,
   defaultSoundId,
@@ -138,6 +139,30 @@ export default function NotificationsOverview() {
         🎵 <b>Eigene Sounds:</b> MP3 nach <code>public/sounds/effekte/</code> legen und <code>npm run musik</code> ausführen –
         dann stehen sie hier unter „Eigene Sounds“ zur Auswahl{OWN_SOUNDS.length ? ` (aktuell ${OWN_SOUNDS.length})` : ""}.
       </div>
+
+      {/* 📡 Ticker über Server (Beta) */}
+      <label className="flex items-start gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={draft[SERVER_FEED_ID]?.ticker?.enabled === true}
+          onChange={(e) =>
+            update(SERVER_FEED_ID, "ticker", { enabled: false, seconds: null, volume: 1, sound: "none" }, { enabled: e.target.checked })
+          }
+        />
+        <span>
+          <span className="font-semibold">📡 Ticker über Server</span>{" "}
+          <span className="rounded-full bg-indigo-100 px-1.5 py-px text-[10px] font-bold text-indigo-700">BETA</span>
+          <span className="block text-xs text-neutral-600">
+            Sicherheitsnetz: Die Admin-Seite trägt wie bisher sofort ein. Zusätzlich rechnet der Server nach und
+            ergänzt, was fehlt – z. B. wenn das iPad aus war oder die Seite im Hintergrund lag (etwa 10–20 s später).
+            Es reicht, wenn irgendein Gerät offen ist (TV, Handy, Admin). Gilt für: Runde generiert/abgeschlossen,
+            Durchgänge, On fire, Serie beendet, Noch unbesiegt, Traum geplatzt, Flawless Victory, Turnierende.
+            Ausschalten = wieder wie vorher.
+            Benötigt einmalig <code>supabase_tournament_feed_state.sql</code> (10-Sekunden-Tippfehler-Schutz).
+          </span>
+        </span>
+      </label>
 
       {/* 🎧 Sound-Test: beliebigen Sound anhören */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-neutral-50 px-3 py-2">

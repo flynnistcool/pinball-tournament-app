@@ -30,6 +30,7 @@ import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import BotEloBadge from "@/components/BotEloBadge";
 import { botEloOf } from "@/lib/myMatch";
 import { rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
+import { useFeedSync } from "@/components/useFeedSync";
 import { RivalryEventPhone, useRivalryEvents } from "@/components/RivalryEvents";
 import LiveTicker from "@/components/LiveTicker";
 import PhoneFeedCards from "@/components/PhoneFeedCards";
@@ -119,6 +120,8 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
     onlyFor: me?.playerId ?? null,
     rotation: phFormat === "rotation", // Round the Pinball: Duell je Flipper
   });
+  // 📡 Ticker über den Server (falls eingeschaltet): auch Handys klopfen an (seltener)
+  useFeedSync(code, { rotation: phFormat === "rotation", active: !!data, everyMs: 15_000 });
 
   if (meError) {
     return (

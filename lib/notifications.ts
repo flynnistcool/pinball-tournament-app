@@ -530,7 +530,32 @@ export function normalizeNotificationSettings(raw: unknown): NotificationSetting
       };
     }
   }
+  // 📡 Schalter "Ticker über Server" (kein Gerät, nur an/aus; Standard: aus)
+  const sf = r?.[SERVER_FEED_ID]?.ticker;
+  def[SERVER_FEED_ID] = { ticker: { enabled: sf?.enabled === true, seconds: null, volume: 1, sound: "none" } };
   return def;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 📡 Live-Ticker über den Server (/api/public/feed/sync): der Server rechnet aus den Turnierdaten nach,
+// was im Ticker stehen muss – unabhängig davon, ob die Admin-Seite offen ist.
+
+/** Einstellungs-Eintrag für den Schalter (gespeichert wie eine Mitteilung, Gerät "ticker") */
+export const SERVER_FEED_ID = "system:serverFeed";
+
+/** Ist "Ticker über Server" eingeschaltet? */
+export function serverFeedOn(settings: NotificationSettings | null | undefined): boolean {
+  return settings?.[SERVER_FEED_ID]?.ticker?.enabled === true;
+}
+
+/**
+ * Welche Arten rechnet der Server nach? (Sicherheitsnetz – die Admin-Seite trägt sie weiterhin sofort ein)
+ * Round the Pinball: Serien zählen dort "gehaltene Highscores" (keine Reihenfolge) → nur über die Admin-Seite.
+ */
+export function serverHandlesKind(kind: string, rotation: boolean): boolean {
+  if (["roundStart", "roundDone", "tournamentEnd", "flawless"].includes(kind)) return true;
+  if (rotation) return false;
+  return ["streak", "streakEnd", "unbeaten", "unbeatenEnd"].includes(kind);
 }
 
 /** Einstellung für eine Mitteilung auf einem Gerät (Standard, falls nicht vorhanden) */

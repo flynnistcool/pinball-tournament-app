@@ -13,6 +13,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { matchPoints, computeProvisionalRotationPoints } from "@/lib/points";
 import { calcRoundsPerCycle, mainRoundBars, type MainRoundBar } from "@/lib/roundProgress";
 import FlawlessCelebration from "@/components/FlawlessCelebration";
+import { useFeedSync } from "@/components/useFeedSync";
 import { RoundPointsBars } from "@/components/charts";
 import { computeFinalRanking } from "@/lib/finals";
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert
@@ -789,6 +790,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     rivalryOn || rtpRivalryOn
   );
   const rivalry = rivData.insights;
+  // 📡 Ticker über den Server (falls eingeschaltet): der TV klopft regelmäßig an
+  useFeedSync(code, { rotation: format === "rotation", active: !!data });
   // 🎉 Gegner-Ereignisse nach Matches: groß in der Mitte
   const rivEvents = useRivalryEvents({
     matchPlayers: data?.match_players,
@@ -1456,6 +1459,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                         maxItems={30}
                         // etwa so hoch wie die Tabelle daneben
                         scrollMaxPx={Math.max(320, 170 + rowsTp.length * 76)}
+                        autoScroll // 📜 nur Round the Pinball
                         refreshMs={8000}
                         soundOn={soundOn}
                       />
@@ -1465,7 +1469,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                   <div className="space-y-3">
                     {table}
                     {/* quer (unten): ca. 4 Meldungen sichtbar, Rest scrollbar */}
-                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={285} refreshMs={8000} soundOn={soundOn} />
+                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={285} refreshMs={8000} soundOn={soundOn} autoScroll />
                   </div>
                 );
               })()

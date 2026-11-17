@@ -23,7 +23,14 @@ const AUTO_TOP_MS = 10_000;
 const AUTO_BOTTOM_MS = 2_000; // nach dem Sprung ans Ende kurz stehen, dann langsam hoch
 const AUTO_SPEED = 0.03; // = 30 Pixel pro Sekunde
 
+/** eigene Ticker sofort neu laden (z. B. nachdem der Server etwas eingetragen hat) */
+export function refreshTickers() {
+  refreshListeners.forEach((l) => l());
+}
+
 export function postFeedItems(code: string, items: FeedItemInput[]) {
+  // 📡 "Ticker über Server" ist nur ein Sicherheitsnetz: die Admin-Seite trägt weiter SOFORT ein,
+  //    der Server ergänzt nur, was fehlt (gleiche Kennungen → nichts doppelt)
   const fresh = items.filter((it) => it && !sent.has(`${code}|${it.key}`));
   if (!code || !fresh.length) return;
   fresh.forEach((it) => sent.add(`${code}|${it.key}`));
@@ -72,6 +79,7 @@ export default function LiveTicker({
   collapsible = false,
   soundOn,
   scrollMaxPx,
+  autoScroll: autoScrollProp = false,
 }: {
   code: string;
   /** strip = schmales Laufband (Handy unter der Match-Eintragung) */
@@ -87,6 +95,8 @@ export default function LiveTicker({
   soundOn?: boolean;
   /** 📜 Liste höchstens so hoch (px), darüber scrollbar (TV: feste Höhe, damit das Einpassen stabil bleibt) */
   scrollMaxPx?: number;
+  /** 📜 TV: Liste läuft von selbst (nur zusammen mit scrollMaxPx) – vorerst nur Round the Pinball */
+  autoScroll?: boolean;
 }) {
   const ns = useNotificationSettings();
   const nsRef = useRef(ns);
@@ -174,7 +184,7 @@ export default function LiveTicker({
   //    Neue Meldung → sofort nach oben, Ablauf beginnt von vorn.
   const listRef = useRef<HTMLUListElement | null>(null);
   const newestId = shown[0]?.id ?? null;
-  const autoScroll = variant === "tv" && !!scrollMaxPx;
+  const autoScroll = autoScrollProp && variant === "tv" && !!scrollMaxPx;
   useEffect(() => {
     const el = listRef.current;
     if (!autoScroll || !el) return;

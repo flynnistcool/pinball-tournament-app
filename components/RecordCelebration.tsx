@@ -23,7 +23,7 @@ import { playSoundById } from "@/lib/playSound";
 export { playDing };
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert (createPortal funktioniert trotzdem)
 import { createPortal } from "react-dom";
-import { evaluateEntry, liveEntriesFrom, personalKey, type Celebration, type PriorRecords } from "@/lib/recordWatch";
+import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type Celebration, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
 import { completedMatchIds, momentMode, momentsForMatch, type MatchMoment } from "@/lib/matchMoments";
 import { liveLeaderboard } from "@/lib/myMatch";
@@ -64,7 +64,8 @@ type MomentShown = {
 /** 👑 neuer Tabellenführer */
 type LeaderShown = { kind: "leader"; playerName: string; playerId: string; points: number; prevName: string | null; key: string };
 /** 🎰 Flipper-Premiere: erster Score eines Spielers auf diesem Flipper (an der Location) */
-type PremiereShown = { kind: "premiere"; playerName: string; playerId: string; machineName: string; score: number; key: string };
+/** score = null: Match nur mit Plätzen gewertet (ohne Punkte) */
+type PremiereShown = { kind: "premiere"; playerName: string; playerId: string; machineName: string; score: number | null; key: string };
 /** 📈 Elo-Meilenstein: Live-Elo knackt eine Hunderter-Marke (again = im Turnier schon mal darüber) */
 type EloMarkShown = { kind: "eloMark"; playerName: string; playerId: string; mark: number; elo: number; again: boolean; key: string };
 type Shown =
@@ -114,7 +115,7 @@ const KIND_ORDER: Record<Shown["kind"], number> = {
   personal: 14,
 };
 const sortValue = (x: Shown) =>
-  "n" in x ? x.n : "entry" in x ? x.entry.score : "points" in x ? x.points : "mark" in x ? x.mark : "score" in x ? x.score : 0;
+  "n" in x ? x.n : "entry" in x ? x.entry.score : "points" in x ? x.points : "mark" in x ? x.mark : "score" in x ? x.score ?? 0 : 0;
 
 type LiveData = Parameters<typeof liveEntriesFrom>[0] &
   Parameters<typeof liveWinsFrom>[0] &
@@ -216,7 +217,10 @@ function feedItemText(c: Shown): FeedItemInput {
         kind: "premiere",
         icon: "🎰",
         title: "Flipper-Premiere",
-        body: `${c.playerName} spielt zum ersten Mal ${c.machineName} – Einstand mit ${fmt(c.score)} Punkten!`,
+        body:
+          c.score != null
+            ? `${c.playerName} spielt zum ersten Mal ${c.machineName} – Einstand mit ${fmt(c.score)} Punkten!`
+            : `${c.playerName} spielt zum ersten Mal ${c.machineName}!`,
       };
     case "eloMark":
       return {
@@ -575,7 +579,9 @@ function PremiereCard({ c, onClose }: { c: PremiereShown; onClose?: () => void }
         <div className="text-[1.5vw] font-bold uppercase tracking-wider text-pink-100">🎰 Flipper-Premiere</div>
         <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
         <div className="text-[1.8vw] font-extrabold">zum ersten Mal an {c.machineName}</div>
-        <div className="mt-1 text-[1.2vw] font-semibold text-pink-100">Einstand mit {fmt(c.score)} Punkten</div>
+        {c.score != null ? (
+          <div className="mt-1 text-[1.2vw] font-semibold text-pink-100">Einstand mit {fmt(c.score)} Punkten</div>
+        ) : null}
       </div>
     </div>
   );
@@ -620,6 +626,9 @@ function LeaderCard({ c, onClose }: { c: LeaderShown; onClose?: () => void }) {
     </div>
   );
 }
+
+const nameById2 = (d: { players?: { id: string; name?: string | null }[] }, pid: string) =>
+  String((d.players ?? []).find((p) => String(p.id) === pid)?.name ?? "?");
 
 const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
 
@@ -953,6 +962,43 @@ function RecordCelebrationInner({
           pendC.delete(id);
           seenC.add(id);
           if (finished) continue;
+          // 🎰 Premiere auch bei Matches NUR mit Plätzen (ohne Punkte – sonst kommt sie schon beim ersten Score)
+          if (pr && enabledRef.current) {
+            const mm = (d.matches ?? []).find((x) => String(x.id) === id) as { machine_id?: string | null } | undefined;
+            const machineName =
+              ((d as { machines?: { id: string; name: string | null }[] }).machines ?? []).find(
+                (x) => String(x.id) === String(mm?.machine_id ?? "")
+              )?.name ?? null;
+            const mk = machineKey(machineName);
+            const excludedP = new Set(pr.excludedProfiles ?? []);
+            const profOf = new Map((d.players ?? []).map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
+            const machineOfMatch = new Map((d.matches ?? []).map((x) => [String(x.id), String((x as { machine_id?: string | null }).machine_id ?? "")]));
+            for (const mp of (d.match_players ?? []).filter((x) => String(x.match_id) === id)) {
+              const pid = String(mp.player_id);
+              const key = `${id}|${pid}`;
+              const prof = profOf.get(pid);
+              if (!mk || !prof || celebratedPremiereRef.current.has(key) || excludedP.has(prof)) continue;
+              if (mp.score != null && mp.score !== "") continue; // mit Score → läuft über die Score-Prüfung
+              const pk = personalKey(prof, mk);
+              const playedHere = (d.match_players ?? []).some((o) => {
+                if (String(o.match_id) === id) return false;
+                if (profOf.get(String(o.player_id)) !== prof) return false;
+                const om = machineOfMatch.get(String(o.match_id));
+                const oName = ((d as { machines?: { id: string; name: string | null }[] }).machines ?? []).find((x) => String(x.id) === om)?.name;
+                return machineKey(oName ?? null) === mk && ((o as { position?: number | null }).position != null || (o.score != null && o.score !== ""));
+              });
+              if (pk in pr.personal || (pr.played ?? []).includes(pk) || playedHere) continue;
+              celebratedPremiereRef.current.add(key);
+              found.push({
+                kind: "premiere",
+                playerName: nameById2(d, pid),
+                playerId: pid,
+                machineName: machineName ?? "?",
+                score: null,
+                key,
+              });
+            }
+          }
           for (const m of momentsForMatch(d as any, id, mMode, eloStart)) {
             const mk = `${m.kind}|${id}`;
             if (celebratedMomentRef.current.has(mk)) continue;
