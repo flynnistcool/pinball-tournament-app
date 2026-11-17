@@ -15295,6 +15295,7 @@ const tasksById = useMemo(() => {
 </Card>
 
 <div
+  data-pb-bottombar=""
   className={`fixed bottom-0 left-1/2 -translate-x-1/2 z-50
     w-full max-w-[990px]
     transition-transform duration-200

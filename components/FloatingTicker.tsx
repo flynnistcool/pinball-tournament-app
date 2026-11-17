@@ -97,6 +97,27 @@ function MobileTickerDock({ code }: { code: string }) {
     };
   }, [code, ns]);
 
+  // 📌 über der Menüleiste der Admin-Seite (Runde erzeugen …) sitzen, solange diese sichtbar ist
+  const [lift, setLift] = useState(0);
+  useEffect(() => {
+    const calc = () => {
+      const bar = document.querySelector("[data-pb-bottombar]") as HTMLElement | null;
+      if (!bar) return setLift(0);
+      const r = bar.getBoundingClientRect();
+      const visible = Math.max(0, Math.round(window.innerHeight - r.top));
+      setLift((cur) => (Math.abs(cur - visible) > 1 ? visible : cur));
+    };
+    calc();
+    const t = window.setInterval(calc, 300); // Menüleiste fährt beim Scrollen ein/aus
+    window.addEventListener("resize", calc);
+    window.addEventListener("scroll", calc, { passive: true });
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("resize", calc);
+      window.removeEventListener("scroll", calc);
+    };
+  }, []);
+
   // unten Platz lassen, damit die Leiste nichts verdeckt
   useEffect(() => {
     if (hidden) return;
@@ -112,7 +133,8 @@ function MobileTickerDock({ code }: { code: string }) {
       <button
         type="button"
         onClick={() => setHiddenSaved(false)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+12px)] left-3 z-[60] rounded-full border bg-white px-3 py-2 text-sm font-semibold shadow-lg"
+        className="fixed left-3 z-[60] rounded-full border bg-white px-3 py-2 text-sm font-semibold shadow-lg"
+        style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${12 + lift}px)` }}
         title="Live-Ticker einblenden"
       >
         📣
@@ -125,7 +147,10 @@ function MobileTickerDock({ code }: { code: string }) {
       {open ? (
         <div className="fixed inset-0 z-[60] bg-black/30" onClick={() => setOpen(false)} aria-hidden="true" />
       ) : null}
-      <div className="fixed inset-x-0 bottom-0 z-[61] pb-[env(safe-area-inset-bottom,0px)]">
+      <div
+        className="fixed inset-x-0 z-[61] transition-[bottom] duration-200"
+        style={{ bottom: lift, paddingBottom: lift ? 0 : "env(safe-area-inset-bottom, 0px)" }}
+      >
         {open ? (
           <div className="mx-2 mb-1 max-h-[55vh] overflow-y-auto rounded-2xl border bg-white p-2 shadow-lg">
             <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
