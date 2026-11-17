@@ -39,19 +39,23 @@ export function recordsForMachine(
 }
 
 /**
- * 🎰 Flipper-Premiere: Spieler hat diesen Flipper an der Location noch nie gespielt –
- * weder in beendeten Turnieren noch in einem ANDEREN Match dieses Turniers.
+ * 🎰 Flipper-Premiere: Spieler hat diesen Flipper an dieser Location noch NIE gespielt – in keinem anderen
+ * Turnier dort (egal welches Format) und in keinem ANDEREN Match dieses Turniers.
  */
 export function isPremiere(
   profileId: string | null | undefined,
   machineName: string | null | undefined,
   personal: Record<string, number>,
   live: readonly LiveEntry[],
-  matchId: string | null | undefined
+  matchId: string | null | undefined,
+  /** an dieser Location schon gespielt (alle anderen Turniere dort, jedes Format) */
+  played?: ReadonlySet<string> | readonly string[]
 ): boolean {
   const key = machineKey(machineName);
   if (!profileId || !key) return false;
-  if (personalKey(String(profileId), key) in personal) return false;
+  const pk = personalKey(String(profileId), key);
+  if (pk in personal) return false;
+  if (played && (Array.isArray(played) ? played.includes(pk) : (played as ReadonlySet<string>).has(pk))) return false;
   const own = matchId ? `${matchId}|` : null;
   return !live.some((e) => e.machineKey === key && e.profileId === String(profileId) && !(own && e.key.startsWith(own)));
 }

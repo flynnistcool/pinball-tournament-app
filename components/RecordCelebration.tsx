@@ -649,6 +649,16 @@ function RecordCelebrationInner({
 }) {
   const eloRef = useRef(elo);
   eloRef.current = elo;
+  // welche Profile spielen mit? (ändert sich, wenn Spieler hinzugefügt werden)
+  const profilesKey = Array.from(
+    new Set(
+      ((data as { players?: { profile_id?: string | null }[] } | null)?.players ?? [])
+        .map((p) => (p.profile_id ? String(p.profile_id) : ""))
+        .filter(Boolean)
+    )
+  )
+    .sort()
+    .join(",");
   const onEventsRef = useRef(onEvents);
   onEventsRef.current = onEvents;
   const backfilledRef = useRef(false); // 📣 vorhandene Highscores einmal nachgetragen?
@@ -707,6 +717,7 @@ function RecordCelebrationInner({
   useEffect(() => {
     let disposed = false;
     setPriorWins(null); // anderes Turnier → alte Zählung nicht weiterverwenden
+    setPrior(null); // anderes Turnier / neue Spieler → erst nach dem Neuladen bewerten (Scores warten so lange)
     async function loadRecords() {
       try {
         const res = await fetch(`/api/public/machine-records?code=${encodeURIComponent(code)}&ts=${Date.now()}`, {
@@ -720,6 +731,7 @@ function RecordCelebrationInner({
           monthly: j.monthly ?? {},
           personal: j.personal ?? {},
           excludedProfiles: j.excludedProfiles ?? [], // 🤖/🚫 kein Rekord-Jubel für Bots/Platzhalter
+          played: Array.isArray(j.played) ? j.played.map(String) : [], // 🎰 schon irgendwann gespielt
         });
       } catch {
         /* nächster Versuch beim nächsten Intervall */
@@ -749,7 +761,7 @@ function RecordCelebrationInner({
       disposed = true;
       window.clearInterval(t);
     };
-  }, [code]);
+  }, [code, profilesKey]); // Spieler hinzugefügt → Rekorde/persönliche Werte/Premiere-Liste sofort neu
 
   // Scores prüfen – bei neuen Daten UND alle 2 s (nur lokal, keine Anfrage)
   useEffect(() => {
@@ -835,6 +847,7 @@ function RecordCelebrationInner({
           const excludedP = new Set(pr.excludedProfiles ?? []);
           const playedBefore =
             pk in pr.personal ||
+            (pr.played ?? []).includes(pk) ||
             entries.some((o) => o.key !== e.key && o.profileId === e.profileId && o.machineKey === e.machineKey);
           if (!playedBefore && !excludedP.has(e.profileId)) {
             celebratedPremiereRef.current.add(e.key);

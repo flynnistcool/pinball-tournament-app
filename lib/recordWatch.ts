@@ -21,6 +21,8 @@ export type PriorRecords = {
   personal: Record<string, number>;
   /** 🤖/🚫 Profile im laufenden Turnier, die keine Allzeit-/30-Tage-Rekorde halten dürfen (Bots, Platzhalter) */
   excludedProfiles?: string[];
+  /** 🎰 `${profileId}|${machineKey}`: an dieser Location schon gespielt – alle anderen Turniere dort, jedes Format */
+  played?: string[];
 };
 
 export const personalKey = (profileId: string, mKey: string) => `${profileId}|${mKey}`;

@@ -105,7 +105,11 @@ export default function PhoneMatchInsights({
   const isRotation = format === "rotation";
   const machineName = info.machine?.name ?? null;
 
-  const records = useMachineRecords(code, !finished);
+  const records = useMachineRecords(
+    code,
+    !finished,
+    (data.players ?? []).map((p) => (p.profile_id ? String(p.profile_id) : null)) // später hinzugefügte → neu laden
+  );
   const mwrRows = useMachineWinrates(code);
 
   const live = useMemo(() => liveEntriesFrom(data), [data]);
@@ -170,7 +174,7 @@ export default function PhoneMatchInsights({
   // ⚔️ Gegner-Duell-Hinweise: nur eigene Gegner im laufenden Match (nicht Round the Pinball/Timeplay/DYP)
   const rivalryOn = !finished && !info.done && !["timeplay", "dyp_round_robin"].includes(format);
   // Round the Pinball: alle gegen alle → einmal pro Runde laden, nur die 2 spannendsten zeigen
-  const rivalry = useRivalry(code, isRotation ? rtpRefreshKey() : String(data.rounds?.length ?? 0), rivalryOn);
+  const rivalry = useRivalry(code, isRotation ? rtpRefreshKey(data as any) : String(data.rounds?.length ?? 0), rivalryOn);
   const myRivalries = rivalryOn
     ? info.players
         .map((mp) => String(mp.player_id))
@@ -263,7 +267,7 @@ export default function PhoneMatchInsights({
               </div>
               {pb ? (
                 <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-xs tabular-nums text-neutral-500">
-                  {premiereOn && isPremiere(profileOf(pid), machineName, records!.personal, live, info.match.id) ? (
+                  {premiereOn && isPremiere(profileOf(pid), machineName, records!.personal, live, info.match.id, records!.played) ? (
                     <span className="rounded-full border border-pink-200 bg-pink-50 px-1.5 py-px font-semibold text-pink-700">
                       🎰 Premiere
                     </span>

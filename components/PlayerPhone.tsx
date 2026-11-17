@@ -107,12 +107,17 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
   const phFormat = String(data?.tournament?.format ?? "");
   const phRivOn =
     !!data && !!me && String(data?.tournament?.status ?? "") !== "finished" && !["timeplay", "dyp_round_robin"].includes(phFormat);
-  const phRivData = useRivalryData(code, phFormat === "rotation" ? rtpRefreshKey() : String(data?.rounds?.length ?? 0), phRivOn);
+  const phRivData = useRivalryData(
+    code,
+    phFormat === "rotation" ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0),
+    phRivOn
+  );
   const phRivEvents = useRivalryEvents({
     matchPlayers: data?.match_players,
     pairs: phRivData.pairs,
     enabled: phRivOn,
     onlyFor: me?.playerId ?? null,
+    rotation: phFormat === "rotation", // Round the Pinball: Duell je Flipper
   });
 
   if (meError) {

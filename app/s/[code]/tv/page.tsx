@@ -783,13 +783,18 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   // ⚔️ Gegner-Duell-Hinweise (einmal pro Runde laden; nicht bei Round the Pinball/Timeplay/DYP)
   const rivalryOn = !!data && !isFinished && !["rotation", "timeplay", "dyp_round_robin"].includes(format);
   const rtpRivalryOn = !!data && !isFinished && format === "rotation";
-  const rivData = useRivalryData(code, rtpRivalryOn ? rtpRefreshKey() : String(data?.rounds?.length ?? 0), rivalryOn || rtpRivalryOn);
+  const rivData = useRivalryData(
+    code,
+    rtpRivalryOn ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0),
+    rivalryOn || rtpRivalryOn
+  );
   const rivalry = rivData.insights;
   // 🎉 Gegner-Ereignisse nach Matches: groß in der Mitte
   const rivEvents = useRivalryEvents({
     matchPlayers: data?.match_players,
     pairs: rivData.pairs,
     enabled: rivalryOn || rtpRivalryOn,
+    rotation: format === "rotation", // Round the Pinball: Duell je Flipper
   });
 
   // 📈 Verlauf ("Rennen"): kumulierte Rundenpunkte je Spieler (Rotation inkl. vorläufiger Punkte)
@@ -825,7 +830,11 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   }, [isRotation, view.columns]);
   // 🏆 Flipper-Rekorde (beendete Turniere der Location) + Scores dieses Turniers
   // beendetes Turnier: nichts laden, nichts zeigen
-  const machineRecords = useMachineRecords(code, !!data && !isFinished);
+  const machineRecords = useMachineRecords(
+    code,
+    !!data && !isFinished,
+    (data?.players ?? []).map((p) => (p.profile_id ? String(p.profile_id) : null)) // später hinzugefügte → neu laden
+  );
   const liveRecordEntries = useMemo(() => (data && !isFinished ? liveEntriesFrom(data) : []), [data, isFinished]);
   const recLookup: RecLookup = (machineName) => {
     if (isFinished || !machineRecords?.enabled) return null;
@@ -841,7 +850,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     if (isFinished || !machineRecords?.enabled) return null;
     const prof = profileByPlayer.get(String(playerId));
     const r = personalForMachine(prof, machineName, machineRecords.personal, liveRecordEntries);
-    const premiere = isPremiere(prof, machineName, machineRecords.personal, liveRecordEntries, matchId); // 🎰
+    const premiere = isPremiere(prof, machineName, machineRecords.personal, liveRecordEntries, matchId, machineRecords.played); // 🎰
     return r.before != null || r.today != null || premiere ? { ...r, premiere } : null;
   };
 
@@ -1033,6 +1042,24 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   // Reiter "Tabelle" (Rotation & Co.): innen 📋 Tabelle ⇄ 📈 Verlauf – Umschalter sitzt oben in der Kopfzeile
   const showTableSub = !isMatchFormat && hasRace && activeTab === "table";
   const [tableSub, setTableSub] = useState<"table" | "race">("table");
+  // 📣 Round the Pinball: Live-Ticker rechts neben oder unter der Tabelle (Auto: bis 5 Flipper rechts)
+  const [tickerPos, setTickerPos] = useState<"auto" | "right" | "below">("auto");
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem("pb_tvTickerPos");
+      if (v === "auto" || v === "right" || v === "below") setTickerPos(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const chooseTickerPos = (v: "auto" | "right" | "below") => {
+    setTickerPos(v);
+    try {
+      window.localStorage.setItem("pb_tvTickerPos", v);
+    } catch {
+      /* ignore */
+    }
+  };
   const [tableSubAuto, setTableSubAuto] = useState(true);
   useEffect(() => {
     if (activeTab === "table") setTableSub("table"); // jede Runde mit der Tabelle beginnen
@@ -1199,9 +1226,37 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 <>Lade …</>
               )}
               {isRotation ? (
-                <div className="mt-2 flex items-center justify-end gap-2 text-white/60">
-                  <span className="inline-block h-3.5 w-3.5 rounded bg-emerald-400/25 ring-1 ring-emerald-300/60" />
-                  vorläufig – Flipper läuft noch
+                <div className="mt-2 flex items-center justify-end gap-3 text-white/60">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="inline-block h-3.5 w-3.5 rounded bg-emerald-400/25 ring-1 ring-emerald-300/60" />
+                    vorläufig – Flipper läuft noch
+                  </span>
+                  {/* 📣 wo steht der Live-Ticker? */}
+                  <span className="inline-flex items-center gap-1.5 text-sm">
+                    📣
+                    <span className="inline-flex overflow-hidden rounded-full bg-white/5 ring-1 ring-white/15">
+                      {(
+                        [
+                          ["auto", "Auto"],
+                          ["right", "Rechts"],
+                          ["below", "Unten"],
+                        ] as const
+                      ).map(([v, label]) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => chooseTickerPos(v)}
+                          title={v === "auto" ? "bis 5 Flipper rechts, ab 6 Flippern unten" : `Live-Ticker ${label.toLowerCase()}`}
+                          className={
+                            "px-2.5 py-0.5 font-semibold transition " +
+                            (tickerPos === v ? "bg-white/20 text-white" : "text-white/50 hover:bg-white/10")
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </span>
+                  </span>
                 </div>
               ) : null}
               {tabs.length > 1 || showTableSub ? (
@@ -1358,13 +1413,39 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 roundLabels={raceRoundLabels}
               />
             ) : isRotation ? (
-              <div className="space-y-3">
-                <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} recLookup={recLookup} />
-                {rtpRivalryOn ? (
-                  <RivalryBar variant="tv" insights={rivalry} nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"} />
-                ) : null}
-                <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={340} refreshMs={8000} soundOn={soundOn} />
-              </div>
+              (() => {
+                // 📣 Ticker rechts (spart Höhe → alles wird größer) oder unten (bei vielen Flippern)
+                const side = tickerPos === "right" || (tickerPos === "auto" && view.columns.length <= 5);
+                const table = (
+                  <>
+                    <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} recLookup={recLookup} finished={isFinished} />
+                    {rtpRivalryOn ? (
+                      <RivalryBar variant="tv" insights={rivalry} nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"} />
+                    ) : null}
+                  </>
+                );
+                return side ? (
+                  <div className="flex items-start gap-4">
+                    <div className="min-w-0 flex-1 space-y-3">{table}</div>
+                    <div className="w-[440px] shrink-0">
+                      <LiveTicker
+                        code={code}
+                        variant="tv"
+                        maxItems={30}
+                        // etwa so hoch wie die Tabelle daneben
+                        scrollMaxPx={Math.max(320, 170 + rowsTp.length * 76)}
+                        refreshMs={8000}
+                        soundOn={soundOn}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {table}
+                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={340} refreshMs={8000} soundOn={soundOn} />
+                  </div>
+                );
+              })()
             ) : (
               <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
             )
@@ -1492,11 +1573,14 @@ function RotationTable({
   columns,
   eloOn,
   recLookup,
+  finished = false,
 }: {
   rows: Row[];
   columns: Column[];
   eloOn: boolean;
   recLookup: RecLookup;
+  /** Turnier beendet → nur "Pkt" (endgültig), sonst nur "vorl." (inkl. laufender Flipper) */
+  finished?: boolean;
 }) {
   // gemeinsamer Takt für alle Spalten (alle wechseln gleichzeitig)
   const [recPhase, setRecPhase] = useState(0);
@@ -1542,11 +1626,14 @@ function RotationTable({
                 </div>
               </th>
             ))}
-            <th className="border-l border-white/10 px-4 pb-3 pt-4 text-right text-sm font-semibold uppercase tracking-widest text-white/40">
-              Pkt
-            </th>
-            <th className="bg-white/[0.04] px-5 pb-3 pt-4 text-right text-sm font-semibold uppercase tracking-widest text-emerald-300/80">
-              vorl.
+            {/* nur EINE Punktespalte: vor dem Ende "vorl." (vorläufig), danach "Pkt" (endgültig) */}
+            <th
+              className={
+                "w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-4 pb-3 pt-4 text-right text-sm font-semibold uppercase tracking-widest " + // w-px = nur so breit wie nötig
+                (finished ? "text-white/60" : "text-emerald-300/80")
+              }
+            >
+              {finished ? "Pkt" : "vorl."}
             </th>
           </tr>
         </thead>
@@ -1633,15 +1720,12 @@ function RotationTable({
                     </td>
                   );
                 })}
-                <td className="border-l border-white/10 px-4 py-2 text-right text-[1.05em] tabular-nums text-white/45 group-hover:text-white/80">
-                  {r.real}
-                </td>
                 <td
-                  className={`bg-white/[0.04] px-5 py-2 text-right text-[1.6em] font-extrabold tabular-nums ${
-                    r.extra > 0 ? "text-emerald-300" : "text-white"
+                  className={`w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-4 py-2 text-right text-[1.6em] font-extrabold tabular-nums ${
+                    !finished && r.extra > 0 ? "text-emerald-300" : "text-white"
                   }`}
                 >
-                  {r.total}
+                  {finished ? r.real : r.total}
                 </td>
               </tr>
             );

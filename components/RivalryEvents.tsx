@@ -8,7 +8,15 @@
 // Beim ersten Laden schon fertige Matches lösen NICHTS aus.
 
 import { useEffect, useRef, useState } from "react";
-import { eventsForFinishedMatch, eventText, type PairState, type RivalryEvent } from "@/lib/rivalryInsights";
+import {
+  applyDuel,
+  emptyPairState,
+  eventsForFinishedMatch,
+  eventText,
+  pairKey,
+  type PairState,
+  type RivalryEvent,
+} from "@/lib/rivalryInsights";
 import { notifSetting } from "@/lib/notifications";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
@@ -16,7 +24,16 @@ import { playEventSound } from "@/lib/synthSounds";
 import { playSoundById } from "@/lib/playSound";
 export { playEventSound };
 
-type MpLike = { match_id: string | number; player_id: string | number; position: number | null | undefined };
+type MpLike = {
+  match_id: string | number;
+  player_id: string | number;
+  position: number | null | undefined;
+  score?: number | string | null;
+};
+
+/** Round the Pinball: Score erst nach so langer Stabilität werten (Tippfehler-Schutz) */
+const RTP_STABLE_MS = 10_000;
+const hasScore = (v: unknown) => v != null && v !== "" && Number.isFinite(Number(v));
 
 /** Arten mit Einblendung (Vollbild/Karte) – ob sie je Gerät erscheint, steht in 🔔 Meldungen & Sounds */
 const POPUP_KINDS = new Set<RivalryEvent["kind"]>([
@@ -46,10 +63,13 @@ export function useRivalryEvents({
   enabled,
   onlyFor,
   onNew,
+  rotation = false,
 }: {
   matchPlayers: readonly MpLike[] | null | undefined;
   pairs: Readonly<Record<string, PairState>>;
   enabled: boolean;
+  /** Round the Pinball: Duell je Flipper, sobald beide einen Score haben (Plätze gibt es erst am Ende) */
+  rotation?: boolean;
   /** Handy: nur Ereignisse, an denen dieser Spieler beteiligt ist */
   onlyFor?: string | null;
   /** 📣 Live-Ticker: neue Ereignisse melden */
@@ -60,9 +80,106 @@ export function useRivalryEvents({
   const [queue, setQueue] = useState<RivalryEvent[]>([]);
   const seenRef = useRef<Set<string> | null>(null);
   const firedRef = useRef<Set<string>>(new Set());
+  // Round the Pinball: entschiedene Duelle (Match|Paar → Scores) + lokal fortgeschriebene Paar-Stände
+  const rtpSeenRef = useRef<Map<string, string> | null>(null);
+  const rtpPendingRef = useRef<Map<string, { sig: string; since: number }>>(new Map());
+  const rtpPairsRef = useRef<Map<string, PairState>>(new Map());
+  const mpsRef = useRef(matchPlayers);
+  mpsRef.current = matchPlayers;
+  const pairsRef = useRef(pairs);
+  pairsRef.current = pairs;
 
+  // ── Round the Pinball ───────────────────────────────────────────────────────
   useEffect(() => {
-    if (!enabled || !matchPlayers) return;
+    if (!rotation || !enabled) return;
+    function check() {
+      const mps = mpsRef.current;
+      if (!mps) return;
+      const byMatch = new Map<string, { pid: string; s: number }[]>();
+      for (const mp of mps) {
+        if (!hasScore(mp.score)) continue;
+        const id = String(mp.match_id);
+        const list = byMatch.get(id) ?? [];
+        list.push({ pid: String(mp.player_id), s: Number(mp.score) });
+        byMatch.set(id, list);
+      }
+      // alle Paare mit zwei Scores (Gleichstand = kein Sieger)
+      const duels: { id: string; matchId: string; a: string; b: string; winner: string; sig: string }[] = [];
+      byMatch.forEach((list, matchId) => {
+        for (let i = 0; i < list.length; i++)
+          for (let j = i + 1; j < list.length; j++) {
+            const a = list[i];
+            const b = list[j];
+            if (a.s === b.s) continue;
+            duels.push({
+              id: `${matchId}|${pairKey(a.pid, b.pid)}`,
+              matchId,
+              a: a.pid,
+              b: b.pid,
+              winner: a.s > b.s ? a.pid : b.pid,
+              sig: `${a.pid}:${a.s}|${b.pid}:${b.s}`,
+            });
+          }
+      });
+      const stateOf = (a: string, b: string) => {
+        const k = pairKey(a, b);
+        return rtpPairsRef.current.get(k) ?? pairsRef.current[k] ?? emptyPairState(a, b);
+      };
+      // erster Durchlauf: Bestand nur mitzählen (Serienstand), nichts melden
+      if (!rtpSeenRef.current) {
+        rtpSeenRef.current = new Map();
+        for (const d of duels) {
+          rtpSeenRef.current.set(d.id, d.sig);
+          rtpPairsRef.current.set(pairKey(d.a, d.b), applyDuel(stateOf(d.a, d.b), d.winner));
+        }
+        return;
+      }
+      const seen = rtpSeenRef.current;
+      const pend = rtpPendingRef.current;
+      const now = Date.now();
+      const fresh: RivalryEvent[] = [];
+      const tickerEvs: RivalryEvent[] = [];
+      for (const d of duels) {
+        if (seen.has(d.id)) continue; // entschieden (spätere Korrekturen ändern die Meldung nicht mehr)
+        const p = pend.get(d.id);
+        if (!p || p.sig !== d.sig) {
+          pend.set(d.id, { sig: d.sig, since: now });
+          continue;
+        }
+        if (now - p.since < RTP_STABLE_MS) continue;
+        pend.delete(d.id);
+        seen.set(d.id, d.sig);
+        const k = pairKey(d.a, d.b);
+        const st = stateOf(d.a, d.b);
+        const all = eventsForFinishedMatch(
+          d.id,
+          [
+            { player_id: d.a, position: d.winner === d.a ? 1 : 2 },
+            { player_id: d.b, position: d.winner === d.b ? 1 : 2 },
+          ],
+          { [k]: st }
+        );
+        rtpPairsRef.current.set(k, applyDuel(st, d.winner));
+        if (all.length) tickerEvs.push(...all);
+        let evs = all.filter((e) => POPUP_KINDS.has(e.kind) && !e.quiet);
+        if (onlyFor) evs = evs.filter((e) => (e.winner === onlyFor || e.loser === onlyFor) && PHONE_POPUP_KINDS.has(e.kind));
+        const top = evs[0];
+        if (top && !firedRef.current.has(top.id)) {
+          firedRef.current.add(top.id);
+          fresh.push(top);
+        }
+      }
+      if (fresh.length) setQueue((q) => [...q, ...fresh]);
+      if (tickerEvs.length) onNewRef.current?.(tickerEvs);
+    }
+    check();
+    const t = window.setInterval(check, 2000);
+    return () => window.clearInterval(t);
+  }, [rotation, enabled, onlyFor]);
+
+  // ── Matchplay & Co.: nach Plätzen ───────────────────────────────────────────
+  useEffect(() => {
+    if (rotation || !enabled || !matchPlayers) return;
     const byMatch = new Map<string, { player_id: string; position: number | null }[]>();
     for (const mp of matchPlayers) {
       const id = String(mp.match_id);
@@ -100,7 +217,7 @@ export function useRivalryEvents({
     }
     if (fresh.length) setQueue((q) => [...q, ...fresh]);
     if (tickerEvs.length) onNewRef.current?.(tickerEvs);
-  }, [matchPlayers, pairs, enabled, onlyFor]);
+  }, [matchPlayers, pairs, enabled, onlyFor, rotation]);
 
   const dismiss = (id: string) => setQueue((q) => q.filter((e) => e.id !== id));
   return { events: queue, dismiss };

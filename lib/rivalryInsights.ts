@@ -161,6 +161,25 @@ export type PairState = {
   yNemRate: number | null;
 };
 
+/** leerer Paar-Stand (noch nie gegeneinander gespielt) */
+export function emptyPairState(a: string, b: string): PairState {
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return { x, y, xWins: 0, yWins: 0, duels: 0, xStreak: 0, yStreak: 0, yIsXsNemesis: false, xIsYsNemesis: false, xNemRate: null, yNemRate: null };
+}
+
+/** Paar-Stand nach einem entschiedenen Duell (Sieger = Spieler-ID) */
+export function applyDuel(st: PairState, winner: string): PairState {
+  const xWon = winner === st.x;
+  return {
+    ...st,
+    duels: st.duels + 1,
+    xWins: st.xWins + (xWon ? 1 : 0),
+    yWins: st.yWins + (xWon ? 0 : 1),
+    xStreak: xWon ? st.xStreak + 1 : 0,
+    yStreak: xWon ? 0 : st.yStreak + 1,
+  };
+}
+
 export function buildPairStates(
   players: readonly { playerId: string; profileId: string }[],
   statsByProfile: ReadonlyMap<string, readonly RivalStat[]>

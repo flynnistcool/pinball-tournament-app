@@ -138,6 +138,13 @@ export function RivalryBar({
 }
 
 /** Round the Pinball: alle Runden entstehen auf einmal → stattdessen alle 5 Minuten neu laden */
-export function rtpRefreshKey(): string {
-  return "rtp-" + Math.floor(Date.now() / (5 * 60 * 1000));
+export function rtpRefreshKey(data?: {
+  players?: unknown[] | null;
+  match_players?: { score?: number | string | null }[] | null;
+} | null): string {
+  // alle 5 Minuten – und zusätzlich nach jedem fertigen Durchgang (≈ eingetragene Scores / Spieler)
+  const players = data?.players?.length ?? 0;
+  const scored = (data?.match_players ?? []).filter((mp) => mp.score != null && mp.score !== "").length;
+  const waves = players ? Math.floor(scored / players) : 0;
+  return "rtp-" + Math.floor(Date.now() / (5 * 60 * 1000)) + "-" + waves;
 }

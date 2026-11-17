@@ -10,15 +10,25 @@ import { useEffect, useState } from "react";
 import type { LiveEntry, PriorRecords } from "@/lib/recordWatch";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
-type Loaded = { enabled: boolean; prior: Pick<PriorRecords, "records" | "monthly" | "excludedProfiles">; personal: PriorRecords["personal"] };
+type Loaded = {
+  enabled: boolean;
+  prior: Pick<PriorRecords, "records" | "monthly" | "excludedProfiles">;
+  personal: PriorRecords["personal"];
+  /** 🎰 an dieser Location schon gespielt (Profil|Flipper) */
+  played: ReadonlySet<string>;
+  /** für diese Profile wurde gerechnet (fehlt eins → neu laden) */
+  profiles: ReadonlySet<string>;
+};
+/** schon erzwungene Nachlade-Versuche (Code|fehlende Profile) – damit es keine Endlosschleife gibt */
+const forcedFor = new Set<string>();
 
 const REFRESH_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; value: Loaded | null; promise: Promise<Loaded | null> | null }>();
 
-function loadRecords(code: string): Promise<Loaded | null> {
+function loadRecords(code: string, force = false): Promise<Loaded | null> {
   const hit = cache.get(code);
   if (hit?.promise) return hit.promise;
-  if (hit && hit.value && Date.now() - hit.at < REFRESH_MS) return Promise.resolve(hit.value);
+  if (!force && hit && hit.value && Date.now() - hit.at < REFRESH_MS) return Promise.resolve(hit.value);
 
   const promise = fetch(`/api/public/machine-records?code=${encodeURIComponent(code)}&ts=${Date.now()}`, {
     cache: "no-store",
@@ -30,6 +40,8 @@ function loadRecords(code: string): Promise<Loaded | null> {
         enabled: !!j.enabled,
         prior: { records: j.records ?? {}, monthly: j.monthly ?? {}, excludedProfiles: j.excludedProfiles ?? [] },
         personal: j.personal ?? {},
+        played: new Set<string>(Array.isArray(j.played) ? j.played.map(String) : []),
+        profiles: new Set<string>(Array.isArray(j.profiles) ? j.profiles.map(String) : []),
       };
     })
     .catch(() => hit?.value ?? null)
@@ -41,8 +53,27 @@ function loadRecords(code: string): Promise<Loaded | null> {
   return promise;
 }
 
-export function useMachineRecords(code: string, active = true): Loaded | null {
+export function useMachineRecords(
+  code: string,
+  active = true,
+  /** Profile, die gebraucht werden – fehlt eins in den geladenen Daten (Spieler später hinzugefügt), sofort neu laden */
+  needProfiles?: readonly (string | null | undefined)[]
+): Loaded | null {
   const [loaded, setLoaded] = useState<Loaded | null>(() => cache.get(code)?.value ?? null);
+  const needKey = Array.from(new Set((needProfiles ?? []).filter(Boolean).map(String)))
+    .sort()
+    .join(",");
+  useEffect(() => {
+    if (!active || !loaded || !loaded.enabled || !needKey) return;
+    const missing = needKey.split(",").filter((id) => !loaded.profiles.has(id));
+    if (!missing.length) return;
+    const tryKey = `${code}|${missing.join(",")}`;
+    if (forcedFor.has(tryKey)) return; // schon versucht (z. B. Profil ohne Daten) → nicht endlos neu laden
+    forcedFor.add(tryKey);
+    void loadRecords(code, true).then((v) => {
+      if (v) setLoaded(v);
+    });
+  }, [needKey, loaded, active, code]);
   useEffect(() => {
     if (!active) return;
     let disposed = false;
@@ -147,13 +178,13 @@ function PersonalBestLineInner({
   liveEntries: readonly LiveEntry[];
   matchId?: string | null;
 }) {
-  const loaded = useMachineRecords(code);
+  const loaded = useMachineRecords(code, true, [profileId]);
   const premiereOn = useBadgeOn("badge:premiere"); // 🏷️ an/aus je Gerät
   if (!profileId || !machineName || !loaded?.enabled) return null;
 
   const { before, today } = personalForMachine(profileId, machineName, loaded.personal, liveEntries);
   const beaten = before != null && today != null && today > before;
-  const premiere = premiereOn && isPremiere(profileId, machineName, loaded.personal, liveEntries, matchId);
+  const premiere = premiereOn && isPremiere(profileId, machineName, loaded.personal, liveEntries, matchId, loaded.played);
   return (
     <div className="pb-personal flex flex-wrap items-center gap-x-1.5 text-[11px] tabular-nums text-neutral-500">
       {premiere ? (

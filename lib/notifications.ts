@@ -221,7 +221,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "premiere",
     icon: "🎰",
     title: "Flipper-Premiere",
-    when: "Erster Score eines Spielers auf einem Flipper, den er an dieser Location noch nie gespielt hat (wie beim 💪 persönlichen Highscore: beendete Turniere + dieses Turnier)",
+    when: "Erster Score eines Spielers auf einem Flipper, den er an dieser Location noch nie gespielt hat (alle Turniere dort, egal welches Format)",
     devices: {
       phone: PHONE_ME,
       ticker: TICKER,
@@ -446,7 +446,7 @@ export const BADGES: readonly NotificationDef[] = [
     id: "badge:premiere",
     icon: "🎰",
     title: "Premiere-Badge",
-    when: "Spieler hat diesen Flipper an der Location noch nie gespielt (beendete Turniere + dieses Turnier) – sichtbar, sobald die Runde erzeugt ist",
+    when: "Spieler hat diesen Flipper an der Location noch nie gespielt (alle Turniere dort, egal welches Format) – sichtbar, sobald die Runde erzeugt ist",
     devices: { tv: BADGE("Matchkarte beim Spieler"), admin: BADGE("beim Spieler im Match"), phone: BADGE("Mein Match") },
   },
   {

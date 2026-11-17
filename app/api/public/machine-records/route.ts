@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
-import { buildPriorRecords } from "@/lib/recordWatch";
+import { buildPriorRecords, machineKey, personalKey } from "@/lib/recordWatch";
 import { isExcludedProfile, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +20,66 @@ const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 function fail(error: string, status: number) {
   return NextResponse.json({ ok: false, error }, { status });
+}
+
+/**
+ * 🎰 Flipper-Premiere: welche Flipper (Name) haben diese Profile an DIESER Location schon gespielt?
+ * Alle anderen Turniere der Location – jedes Format, auch noch laufende. Ein Eintrag zählt, sobald es
+ * einen Score oder Platz gibt. Fehler → leere Liste (dann eben ohne Premiere-Schutz, Rekorde laufen weiter).
+ */
+async function loadPlayedAtLocation(
+  sb: ReturnType<typeof supabaseAdmin>,
+  profileIds: string[],
+  currentId: string,
+  locationId: string
+) {
+  if (!profileIds.length) return [] as string[];
+  const { data: locTours, error: ltErr } = await sb.from("tournaments").select("id").eq("location_id", locationId);
+  if (ltErr) return [];
+  const atLocation = new Set((locTours ?? []).map((x: { id: string }) => String(x.id)));
+  atLocation.delete(currentId); // laufendes Turnier: zählt über die Live-Scores (anderes Match)
+  if (!atLocation.size) return [];
+  const pl = await fetchAllIn<{ id: string; profile_id: string | null; tournament_id: string | null }>(profileIds, (chunk) =>
+    sb.from("players").select("id, profile_id, tournament_id").in("profile_id", chunk).order("id")
+  );
+  if (pl.error) return [];
+  const profOf = new Map(
+    pl.data
+      .filter((p) => p.profile_id && atLocation.has(String(p.tournament_id ?? "")))
+      .map((p) => [String(p.id), String(p.profile_id)])
+  );
+  if (!profOf.size) return [];
+  const mp = await fetchAllIn<{ match_id: string; player_id: string; score: unknown; position: unknown }>(
+    Array.from(profOf.keys()),
+    (chunk) =>
+      sb
+        .from("match_players")
+        .select("match_id, player_id, score, position")
+        .in("player_id", chunk)
+        .order("match_id")
+        .order("player_id")
+  );
+  if (mp.error) return [];
+  const rows = mp.data.filter((r) => r.score != null || r.position != null);
+  const ma = await fetchAllIn<{ id: string; machine_id: string | null }>(
+    Array.from(new Set(rows.map((r) => String(r.match_id)))),
+    (chunk) => sb.from("matches").select("id, machine_id").in("id", chunk).order("id")
+  );
+  if (ma.error) return [];
+  const machineOf = new Map(ma.data.map((m) => [String(m.id), m.machine_id ? String(m.machine_id) : ""]));
+  const mc = await fetchAllIn<{ id: string; name: string | null }>(
+    Array.from(new Set(ma.data.map((m) => String(m.machine_id ?? "")).filter(Boolean))),
+    (chunk) => sb.from("machines").select("id, name").in("id", chunk).order("id")
+  );
+  if (mc.error) return [];
+  const nameOf = new Map(mc.data.map((m) => [String(m.id), m.name]));
+  const keys = new Set<string>();
+  for (const r of rows) {
+    const prof = profOf.get(String(r.player_id));
+    const key = machineKey(nameOf.get(machineOf.get(String(r.match_id)) ?? "") ?? null);
+    if (prof && key) keys.add(personalKey(prof, key));
+  }
+  return Array.from(keys);
 }
 
 export async function GET(req: Request) {
@@ -49,6 +109,9 @@ export async function GET(req: Request) {
       new Set((curPlayers ?? []).map((p: { profile_id: string | null }) => p.profile_id).filter(Boolean).map(String))
     );
 
+    // 🎰 an dieser Location schon gespielt – egal welches Format (für die Flipper-Premiere)
+    const played = await loadPlayedAtLocation(sb, personalFor, String(t.id), String(t.location_id));
+
     const { data: others, error: oErr } = await sb
       .from("tournaments")
       .select("id, format, created_at")
@@ -64,7 +127,7 @@ export async function GET(req: Request) {
     const recentTournamentIds = counted
       .filter((o) => o.created_at && new Date(o.created_at).getTime() >= since)
       .map((o) => String(o.id));
-    if (!tIds.length) return NextResponse.json({ ...empty, enabled: true });
+    if (!tIds.length) return NextResponse.json({ ...empty, enabled: true, played, profiles: personalFor });
 
     const maRes = await fetchAllIn<{ id: string; name: string | null; tournament_id: string | null }>(tIds, (chunk) =>
       sb.from("machines").select("id, name, tournament_id").in("tournament_id", chunk).order("id")
@@ -118,7 +181,8 @@ export async function GET(req: Request) {
       tournamentDates: Object.fromEntries(counted.map((o) => [String(o.id), o.created_at ?? null])),
     });
     const excludedProfiles = personalFor.filter((id) => isExcludedProfile(ex, id));
-    return NextResponse.json({ ok: true, enabled: true, ...prior, excludedProfiles });
+    // profiles = für diese Spieler wurde gerechnet (später hinzugefügte → Seite lädt sofort neu)
+    return NextResponse.json({ ok: true, enabled: true, ...prior, excludedProfiles, played, profiles: personalFor });
   } catch (e: unknown) {
     console.error("machine-records crash:", e);
     return fail(String((e as Error)?.message ?? e), 500);

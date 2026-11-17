@@ -12376,7 +12376,7 @@ async function reloadAll() {
     !["timeplay", "dyp_round_robin"].includes(String(data?.tournament?.format ?? ""));
   const rivData = useRivalryData(
     code,
-    isRotationFormat ? rtpRefreshKey() : String(data?.rounds?.length ?? 0),
+    isRotationFormat ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0),
     rivEventsOn
   );
   const rtpRivalry = rivData.insights;
@@ -12390,13 +12390,21 @@ async function reloadAll() {
       .slice(0, 3);
     if (!top.length) return;
     const nameOf = (pid: string) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?";
-    postFeedItems(code, top.map((ins: any) => insightFeedItem(ins, nameOf)));
+    // bei Round the Pinball gibt es kein einzelnes "Match" → "Duell des Abends" statt "Vor dem Match"
+    postFeedItems(
+      code,
+      top.map((ins: any) => {
+        const it = insightFeedItem(ins, nameOf);
+        return { ...it, title: String(it.title).replace(/^Vor dem Match:/, "Duell des Abends:") };
+      })
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtpRivalry, rtpRivalryOn, isAdmin, code]);
   const rivEvents = useRivalryEvents({
     matchPlayers: data?.match_players,
     pairs: rivData.pairs,
     enabled: rivEventsOn,
+    rotation: isRotationFormat, // Round the Pinball: Duell je Flipper, sobald beide einen Score haben
     // 📣 Live-Ticker: nur das Admin-Tablet trägt ein
     onNew: isAdmin
       ? (evs) =>
