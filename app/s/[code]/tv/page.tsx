@@ -2141,14 +2141,27 @@ function RoundProgressCard({ mv }: { mv: MatchViewData }) {
               <div className="mb-1 flex items-baseline justify-between text-lg">
                 <span className="font-bold">{b.label}</span>
                 <span className="tabular-nums text-white/60">
-                  {b.done}/{b.total} · {b.pct}%
+                  {b.done}/{b.total} · {b.runningNo != null ? `Runde ${b.runningNo} läuft` : `${b.pct}%`}
                 </span>
               </div>
-              <div className="h-3 overflow-hidden rounded-full bg-white/10">
+              <div className="flex h-3 overflow-hidden rounded-full bg-white/10">
                 <div
                   className="h-full rounded-full"
                   style={{ width: `${Math.min(100, b.pct)}%`, backgroundColor: b.color, boxShadow: `0 0 12px ${b.color}` }}
                 />
+                {/* ⏳ laufende Runde: heller, gestreifter Teil */}
+                {b.running > 0 && b.total > 0 ? (
+                  <div
+                    className="h-full"
+                    style={{
+                      width: `${Math.min(100 - Math.min(100, b.pct), (b.running / b.total) * 100)}%`,
+                      backgroundColor: b.color,
+                      opacity: 0.4,
+                      backgroundImage:
+                        "repeating-linear-gradient(45deg, rgba(255,255,255,0.45) 0 5px, transparent 5px 10px)",
+                    }}
+                  />
+                ) : null}
               </div>
             </div>
           ))}

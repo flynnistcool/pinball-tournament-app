@@ -89,6 +89,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
+import { usePersistentOpen } from "@/components/usePersistentOpen";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
@@ -4886,7 +4887,7 @@ function CurrentRoundSticky({
   const [loading, setLoading] = useState(false);
 
   // ✅ Nur dieser rechte Winrate-Block ist einklappbar
-  const [winrateOpen, setWinrateOpen] = useState(true);
+  const [winrateOpen, setWinrateOpen] = usePersistentOpen("pb_open_winrate"); // 📌 bleibt nach Neuladen
   const mwrHasLoadedOnce = useRef(false);
 
   const locationId = tournament?.location_id ? String(tournament.location_id) : "";
@@ -5748,8 +5749,8 @@ function MatchplayProgressStack({
 
   if (!isSupported) return null;
 
-  const [openProgress, setOpenProgress] = useState(true);
-  const [pairingsOpen, setPairingsOpen] = useState(true);
+  const [openProgress, setOpenProgress] = usePersistentOpen("pb_open_progress"); // 📌 bleibt nach Neuladen
+  const [pairingsOpen, setPairingsOpen] = usePersistentOpen("pb_open_pairings");
   // nur die neuesten 7 Hauptrunden zeigen, Rest per "mehr anzeigen" (wie am TV)
   const [showAllBars, setShowAllBars] = useState(false);
 
@@ -5836,8 +5837,16 @@ const getExpectedPlayersForEliminationRound = useCallback(
   [isEliminationFormat, rounds, matches, mpByMatchAll]
 );
 
-  const matchGroupCountsAll = useMemo(() => {
+  const { counts: matchGroupCountsAll, occ: pairingOccAll } = useMemo(() => {
     const counts = new Map<string, number>();
+    // 🎨 je Paarung: Rundennummer + läuft noch? (für die Farbpunkte nach Hauptrunde)
+    const occ = new Map<string, { no: number; running: boolean }[]>();
+    const roundById = new Map((rounds ?? []).map((r: any) => [String(r?.id ?? ""), r]));
+    let curOcc: { no: number; running: boolean } | null = null;
+    const bump = (key: string) => {
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      if (curOcc) occ.set(key, [...(occ.get(key) ?? []), curOcc]);
+    };
     const isDyp =
       formatRaw === "dyp_round_robin" ||
       formatRaw === "dyp round robin" ||
@@ -5849,6 +5858,11 @@ const getExpectedPlayersForEliminationRound = useCallback(
 
       const mps = mpByMatchAll.get(mid) ?? [];
       if ((mps?.length ?? 0) < 2) continue;
+      {
+        const rr: any = roundById.get(String((mm as any)?.round_id ?? ""));
+        const no = Number(rr?.number ?? 0);
+        curOcc = no > 0 ? { no, running: String(rr?.status ?? "").toLowerCase() !== "finished" } : null;
+      }
 
       // Ghost rausfiltern (falls vorhanden)
       const mpsNoGhost = (mps ?? []).filter((mp: any) => {
@@ -5878,12 +5892,12 @@ const getExpectedPlayersForEliminationRound = useCallback(
         let counted = false;
         if (t1.length >= 2) {
           const key = t1.join("+");
-          counts.set(key, (counts.get(key) ?? 0) + 1);
+          bump(key);
           counted = true;
         }
         if (t2.length >= 2) {
           const key = t2.join("+");
-          counts.set(key, (counts.get(key) ?? 0) + 1);
+          bump(key);
           counted = true;
         }
         if (counted) continue;
@@ -5898,10 +5912,10 @@ const getExpectedPlayersForEliminationRound = useCallback(
       if (ids.length < 2) continue;
 
       const key = ids.slice().sort().join("::");
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      bump(key);
     }
-    return counts;
-  }, [matches, mpByMatchAll, playersById, formatRaw]);
+    return { counts, occ };
+  }, [matches, mpByMatchAll, playersById, formatRaw, rounds]);
 
   const pairingRowsAll = useMemo(() => {
     const rows: { key: string; label: string; count: number }[] = [];
@@ -6007,6 +6021,14 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
       return no >= startNo && no <= endNo && String(r.status ?? "").toLowerCase() === "finished";
     }).length;
 
+    // ⏳ laufende (schon erzeugte, noch nicht fertige) Runden in diesem Block
+    const runningNos = roundsSorted
+      .filter((r) => {
+        const no = r.number as number;
+        return no >= startNo && no <= endNo && String(r.status ?? "").toLowerCase() !== "finished";
+      })
+      .map((r) => r.number as number);
+
     // auch anzeigen wenn es schon Runden in diesem Block gibt (fertig oder nicht)
     const hasAny = roundsSorted.some((r) => {
       const no = r.number as number;
@@ -6020,9 +6042,19 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
           total: roundsPerCycle,
           pct: Math.round((finished / roundsPerCycle) * 100),
           color: COLORS[i % COLORS.length],
+          running: runningNos.length,
+          runningNo: runningNos.length ? runningNos[0] : null,
         }
       : null;
-  }).filter(Boolean) as Array<{ label: string; done: number; total: number; pct: number; color: string }>;
+  }).filter(Boolean) as Array<{
+    label: string;
+    done: number;
+    total: number;
+    pct: number;
+    color: string;
+    running: number;
+    runningNo: number | null;
+  }>;
 
   const hasBars = bars.length > 0;
   const BARS_MAX = 7;
@@ -6118,14 +6150,36 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
         <div className={`px-2.5 py-3 ${compact ? "space-y-1.5" : "space-y-2"}`}>
         {shownBars.map((b, idx) => {
           const frac = b.total > 0 ? b.done / b.total : 0;
+          const runFrac = b.total > 0 ? Math.min(1 - frac, b.running / b.total) : 0;
           return (
             <div key={idx}>
               <div className={`flex items-center justify-between ${compact ? "text-[12px]" : "text-[13px]"} text-neutral-700`}>
                 <div className="font-medium">{b.label}</div>
-                <div className="tabular-nums">{b.done}/{b.total} • {b.pct}%</div>
+                <div className="tabular-nums">
+                  {b.done}/{b.total}{" "}
+                  {b.runningNo != null ? (
+                    <span className="text-neutral-500">· Runde {b.runningNo} läuft</span>
+                  ) : (
+                    <>• {b.pct}%</>
+                  )}
+                </div>
               </div>
-              <div className={`mt-1 ${compact ? "h-1.5" : "h-2"} w-full rounded-full bg-neutral-100 overflow-hidden`}>
+              <div className={`mt-1 ${compact ? "h-1.5" : "h-2"} flex w-full rounded-full bg-neutral-100 overflow-hidden`}>
                 <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, frac * 100))}%`, backgroundColor: b.color }} />
+                {/* ⏳ laufende Runde: heller, gestreifter Teil */}
+                {runFrac > 0 ? (
+                  <div
+                    className="h-full"
+                    style={{
+                      width: `${runFrac * 100}%`,
+                      backgroundColor: b.color,
+                      opacity: 0.35,
+                      backgroundImage:
+                        "repeating-linear-gradient(45deg, rgba(255,255,255,0.55) 0 4px, transparent 4px 8px)",
+                    }}
+                    title={`Runde ${b.runningNo} läuft`}
+                  />
+                ) : null}
               </div>
             </div>
           );
@@ -6179,12 +6233,50 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
   ) : (
     <div className="max-h-[260px] overflow-auto px-2.5 py-3">
       <div className="flex flex-col gap-2">
-        {(pairingRowsAll ?? []).map((row) => (
-          <div key={row.key} className="flex items-center justify-between gap-3">
-            <div className="min-w-0 truncate text-[11px] text-gray-800">{row.label}</div>
-            <div className="shrink-0 text-[11px] font-semibold text-gray-700">{row.count}×</div>
-          </div>
-        ))}
+        {(pairingRowsAll ?? []).map((row) => {
+          const occs = (pairingOccAll.get(row.key) ?? []).slice().sort((a, b) => a.no - b.no);
+          const per = Number(roundsPerCycle || 0);
+          const colorOf = (no: number) => (per > 0 ? COLORS[Math.floor((no - 1) / per) % COLORS.length] : "#a3a3a3");
+          const live = occs.find((o) => o.running);
+          return (
+            <div
+              key={row.key}
+              className="-mx-1.5 flex items-center justify-between gap-3 rounded-lg px-1.5 py-0.5"
+              style={live ? { backgroundColor: colorOf(live.no) + "22", boxShadow: `inset 3px 0 0 ${colorOf(live.no)}` } : undefined}
+              title={live ? `spielt gerade (Runde ${live.no})` : undefined}
+            >
+              <div className="min-w-0 truncate text-[11px] text-gray-800">
+                {row.label}
+                {live ? <span className="ml-1 text-[10px] font-semibold text-neutral-500">· spielt gerade</span> : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {/* 🎨 ein Punkt je Spiel: Farbe der Hauptrunde, laufendes Spiel hell/gestreift */}
+                <span className="flex items-center gap-0.5">
+                  {occs.map((o, i) => (
+                    <span
+                      key={i}
+                      className="inline-block h-2 w-2 rounded-full"
+                      title={`Runde ${o.no}${per > 0 ? ` · Hauptrunde ${Math.floor((o.no - 1) / per) + 1}` : ""}${o.running ? " · läuft" : ""}`}
+                      style={
+                        o.running
+                          ? {
+                              backgroundColor: colorOf(o.no),
+                              opacity: 0.45,
+                              backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.6) 0 2px, transparent 2px 4px)",
+                            }
+                          : { backgroundColor: colorOf(o.no) }
+                      }
+                    />
+                  ))}
+                </span>
+                {/* Zahl nur noch, wenn die Punkte nicht reichen (sehr viele Spiele / Runde unbekannt) */}
+                {occs.length !== row.count || occs.length > 8 ? (
+                  <span className="text-[11px] font-semibold text-gray-700">{row.count}×</span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   ))}
@@ -14691,8 +14783,6 @@ const tasksById = useMemo(() => {
   tasksById={tasksById}
   />
 )}
-    {/* 📣 Live-Ticker (einklappbar) */}
-    <LiveTicker code={code} variant="admin" maxItems={15} collapsible className="mt-2" />
     <RefreshCountdown
       lastAt={pollLastAt}
       intervalMs={POLL_MS}

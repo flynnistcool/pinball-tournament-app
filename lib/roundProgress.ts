@@ -64,7 +64,17 @@ export function calcRoundsPerCycle(
   return Math.max(1, Math.ceil(totalCombos / matchesPerRound));
 }
 
-export type MainRoundBar = { label: string; done: number; total: number; pct: number; color: string };
+export type MainRoundBar = {
+  label: string;
+  done: number;
+  total: number;
+  pct: number;
+  color: string;
+  /** ⏳ schon erzeugte, noch nicht fertige Runden in diesem Block */
+  running: number;
+  /** Nummer der (ersten) laufenden Runde, sonst null */
+  runningNo: number | null;
+};
 
 /** Fortschrittsbalken je Hauptrunde (nur Hauptrunden, in denen es schon Runden gibt). */
 export function mainRoundBars(
@@ -86,12 +96,15 @@ export function mainRoundBars(
     const inBlock = sorted.filter((r) => r.no >= startNo && r.no <= endNo);
     if (inBlock.length === 0) continue;
     const done = inBlock.filter((r) => r.status === "finished").length;
+    const runningNos = inBlock.filter((r) => r.status !== "finished").map((r) => r.no);
     bars.push({
       label: `Hauptrunde ${i + 1}`,
       done,
       total: roundsPerCycle,
       pct: Math.round((done / roundsPerCycle) * 100),
       color: MAIN_ROUND_COLORS[i % MAIN_ROUND_COLORS.length],
+      running: runningNos.length,
+      runningNo: runningNos.length ? runningNos[0] : null,
     });
   }
   return bars;

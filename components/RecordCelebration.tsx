@@ -25,24 +25,34 @@ export { playDing };
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, type Celebration, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
-import { computeStreaks, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
+import { computeStreaks, lastFinishedMatchOf, streakRunIds, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
 
 const STABLE_MS = 10_000;
 const RECORDS_REFRESH_MS = 5 * 60_000;
 
 type WinShown = { kind: "wins"; n: number; playerName: string; key: string };
 type StreakShown = { kind: "streak"; n: number; mode: StreakMode; playerName: string; key: string };
-type Shown = Celebration | WinShown | StreakShown;
+/** 🧯 Turnier-Serie beendet: wer (breakerIds/Names) hat die Serie von victimName (n in Folge) gebrochen */
+type StreakEndShown = {
+  kind: "streakEnd";
+  n: number;
+  victimName: string;
+  breakerName: string;
+  breakerIds: string[];
+  key: string;
+};
+type Shown = Celebration | WinShown | StreakShown | StreakEndShown;
 
 const SHOW_MS: Record<Shown["kind"], number> = {
   record: 16_000,
   month: 10_000,
   wins: 10_000,
   streak: 5_000,
+  streakEnd: 6_000,
   personal: 10_000,
 };
-const KIND_ORDER: Record<Shown["kind"], number> = { record: 0, month: 1, wins: 2, streak: 3, personal: 4 };
-const sortValue = (x: Shown) => (x.kind === "wins" || x.kind === "streak" ? x.n : x.entry.score);
+const KIND_ORDER: Record<Shown["kind"], number> = { record: 0, month: 1, wins: 2, streak: 3, streakEnd: 4, personal: 5 };
+const sortValue = (x: Shown) => (x.kind === "wins" || x.kind === "streak" || x.kind === "streakEnd" ? x.n : x.entry.score);
 
 type LiveData = Parameters<typeof liveEntriesFrom>[0] &
   Parameters<typeof liveWinsFrom>[0] &
@@ -64,7 +74,10 @@ function feedItemOf(c: Shown): FeedItemInput {
     };
   }
   if (c.kind === "wins") return { ...base, players: [pidOfKey(c.key)], data: { player: c.playerName, n: c.n } };
-  // On fire: key = "playerId|n"
+  // 🧯 Handy-Karte nur für den, der die Serie beendet hat
+  if (c.kind === "streakEnd")
+    return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n } };
+  // On fire: key = "playerId|startMatch|n" (bzw. "playerId|n")
   return { ...base, players: [String(c.key).split("|")[0]], data: { player: c.playerName, n: c.n, mode: c.mode } };
 }
 
@@ -109,6 +122,14 @@ function feedItemText(c: Shown): FeedItemInput {
         icon: "🔥",
         title: "On fire!",
         body: `${c.playerName}: ${streakText(c.mode, c.n)} im Turnier`,
+      };
+    case "streakEnd":
+      return {
+        key: `streakEnd|${c.key}`,
+        kind: "streakEnd",
+        icon: "🧯",
+        title: "Serie beendet",
+        body: `${c.breakerName} beendet die Siegesserie von ${c.victimName} (${c.n} Siege in Folge)`,
       };
   }
 }
@@ -292,6 +313,25 @@ function StreakCard({ c, onClose }: { c: StreakShown; onClose?: () => void }) {
   );
 }
 
+function StreakEndCard({ c, onClose }: { c: StreakEndShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-sky-600 to-indigo-700 px-7 py-5 text-white shadow-2xl ring-4 ring-sky-300/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-sky-100">🧯 Serie beendet!</div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.breakerName}</div>
+        <div className="text-[1.8vw] font-extrabold">
+          stoppt {c.victimName} nach {c.n} Siegen in Folge
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
 
 function RecordCelebrationInner({
@@ -317,6 +357,7 @@ function RecordCelebrationInner({
 }) {
   const onEventsRef = useRef(onEvents);
   onEventsRef.current = onEvents;
+  const backfilledRef = useRef(false); // 📣 vorhandene Highscores einmal nachgetragen?
   const notifSettings = useNotificationSettings();
   const [prior, setPrior] = useState<PriorRecords | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -407,6 +448,8 @@ function RecordCelebrationInner({
       const wins = liveWinsFrom(d);
       const sMode = streakMode(d.tournament?.format);
       const streaks = computeStreaks(d, sMode);
+      const runIds = streakRunIds(d, sMode); // je Serie eigene Kennung (neue Serie = neue Meldung)
+      const streakKey = (pid: string, n: number) => (runIds[pid] ? `${pid}|${runIds[pid]}|${n}` : `${pid}|${n}`);
 
       // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
       if (!seenRef.current || !seenWinsRef.current || !seenStreakRef.current) {
@@ -421,6 +464,25 @@ function RecordCelebrationInner({
       const now = Date.now();
       const found: Shown[] = [];
       const finished = d.tournament?.status === "finished";
+
+      // 📣 Nachtragen: Highscores + Serien, die beim Öffnen/Neuladen schon bestanden, einmal in den Ticker
+      // (ohne Einblendung; doppelte Einträge verhindert die eindeutige Kennung im Ticker)
+      if (!backfilledRef.current && pr && enabledRef.current && !finished && onEventsRef.current) {
+        backfilledRef.current = true;
+        const items = entries
+          .map((e) => evaluateEntry(e, pr, entries))
+          .filter((c): c is Celebration => !!c)
+          .map(feedItemOf);
+        // 🔥 laufende Siegesserien (aktuelle Stufe) ebenfalls nachtragen
+        const nameOf = new Map((d.players ?? []).map((p) => [String(p.id), String(p.name ?? "?")]));
+        for (const [pid, n] of Object.entries(streaks)) {
+          if (n < streakMin(sMode)) continue;
+          const ck = streakKey(pid, n);
+          celebratedStreakRef.current.add(ck);
+          items.push(feedItemOf({ kind: "streak", n, mode: sMode, playerName: nameOf.get(pid) ?? "?", key: ck }));
+        }
+        if (items.length) onEventsRef.current(items);
+      }
 
       for (const e of entries) {
         if (seen.get(e.key) === e.score) {
@@ -491,8 +553,10 @@ function RecordCelebrationInner({
           pendingStreak.delete(pid);
           continue;
         }
-        if (n < old) {
-          // Serie gerissen oder Platz korrigiert → ohne Meldung übernehmen
+        // 🧯 Serie (ab Mindestwert) gerissen → wie Anstiege erst nach STABLE_MS melden (Korrekturen abwarten)
+        const endCandidate = sMode === "wins" && n === 0 && old >= streakMin(sMode);
+        if (n < old && !endCandidate) {
+          // Platz korrigiert / Serie unter dem Mindestwert gerissen → ohne Meldung übernehmen
           seenStreak.set(pid, n);
           pendingStreak.delete(pid);
           continue;
@@ -506,8 +570,27 @@ function RecordCelebrationInner({
         pendingStreak.delete(pid);
         seenStreak.set(pid, n);
         if (finished) continue;
+        if (endCandidate) {
+          const last = lastFinishedMatchOf(d, pid);
+          const breakers = (last?.winnerIds ?? []).filter((x) => x !== pid);
+          if (last && breakers.length) {
+            const ek = `${pid}|${last.matchId}`;
+            if (!celebratedStreakRef.current.has("end|" + ek)) {
+              celebratedStreakRef.current.add("end|" + ek);
+              found.push({
+                kind: "streakEnd",
+                n: old,
+                victimName: nameById.get(pid) ?? "?",
+                breakerName: breakers.map((b) => nameById.get(b) ?? "?").join(" & "),
+                breakerIds: breakers,
+                key: ek,
+              });
+            }
+          }
+          continue;
+        }
         // Meldung bei jeder neuen Stufe ab dem Mindestwert (Siege: 3, 4, 5 … · Round the Pinball: 2, 3, 4 …)
-        const ck = `${pid}|${n}`;
+        const ck = streakKey(pid, n);
         if (n >= streakMin(sMode) && !celebratedStreakRef.current.has(ck)) {
           celebratedStreakRef.current.add(ck);
           found.push({ kind: "streak", n, mode: sMode, playerName: nameById.get(pid) ?? "?", key: ck });
@@ -556,6 +639,8 @@ function RecordCelebrationInner({
         <WinMilestone c={current} onClose={close} />
       ) : current.kind === "streak" ? (
         <StreakCard c={current} onClose={close} />
+      ) : current.kind === "streakEnd" ? (
+        <StreakEndCard c={current} onClose={close} />
       ) : (
         <SmallPersonal c={current} onClose={close} />
       )}

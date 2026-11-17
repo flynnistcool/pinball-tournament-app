@@ -2,7 +2,7 @@
 
 // 📱 Persönliche Einblendungen am Handy aus dem 📣 Live-Ticker:
 // - 🏆 Allzeit- und 🥇 30-Tage-Highscore: für ALLE (beim Aufsteller persönlich formuliert)
-// - 💪 persönlicher Highscore, 🎉 Matchsieg-Meilenstein, 🔥 On fire: nur für den Betroffenen
+// - 💪 persönlicher Highscore, 🎉 Matchsieg-Meilenstein, 🔥 On fire, 🧯 Serie beendet: nur für den Betroffenen
 // Bleibt stehen, bis man draufdrückt. Ein-/ausschaltbar unter 🔔 Meldungen & Sounds (Spalte Handy).
 // Beim ersten Laden schon vorhandene Einträge lösen nichts aus.
 
@@ -13,7 +13,7 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 
 const FOR_ALL = new Set(["record", "month"]);
-const FOR_ME = new Set(["personal", "wins", "streak"]);
+const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -23,6 +23,7 @@ const TONE: Record<string, string> = {
   personal: "border-sky-200 bg-sky-50 text-sky-900",
   wins: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-900",
   streak: "border-orange-200 bg-orange-50 text-orange-900",
+  streakEnd: "border-sky-200 bg-sky-50 text-sky-900",
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
@@ -51,6 +52,11 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
             : d.n != null
             ? `${d.n} Siege in Folge im Turnier.`
             : x.body,
+      };
+    case "streakEnd":
+      return {
+        title: "Serie beendet! 🧯",
+        text: d.victim != null && d.n != null ? `Du hast die Siegesserie von ${d.victim} beendet (${d.n} Siege in Folge).` : x.body,
       };
     default:
       return { title: x.title, text: x.body };

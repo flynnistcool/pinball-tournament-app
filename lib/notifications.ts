@@ -110,6 +110,18 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     },
   },
   {
+    id: "streakEnd",
+    icon: "🧯",
+    title: "Turnier-Serie beendet",
+    when: "Eine Siegesserie im Turnier (ab 3 in Folge) reißt – gemeldet wird, wer sie beendet hat (Matchsieger; nicht bei Round the Pinball)",
+    devices: {
+      phone: { where: "Einblendung oben", seconds: null, sound: SILENT, note: "nur wer die Serie beendet hat · bleibt bis Antippen" },
+      ticker: TICKER,
+      tv: { where: "Karte", seconds: 6, sound: { kind: "rivalry", label: "Absteigende Töne", event: "streakBroken" } },
+      admin: { where: "Karte", seconds: 6, sound: SILENT, note: "Antippen schließt" },
+    },
+  },
+  {
     id: "streakBroken",
     icon: "💥",
     title: "Serie gerissen",
@@ -429,6 +441,7 @@ const SCOPE_OF: Record<string, NotifScope> = {
   personal: "allzeit",
   wins: "allzeit",
   streak: "turnier",
+  streakEnd: "turnier",
   rotationSplash: "turnier",
   roundStart: "turnier",
   superfinalStart: "turnier",

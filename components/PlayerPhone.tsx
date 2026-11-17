@@ -255,7 +255,6 @@ function MatchTab({
           <div className="mt-1 text-xs text-neutral-400">Die Seite springt von selbst um, sobald du dran bist.</div>
         </div>
         <MatchCard info={waiting.info} data={data} meId={me.playerId} title="Dein nächster Flipper" />
-        <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
         <PhoneMatchInsights code={code} data={data} info={waiting.info} meId={me.playerId} />
       </div>
     );
@@ -275,7 +274,6 @@ function MatchTab({
             <div className="mt-2 text-lg font-bold">Du bist ausgeschieden</div>
             <div className="mt-1 text-sm text-neutral-500">Gut gespielt! Unter „Turnier-Infos“ kannst du weiter mitfiebern.</div>
           </div>
-          <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
           {last ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
         </div>
       );
@@ -294,8 +292,6 @@ function MatchTab({
               : "Warte auf die nächste Runde – die Seite springt dann von selbst weiter."}
           </div>
         </div>
-        {/* 📣 schmaler Laufticker – auch beim Warten bzw. wenn alles gespielt ist */}
-        <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
         {/* "Alle Flipper gespielt" (Round the Pinball): letztes Match ausblenden */}
         {last && !(mode === "own") ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
       </div>
@@ -315,8 +311,6 @@ function MatchTab({
         mode={mode}
         reload={reload}
       />
-      {/* 📣 schmaler Laufticker unter der Match-Eintragung */}
-      <LiveTicker code={code} variant="strip" maxItems={8} refreshMs={15_000} />
       {alsoActive.length ? (
         <div className="rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-800">
           ℹ️ Danach bist du auch an <b>{alsoActive.map((x) => x.machine?.name ?? "?").join(", ")}</b> dran.

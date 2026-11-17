@@ -87,6 +87,48 @@ export function computeWinStreaks(data: StreakData): Record<string, number> {
   return streak;
 }
 
+/**
+ * Kennung der LAUFENDEN Serie je Spieler (Match, in dem sie begann) – nur Modus "wins".
+ * Damit eine spätere, neue Serie (z. B. wieder 3 Siege in Folge) als eigenes Ereignis zählt.
+ */
+export function streakRunIds(data: StreakData, mode: StreakMode): Record<string, string> {
+  if (mode !== "wins") return {};
+  const { sorted, byMatch } = prepare(data);
+  const start: Record<string, string> = {};
+  for (const m of sorted) {
+    const mps = byMatch.get(String(m.id)) ?? [];
+    if (!mps.length || !mps.every((x) => Number(x.position) > 0)) continue;
+    for (const mp of mps) {
+      const pid = String(mp.player_id);
+      if (Number(mp.position) !== 1) delete start[pid];
+      else if (!start[pid]) start[pid] = String(m.id);
+    }
+  }
+  return start;
+}
+
+/**
+ * Letztes FERTIGES Match eines Spielers + wer es gewonnen hat (Platz 1) – nur Modus "wins".
+ * Für "Serie beendet": Wer hat die Serie gebrochen? (DYP: beide Team-Sieger)
+ */
+export function lastFinishedMatchOf(
+  data: StreakData,
+  playerId: string
+): { matchId: string; winnerIds: string[] } | null {
+  const { sorted, byMatch } = prepare(data);
+  let last: { matchId: string; winnerIds: string[] } | null = null;
+  for (const m of sorted) {
+    const mps = byMatch.get(String(m.id)) ?? [];
+    if (!mps.length || !mps.every((x) => Number(x.position) > 0)) continue;
+    if (!mps.some((x) => String(x.player_id) === playerId)) continue;
+    last = {
+      matchId: String(m.id),
+      winnerIds: mps.filter((x) => Number(x.position) === 1).map((x) => String(x.player_id)),
+    };
+  }
+  return last;
+}
+
 /** Round the Pinball: an wie vielen Flippern aktuell vorne (live nach Scores, Reihenfolge egal) */
 export function computeLeadStreaks(data: StreakData): Record<string, number> {
   const { sorted, byMatch } = prepare(data);
