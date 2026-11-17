@@ -25,6 +25,10 @@ import NotificationPreview, { hasRealPreview } from "@/components/NotificationPr
 const DEVICES: NotifDevice[] = ["tv", "admin", "phone", "ticker"];
 /** Mitteilungen, die woanders eingestellt werden */
 const ELSEWHERE: Record<string, string> = { timer: "Einstellungen über ⚙️ im Rotation Timer" };
+/** Gerät ohne eigene Einstellung, aber an anderer Stelle geregelt → Hinweis statt "–" */
+const HANDLED_ELSEWHERE: Record<string, Partial<Record<NotifDevice, string>>> = {
+  rotationSplash: { ticker: "→ „Durchgang geschafft“ steht im Ticker über „Runde abgeschlossen“, der Start über „Runde generiert“" },
+};
 
 const STANDARD_SOUNDS = SOUND_CATALOG.filter((s) => s.group === "Standard");
 const OWN_SOUNDS = SOUND_CATALOG.filter((s) => s.group === "Eigene");
@@ -288,9 +292,10 @@ export default function NotificationsOverview() {
                 {DEVICES.map((d) => {
                   const p = n.devices[d];
                   if (!p) {
+                    const hint = HANDLED_ELSEWHERE[n.id]?.[d];
                     return (
-                      <td key={d} className="px-3 py-2.5 text-neutral-300">
-                        –
+                      <td key={d} className={"px-3 py-2.5 " + (hint ? "text-[11px] text-neutral-500" : "text-neutral-300")}>
+                        {hint ?? "–"}
                       </td>
                     );
                   }

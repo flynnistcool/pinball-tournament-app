@@ -126,7 +126,8 @@ export default function RoundSplash({
         key: `roundStart|${id}`,
         kind: "roundStart",
         icon: "🎲",
-        title: `Runde ${r.number} generiert`,
+        // Runde 1 = Turnierstart (wie bei Round the Pinball "Los geht's!")
+        title: Number(r.number) === 1 ? "Los geht's! Runde 1 generiert" : `Runde ${r.number} generiert`,
         body: `${matches.length} ${matches.length === 1 ? "Match" : "Matches"} an ${machines} ${machines === 1 ? "Flipper" : "Flippern"} – viel Spaß!`,
       });
     }

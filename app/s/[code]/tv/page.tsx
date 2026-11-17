@@ -828,6 +828,13 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     for (const c of view.columns) if (!out[c.roundNo]) out[c.roundNo] = c.machineName;
     return out;
   }, [isRotation, view.columns]);
+  // 🎰 Round the Pinball: im Verlauf das Flipper-Icon statt "R1, R2 …" (wie im Tabellenkopf)
+  const raceRoundIcons: Record<number, string> | undefined = useMemo(() => {
+    if (!isRotation) return undefined;
+    const out: Record<number, string> = {};
+    for (const c of view.columns) if (!out[c.roundNo]) out[c.roundNo] = c.machineIcon ?? initials(c.machineName);
+    return out;
+  }, [isRotation, view.columns]);
   // 🏆 Flipper-Rekorde (beendete Turniere der Location) + Scores dieses Turniers
   // beendetes Turnier: nichts laden, nichts zeigen
   const machineRecords = useMachineRecords(
@@ -1200,7 +1207,17 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             </div>
             <div className="whitespace-nowrap pb-2 text-right text-sm text-white/50">
               {/* Ton einmalig freischalten (Browser-Vorgabe) */}
-              <div className="mb-2 flex justify-end gap-2">
+              <div className="mb-2 flex items-center justify-end gap-2">
+                {/* Stand der Daten (läuft die Uhrzeit nicht weiter → TV hängt) – platzsparend in derselben Zeile */}
+                <span className="mr-1 text-xs tabular-nums text-white/40">
+                  {error ? (
+                    <span className="text-rose-300">{error}</span>
+                  ) : updatedAt ? (
+                    <>Stand {updatedAt.toLocaleTimeString("de-DE")}</>
+                  ) : (
+                    <>Lade …</>
+                  )}
+                </span>
                 {/* ☀️ Bildschirmschoner verhindern (Wake Lock + Mini-Video) */}
                 <KeepAwake />
                 {soundOn ? (
@@ -1218,13 +1235,6 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                   </button>
                 )}
               </div>
-              {error ? (
-                <span className="text-rose-300">{error}</span>
-              ) : updatedAt ? (
-                <>Stand {updatedAt.toLocaleTimeString("de-DE")}</>
-              ) : (
-                <>Lade …</>
-              )}
               {isRotation ? (
                 <div className="mt-2 flex items-center justify-end gap-3 text-white/60">
                   <span className="inline-flex items-center gap-2">
@@ -1411,18 +1421,30 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 width={1500}
                 height={Math.max(560, Math.min(760, 260 + racePlayers.length * 44))}
                 roundLabels={raceRoundLabels}
+                roundIcons={raceRoundIcons}
               />
             ) : isRotation ? (
               (() => {
                 // 📣 Ticker rechts (spart Höhe → alles wird größer) oder unten (bei vielen Flippern)
                 const side = tickerPos === "right" || (tickerPos === "auto" && view.columns.length <= 5);
                 const table = (
-                  <>
-                    <RotationTable rows={rowsTp} columns={view.columns} eloOn={view.eloOn} recLookup={recLookup} finished={isFinished} />
-                    {rtpRivalryOn ? (
-                      <RivalryBar variant="tv" insights={rivalry} nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"} />
-                    ) : null}
-                  </>
+                  <RotationTable
+                    rows={rowsTp}
+                    columns={view.columns}
+                    eloOn={view.eloOn}
+                    recLookup={recLookup}
+                    finished={isFinished}
+                    // ⚔️ Duelle des Abends in der freien Ecke über der Spielerspalte (spart eine Zeile)
+                    corner={
+                      rtpRivalryOn ? (
+                        <RivalryBar
+                          variant="tvStack"
+                          insights={rivalry}
+                          nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"}
+                        />
+                      ) : null
+                    }
+                  />
                 );
                 return side ? (
                   <div className="flex items-start gap-4">
@@ -1442,7 +1464,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 ) : (
                   <div className="space-y-3">
                     {table}
-                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={340} refreshMs={8000} soundOn={soundOn} />
+                    {/* quer (unten): ca. 4 Meldungen sichtbar, Rest scrollbar */}
+                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={285} refreshMs={8000} soundOn={soundOn} />
                   </div>
                 );
               })()
@@ -1574,11 +1597,14 @@ function RotationTable({
   eloOn,
   recLookup,
   finished = false,
+  corner,
 }: {
   rows: Row[];
   columns: Column[];
   eloOn: boolean;
   recLookup: RecLookup;
+  /** Inhalt für die freie Ecke über der Spielerspalte (z. B. ⚔️ Duelle des Abends) */
+  corner?: React.ReactNode;
   /** Turnier beendet → nur "Pkt" (endgültig), sonst nur "vorl." (inkl. laufender Flipper) */
   finished?: boolean;
 }) {
@@ -1598,10 +1624,19 @@ function RotationTable({
       <table className="w-full border-collapse text-[20px]">
         <thead>
           <tr className="align-bottom">
-            <th className="px-3 pb-3 pt-4" />
-            <th className="px-3 pb-3 pt-4 text-left text-sm font-semibold uppercase tracking-widest text-white/40">
-              Spieler
-            </th>
+            {corner ? (
+              <th colSpan={2} className="px-3 pb-3 pt-4 text-left align-top font-normal">
+                {/* freie Ecke: Duelle des Abends (feste Breite, Text bricht um) */}
+                <div className="w-[16em] whitespace-normal">{corner}</div>
+              </th>
+            ) : (
+              <>
+                <th className="px-3 pb-3 pt-4" />
+                <th className="px-3 pb-3 pt-4 text-left text-sm font-semibold uppercase tracking-widest text-white/40">
+                  Spieler
+                </th>
+              </>
+            )}
             {columns.map((c) => (
               <th key={c.matchId} className="px-2 pb-2 pt-3 text-center font-normal">
                 <div className="mx-auto flex w-[8.5em] flex-col items-center gap-0.5">
@@ -1629,7 +1664,7 @@ function RotationTable({
             {/* nur EINE Punktespalte: vor dem Ende "vorl." (vorläufig), danach "Pkt" (endgültig) */}
             <th
               className={
-                "w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-4 pb-3 pt-4 text-right text-sm font-semibold uppercase tracking-widest " + // w-px = nur so breit wie nötig
+                "w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-2 pb-3 pt-4 text-right text-xs font-semibold uppercase tracking-normal " + // w-px = nur so breit wie nötig
                 (finished ? "text-white/60" : "text-emerald-300/80")
               }
             >
@@ -1721,7 +1756,7 @@ function RotationTable({
                   );
                 })}
                 <td
-                  className={`w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-4 py-2 text-right text-[1.6em] font-extrabold tabular-nums ${
+                  className={`w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-2.5 py-2 text-right text-[1.4em] font-extrabold tabular-nums ${
                     !finished && r.extra > 0 ? "text-emerald-300" : "text-white"
                   }`}
                 >

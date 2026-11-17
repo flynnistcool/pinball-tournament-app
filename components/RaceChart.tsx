@@ -4,6 +4,7 @@
 // alle Spieler starten bei 0, jede Runde steigt die Linie um die Rundenpunkte.
 // Gestrichelte Abschnitte = Runde noch nicht fertig (vorläufig).
 
+import { useEffect, useRef, useState } from "react";
 import type { RaceData } from "@/lib/raceChart";
 import { solidColor } from "@/lib/playerColor";
 
@@ -52,9 +53,10 @@ function initials(name: string) {
 export default function RaceChart({
   data,
   players,
-  width,
+  width: minWidth,
   height,
   roundLabels,
+  roundIcons,
   title = "Verlauf",
 }: {
   data: RaceData;
@@ -63,8 +65,23 @@ export default function RaceChart({
   height: number;
   /** optionale Unterzeile je Rundennummer (z. B. Flippername bei Rotation) */
   roundLabels?: Record<number, string>;
+  /** 🎰 statt "R1, R2 …" das Flipper-Icon (Round the Pinball: jede Runde = ein Flipper) */
+  roundIcons?: Record<number, string>;
   title?: string;
 }) {
+  // 📏 so breit wie der Kasten (die TV-Seite kann durch die Kopfzeile breiter sein) – mindestens "width"
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [boxW, setBoxW] = useState(0);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const measure = () => setBoxW(el.offsetWidth); // Layout-Breite (unabhängig vom scale() der TV-Seite)
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+  const width = Math.max(minWidth, boxW);
   const R = data.rounds.length;
   const hasProvisional = data.rounds.some((r) => r.provisional);
 
@@ -91,12 +108,18 @@ export default function RaceChart({
   // 🤖 mit Bots: rechts so viel Platz wie nötig (Name + Abzeichen "Bot · Elo" + Punktzahl), nicht mehr
   const nameW = (name: string) => Math.min(name.length, 14) * 10; // geschätzt, 18 px fett
   const hasBots = players.some((p) => p.botElo !== undefined);
+  // ohne Bots: rechts nur so breit wie der längste Name + Punktzahl direkt dahinter (vorher fest 300 px)
+  const maxNameW = Math.max(40, ...players.map((p) => nameW(p.name)));
+  // Platz für die Punktzahl (rechtsbündig): je Ziffer ~14 px bei 22 px fett – nach der größten Zahl
+  const maxDigits = String(Math.max(0, ...ranked.map((r) => Math.round(r.final)))).length;
+  const SCORE_W = maxDigits * 14 + 2;
+  const SCORE_GAP = 12; // Abstand Name → Punktzahl
   const padR = hasBots
     ? Math.max(
         220,
         26 + Math.max(...players.map((p) => 36 + nameW(p.name) + (p.botElo !== undefined ? 8 + 116 : 0))) + 66
       )
-    : 300;
+    : 26 + 36 + maxNameW + SCORE_GAP + SCORE_W + 8;
   const padT = 28;
   const padB = roundLabels ? 78 : 56;
   const plotW = width - padL - padR;
@@ -131,7 +154,7 @@ export default function RaceChart({
   const drawOrder = [...ranked].reverse();
 
   return (
-    <div className="overflow-hidden rounded-3xl bg-white/[0.04] shadow-2xl ring-1 ring-white/10">
+    <div ref={boxRef} className="overflow-hidden rounded-3xl bg-white/[0.04] shadow-2xl ring-1 ring-white/10">
       <div className="flex items-end justify-between px-6 pb-1 pt-4">
         <div>
           <div className="text-sm font-semibold uppercase tracking-widest text-indigo-300/80">📈 {title}</div>
@@ -176,17 +199,32 @@ export default function RaceChart({
             return (
               <g key={i}>
                 <line x1={x(i)} x2={x(i)} y1={padT} y2={padT + plotH} stroke="white" strokeOpacity="0.05" />
-                <text
-                  x={x(i)}
-                  y={padT + plotH + 30}
-                  textAnchor="middle"
-                  fill="white"
-                  fillOpacity={rd?.provisional ? 0.4 : 0.6}
-                  fontSize="17"
-                  fontWeight="700"
-                >
-                  {i === 0 ? "Start" : `R${rd?.no}`}
-                </text>
+                {i > 0 && rd && roundIcons?.[rd.no] ? (
+                  // 🎰 Flipper-Icon (Emoji bzw. Kürzel) statt "R1"
+                  <text
+                    x={x(i)}
+                    y={padT + plotH + 33}
+                    textAnchor="middle"
+                    fill="white"
+                    fillOpacity={rd.provisional ? 0.5 : 0.85}
+                    fontSize={[...roundIcons[rd.no]].length <= 2 ? 24 : 16}
+                    fontWeight="800"
+                  >
+                    {roundIcons[rd.no]}
+                  </text>
+                ) : (
+                  <text
+                    x={x(i)}
+                    y={padT + plotH + 30}
+                    textAnchor="middle"
+                    fill="white"
+                    fillOpacity={rd?.provisional ? 0.4 : 0.6}
+                    fontSize="17"
+                    fontWeight="700"
+                  >
+                    {i === 0 ? "Start" : `R${rd?.no}`}
+                  </text>
+                )}
                 {sub ? (
                   <text x={x(i)} y={padT + plotH + 54} textAnchor="middle" fill="white" fillOpacity="0.35" fontSize="14">
                     {sub.length > 16 ? sub.slice(0, 15) + "…" : sub}
@@ -276,7 +314,14 @@ export default function RaceChart({
                     </text>
                   </g>
                 ) : null}
-                <text x={width - 14} y={at + 7} textAnchor="end" fill={c} fontSize="22" fontWeight="900">
+                <text
+                  x={hasBots ? width - 14 : lx + 36 + maxNameW + SCORE_GAP + SCORE_W}
+                  y={at + 7}
+                  textAnchor="end"
+                  fill={c}
+                  fontSize="22"
+                  fontWeight="900"
+                >
                   {final}
                 </text>
               </g>

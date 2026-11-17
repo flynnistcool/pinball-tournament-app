@@ -52,6 +52,22 @@ export default function RotationTurnSplash({
   const [splash, setSplash] = useState<Splash | null>(null);
   const [anim, setAnim] = useState(false);
 
+  // 📣 Turnierstart in den Ticker (nur Admin hat onFeed; doppelte Einträge verhindert die Kennung)
+  const postStart = (waves: number) => {
+    const machines = new Set((data?.matches ?? []).map((m) => String(m.machine_id ?? m.id))).size;
+    onFeedRef.current?.([
+      {
+        key: `rotStart|${waves}`,
+        kind: "roundStart",
+        icon: "🏁",
+        title: "Los geht's!",
+        body: `Round the Pinball: ${waves} ${waves === 1 ? "Durchgang" : "Durchgänge"}${
+          machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
+        } – viel Spaß!`,
+      },
+    ]);
+  };
+
   const cur = progress?.current ?? 0;
   const total = progress?.total ?? 0;
   const done = !!progress?.done;
@@ -70,7 +86,10 @@ export default function RotationTurnSplash({
 
     if (pendingStartRef.current || (prev && prev.total === 0)) {
       pendingStartRef.current = false;
-      if (!done) setSplash({ kind: "start", total });
+      if (!done) {
+        setSplash({ kind: "start", total });
+        postStart(total);
+      }
       return;
     }
     if (!prev) return;
@@ -106,6 +125,7 @@ export default function RotationTurnSplash({
     if (total > 0 && !done && cur <= 1) {
       prevRef.current = { current: cur, total, done };
       setSplash({ kind: "start", total });
+      postStart(total);
     } else {
       pendingStartRef.current = true;
     }

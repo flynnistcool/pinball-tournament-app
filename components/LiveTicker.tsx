@@ -18,6 +18,10 @@ let pending: { code: string; items: FeedItemInput[] } | null = null;
 let flushTimer: number | undefined;
 const refreshListeners = new Set<() => void>();
 const FEED_CHUNK = 20; // = Obergrenze je Anfrage in /api/feed/add
+// 📜 TV-Ticker läuft von selbst: so lange oben stehen / unten warten, so schnell scrollen (Pixel je ms)
+const AUTO_TOP_MS = 10_000;
+const AUTO_BOTTOM_MS = 2_000; // nach dem Sprung ans Ende kurz stehen, dann langsam hoch
+const AUTO_SPEED = 0.03; // = 30 Pixel pro Sekunde
 
 export function postFeedItems(code: string, items: FeedItemInput[]) {
   const fresh = items.filter((it) => it && !sent.has(`${code}|${it.key}`));
@@ -164,6 +168,49 @@ export default function LiveTicker({
   }, [code, refreshMs]);
 
   const shown = (items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled).slice(0, maxItems);
+
+  // 📜 TV: scrollbare Liste läuft von selbst – 10 s oben stehen, nach unten springen, kurz warten,
+  //    dann langsam wieder nach oben scrollen (älteste → neueste) und oben erneut 10 s stehen.
+  //    Neue Meldung → sofort nach oben, Ablauf beginnt von vorn.
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const newestId = shown[0]?.id ?? null;
+  const autoScroll = variant === "tv" && !!scrollMaxPx;
+  useEffect(() => {
+    const el = listRef.current;
+    if (!autoScroll || !el) return;
+    let cancelled = false;
+    let raf = 0;
+    let timer: number | undefined;
+    el.scrollTo({ top: 0, behavior: "smooth" });
+    const waitTop = () => {
+      timer = window.setTimeout(jumpDown, AUTO_TOP_MS);
+    };
+    const jumpDown = () => {
+      if (cancelled) return;
+      const max = el.scrollHeight - el.clientHeight;
+      if (max <= 4) return waitTop(); // passt alles hinein → nichts zu scrollen, später erneut prüfen
+      el.scrollTo({ top: max, behavior: "smooth" }); // zügig ans Ende
+      timer = window.setTimeout(scrollUp, AUTO_BOTTOM_MS);
+    };
+    const scrollUp = () => {
+      if (cancelled) return;
+      let last = performance.now();
+      const step = (now: number) => {
+        if (cancelled) return;
+        el.scrollTop = Math.max(0, el.scrollTop - (now - last) * AUTO_SPEED);
+        last = now;
+        if (el.scrollTop <= 1) waitTop();
+        else raf = requestAnimationFrame(step);
+      };
+      raf = requestAnimationFrame(step);
+    };
+    waitTop();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [newestId, autoScroll]);
   const tv = variant === "tv";
 
   // 📱 Laufband (Handy unter der Match-Eintragung): eine schmale Zeile, Meldungen laufen durch
@@ -233,6 +280,7 @@ export default function LiveTicker({
         <div className={tv ? "text-base text-white/40" : "text-xs text-neutral-400"}>Noch keine Meldungen – gleich geht's los.</div>
       ) : (
         <ul
+          ref={listRef}
           className={(tv ? "space-y-2" : "space-y-1.5") + (scrollMaxPx ? " overflow-y-auto pr-1" : "")}
           style={
             scrollMaxPx

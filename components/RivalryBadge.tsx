@@ -69,9 +69,12 @@ export default function RivalryBadge({
   variant = "light",
   className = "",
   always = false,
+  wrap = false,
 }: {
   /** innerhalb von "Duelle des Abends" (hat eigene Einstellung) */
   always?: boolean;
+  /** TV: Text darf umbrechen (z. B. in der schmalen Ecke über der Spielerspalte) */
+  wrap?: boolean;
   insight: RivalryInsight | null | undefined;
   nameOf: (playerId: string) => string;
   /** light = Admin/Handy, tv = dunkler Infobildschirm */
@@ -95,7 +98,7 @@ export default function RivalryBadge({
     >
       <span className="shrink-0">{icon}</span>
       {/* TV: eine Zeile; Admin/Handy: Text darf umbrechen (schmale Spalte) */}
-      <span className={variant === "tv" ? "truncate" : "min-w-0"}>{text}</span>
+      <span className={variant === "tv" && !wrap ? "truncate" : "min-w-0 text-left"}>{text}</span>
     </div>
   );
 }
@@ -110,7 +113,8 @@ export function RivalryBar({
 }: {
   insights: Record<string, RivalryInsight>;
   nameOf: (playerId: string) => string;
-  variant?: "light" | "tv";
+  /** tvStack = TV, untereinander ohne eigenen Kasten (Ecke über der Spielerspalte) */
+  variant?: "light" | "tv" | "tvStack";
   max?: number;
   className?: string;
 }) {
@@ -119,6 +123,24 @@ export function RivalryBar({
     .sort((a, b) => b.score - a.score)
     .slice(0, max);
   if (!on || !top.length) return null;
+  if (variant === "tvStack") {
+    return (
+      <div className={"flex flex-col items-start gap-1.5 " + className}>
+        <span className="text-xs font-bold uppercase tracking-wider text-white/50">⚔️ Duelle des Abends</span>
+        {top.map((ins) => (
+          <RivalryBadge
+            key={ins.a + "|" + ins.b}
+            insight={ins}
+            nameOf={nameOf}
+            variant="tv"
+            always
+            wrap
+            className="!flex w-full !items-start !rounded-xl !py-1 text-left !text-[13px] leading-snug"
+          />
+        ))}
+      </div>
+    );
+  }
   return (
     <div
       className={
