@@ -90,6 +90,7 @@ import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLin
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
+import FlawlessCelebration from "@/components/FlawlessCelebration";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
@@ -6057,7 +6058,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
   }>;
 
   const hasBars = bars.length > 0;
-  const BARS_MAX = 7;
+  const BARS_MAX = 1; // nur die aktuelle Hauptrunde, ältere per "mehr anzeigen"
   const hiddenBars = showAllBars ? 0 : Math.max(0, bars.length - BARS_MAX);
   const shownBars = hiddenBars ? bars.slice(-BARS_MAX) : bars;
 
@@ -6138,10 +6139,6 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
           <span>Fortschritt Runden</span>
           <span className="text-neutral-400 text-xs mt-0.5">{openProgress ? "▾" : "▸"}</span>
         </span>
-        <div className="h-px bg-white" />
-        <span className="text-[11px] font-normal">{n} Spieler</span> •{" "}
-        <span className="text-[11px] font-normal">{matchSize} pro Match</span> •{" "}
-        <span className="text-[11px] font-normal">{roundsPerCycle} Runden pro Hauptrunde</span>
       </div>
        
       </div>
@@ -6184,15 +6181,19 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
             </div>
           );
         })}
-        {bars.length > BARS_MAX ? (
-          <button
-            type="button"
-            onClick={() => setShowAllBars((v) => !v)}
-            className="mt-1 w-full rounded-lg border bg-neutral-50 px-2 py-1 text-[12px] font-medium text-neutral-600 hover:bg-neutral-100"
-          >
-            {showAllBars ? "▴ weniger anzeigen" : `▾ mehr anzeigen (${hiddenBars} ältere)`}
-          </button>
+        {/* ℹ️ Eckdaten erst beim Aufklappen ("mehr anzeigen") */}
+        {showAllBars ? (
+          <div className="pt-1 text-[11px] text-neutral-600">
+            {n} Spieler • {matchSize} pro Match • {roundsPerCycle} Runden pro Hauptrunde
+          </div>
         ) : null}
+        <button
+          type="button"
+          onClick={() => setShowAllBars((v) => !v)}
+          className="mt-1 w-full rounded-lg border bg-neutral-50 px-2 py-1 text-[12px] font-medium text-neutral-600 hover:bg-neutral-100"
+        >
+          {showAllBars ? "▴ weniger anzeigen" : hiddenBars > 0 ? `▾ mehr anzeigen (${hiddenBars} ältere)` : "▾ mehr anzeigen"}
+        </button>
       </div>
       )}
     </div>
@@ -13862,6 +13863,8 @@ const tasksById = useMemo(() => {
         device="admin"
         onEvents={isAdmin ? (items) => postFeedItems(code, items) : undefined}
       />
+      {/* 🥋 Flawless Victory am Turnierende (RtP: wenn alle Durchgänge fertig) */}
+      <FlawlessCelebration data={data} variant="admin" onFeed={isAdmin ? (items) => postFeedItems(code, items) : undefined} />
 
 
 

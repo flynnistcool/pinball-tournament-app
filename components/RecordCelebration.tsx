@@ -25,6 +25,7 @@ export { playDing };
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, type Celebration, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
+import { flawlessMode, isUnbeaten, playerRuns, runCount, unbeatenStep, type FlawlessMode, type PlayerRun } from "@/lib/flawless";
 import { computeStreaks, lastFinishedMatchOf, streakRunIds, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
 
 const STABLE_MS = 10_000;
@@ -41,7 +42,20 @@ type StreakEndShown = {
   breakerIds: string[];
   key: string;
 };
-type Shown = Celebration | WinShown | StreakShown | StreakEndShown;
+/** 🛡️ noch unbesiegt (n = Siege bzw. Flipper, matches = gespielte Matches) */
+type UnbeatenShown = { kind: "unbeaten"; n: number; matches: number; mode: FlawlessMode; playerName: string; playerId: string; key: string };
+/** 💔 Traum geplatzt: bisher Unbesiegter verliert zum ersten Mal */
+type UnbeatenEndShown = {
+  kind: "unbeatenEnd";
+  n: number;
+  mode: FlawlessMode;
+  victimName: string;
+  breakerName: string;
+  breakerIds: string[];
+  machine: string | null;
+  key: string;
+};
+type Shown = Celebration | WinShown | StreakShown | StreakEndShown | UnbeatenShown | UnbeatenEndShown;
 
 const SHOW_MS: Record<Shown["kind"], number> = {
   record: 16_000,
@@ -49,10 +63,21 @@ const SHOW_MS: Record<Shown["kind"], number> = {
   wins: 10_000,
   streak: 5_000,
   streakEnd: 6_000,
+  unbeaten: 7_000,
+  unbeatenEnd: 7_000,
   personal: 10_000,
 };
-const KIND_ORDER: Record<Shown["kind"], number> = { record: 0, month: 1, wins: 2, streak: 3, streakEnd: 4, personal: 5 };
-const sortValue = (x: Shown) => (x.kind === "wins" || x.kind === "streak" || x.kind === "streakEnd" ? x.n : x.entry.score);
+const KIND_ORDER: Record<Shown["kind"], number> = {
+  record: 0,
+  month: 1,
+  unbeatenEnd: 2,
+  unbeaten: 3,
+  wins: 4,
+  streak: 5,
+  streakEnd: 6,
+  personal: 7,
+};
+const sortValue = (x: Shown) => ("n" in x ? x.n : x.entry.score);
 
 type LiveData = Parameters<typeof liveEntriesFrom>[0] &
   Parameters<typeof liveWinsFrom>[0] &
@@ -74,6 +99,9 @@ function feedItemOf(c: Shown): FeedItemInput {
     };
   }
   if (c.kind === "wins") return { ...base, players: [pidOfKey(c.key)], data: { player: c.playerName, n: c.n } };
+  if (c.kind === "unbeaten") return { ...base, players: [c.playerId], data: { player: c.playerName, n: c.n, matches: c.matches, mode: c.mode } };
+  if (c.kind === "unbeatenEnd")
+    return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n, mode: c.mode, machine: c.machine } };
   // 🧯 Handy-Karte nur für den, der die Serie beendet hat
   if (c.kind === "streakEnd")
     return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n } };
@@ -122,6 +150,28 @@ function feedItemText(c: Shown): FeedItemInput {
         icon: "🔥",
         title: "On fire!",
         body: `${c.playerName}: ${streakText(c.mode, c.n)} im Turnier`,
+      };
+    case "unbeaten":
+      return {
+        key: `unbeaten|${c.key}`,
+        kind: "unbeaten",
+        icon: "🛡️",
+        title: "Noch unbesiegt",
+        body:
+          c.mode === "leads"
+            ? `${c.playerName} liegt an allen ${c.n} bisherigen Flippern vorn – schafft er die Flawless Victory?`
+            : `${c.playerName}: ${c.n} Siege ohne Niederlage (${c.matches} Matches) – schafft er die Flawless Victory oder wird er noch gestoppt?`,
+      };
+    case "unbeatenEnd":
+      return {
+        key: `unbeatenEnd|${c.key}`,
+        kind: "unbeatenEnd",
+        icon: "💔",
+        title: "Traum geplatzt",
+        body:
+          c.mode === "leads"
+            ? `${c.breakerName} überbietet ${c.victimName}${c.machine ? ` an ${c.machine}` : ""} – der Traum von der Flawless Victory ist vorbei`
+            : `${c.breakerName} stoppt ${c.victimName} nach ${c.n} Siegen – der Traum von der Flawless Victory ist geplatzt`,
       };
     case "streakEnd":
       return {
@@ -332,6 +382,48 @@ function StreakEndCard({ c, onClose }: { c: StreakEndShown; onClose?: () => void
   );
 }
 
+function UnbeatenCard({ c, onClose }: { c: UnbeatenShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-700 px-7 py-5 text-white shadow-2xl ring-4 ring-emerald-300/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-emerald-100">🛡️ Noch unbesiegt</div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[1.8vw] font-extrabold">
+          {c.mode === "leads" ? `an allen ${c.n} Flippern vorn` : `${c.n} Siege ohne Niederlage`}
+        </div>
+        <div className="mt-1 text-[1.2vw] font-semibold text-emerald-100">Schafft er die Flawless Victory?</div>
+      </div>
+    </div>
+  );
+}
+
+function UnbeatenEndCard({ c, onClose }: { c: UnbeatenEndShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-rose-600 to-fuchsia-800 px-7 py-5 text-white shadow-2xl ring-4 ring-rose-300/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-rose-100">💔 Traum geplatzt</div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.breakerName}</div>
+        <div className="text-[1.8vw] font-extrabold">
+          {c.mode === "leads"
+            ? `überbietet ${c.victimName}${c.machine ? ` an ${c.machine}` : ""}`
+            : `stoppt ${c.victimName} nach ${c.n} Siegen`}
+        </div>
+        <div className="mt-1 text-[1.2vw] font-semibold text-rose-100">Keine Flawless Victory</div>
+      </div>
+    </div>
+  );
+}
+
 const TICK_MS = 2000; // lokale Prüfung (kein Netzwerk): ist ein Score schon STABLE_MS stabil?
 
 function RecordCelebrationInner({
@@ -375,6 +467,12 @@ function RecordCelebrationInner({
   const pendingStreakRef = useRef<Map<string, { n: number; since: number }>>(new Map());
   // schon gemeldete Stufen (pro Spieler je Stufe nur einmal – auch wenn die Serie reißt und wiederkommt)
   const celebratedStreakRef = useRef<Set<string>>(new Set());
+  // 🛡️ Unbesiegt: bestätigte Bilanz je Spieler + noch nicht stabile Änderungen
+  const seenRunsRef = useRef<Map<string, PlayerRun> | null>(null);
+  const pendingRunsRef = useRef<Map<string, { sig: string; since: number }>>(new Map());
+  const celebratedUnbeatenRef = useRef<Set<string>>(new Set());
+  // "Serie beendet" nicht zusätzlich melden, wenn schon "Traum geplatzt" kam (pid|matchId)
+  const suppressStreakEndRef = useRef<Set<string>>(new Set());
   // aktueller Stand für die lokale 2-s-Prüfung
   const dataRef = useRef<LiveData | null>(null);
   const priorRef = useRef<PriorRecords | null>(null);
@@ -450,12 +548,15 @@ function RecordCelebrationInner({
       const streaks = computeStreaks(d, sMode);
       const runIds = streakRunIds(d, sMode); // je Serie eigene Kennung (neue Serie = neue Meldung)
       const streakKey = (pid: string, n: number) => (runIds[pid] ? `${pid}|${runIds[pid]}|${n}` : `${pid}|${n}`);
+      const fMode = flawlessMode(d.tournament?.format);
+      const runs = playerRuns(d as any, fMode);
 
       // erstes Laden: alles Vorhandene gilt als bekannt (nicht nachträglich feiern)
-      if (!seenRef.current || !seenWinsRef.current || !seenStreakRef.current) {
+      if (!seenRef.current || !seenWinsRef.current || !seenStreakRef.current || !seenRunsRef.current) {
         seenRef.current = new Map(entries.map((e) => [e.key, e.score]));
         seenWinsRef.current = new Map(wins.map((w) => [w.key, w.profileId]));
         seenStreakRef.current = new Map(Object.entries(streaks));
+        seenRunsRef.current = new Map(Object.entries(runs));
         return;
       }
       const seen = seenRef.current;
@@ -541,6 +642,95 @@ function RecordCelebrationInner({
         if (isWinMilestone(n)) found.push({ kind: "wins", n, playerName: w.playerName, key: w.key });
       }
 
+      // 🛡️ Unbesiegt / 💔 Traum geplatzt (nach STABLE_MS stabil, wie die anderen Meldungen)
+      if (fMode !== "none") {
+        const seenRuns = seenRunsRef.current;
+        const pendingRuns = pendingRunsRef.current;
+        const nm = new Map((d.players ?? []).map((p) => [String(p.id), String(p.name ?? "?")]));
+        const empty: PlayerRun = { played: 0, allWon: true, beaten: 0, led: [] };
+        const sigOf = (r: PlayerRun) => `${r.played}|${r.allWon ? 1 : 0}|${r.led.join(",")}`;
+        const step = unbeatenStep(fMode);
+        const allIds = new Set([...Array.from(seenRuns.keys()), ...Object.keys(runs)]);
+        for (const pid of Array.from(allIds)) {
+          const r = runs[pid] ?? empty;
+          const old = seenRuns.get(pid) ?? empty;
+          const sig = sigOf(r);
+          if (sig === sigOf(old)) {
+            pendingRuns.delete(pid);
+            continue;
+          }
+          const p = pendingRuns.get(pid);
+          if (!p || p.sig !== sig) {
+            pendingRuns.set(pid, { sig, since: now });
+            continue;
+          }
+          if (now - p.since < STABLE_MS) continue;
+          pendingRuns.delete(pid);
+          seenRuns.set(pid, r);
+          if (finished) continue;
+
+          if (isUnbeaten(old, fMode) && !r.allWon) {
+            // 💔 erste Niederlage nach einer makellosen Strecke
+            let breakers: string[] = [];
+            let where = "";
+            let machine: string | null = null;
+            if (fMode === "wins") {
+              const last = lastFinishedMatchOf(d, pid);
+              breakers = (last?.winnerIds ?? []).filter((x) => x !== pid);
+              where = last?.matchId ?? "";
+            } else {
+              // Round the Pinball: an welchem Flipper wurde er überboten – und von wem?
+              const lost = old.led.find((mid) => !r.led.includes(mid));
+              if (lost) {
+                where = lost;
+                breakers = Object.entries(runs)
+                  .filter(([x, rr]) => x !== pid && rr.led.includes(lost))
+                  .map(([x]) => x);
+                const mm = (d.matches ?? []).find((x) => String(x.id) === lost) as { machine_id?: string | null } | undefined;
+                const mach = ((d as { machines?: { id: string; name: string | null }[] }).machines ?? []).find(
+                  (x) => String(x.id) === String(mm?.machine_id ?? "")
+                );
+                machine = mach?.name ? String(mach.name) : null;
+              }
+            }
+            const ek = `${pid}|${where}`;
+            if (breakers.length && !celebratedUnbeatenRef.current.has("end|" + ek)) {
+              celebratedUnbeatenRef.current.add("end|" + ek);
+              suppressStreakEndRef.current.add(ek);
+              found.push({
+                kind: "unbeatenEnd",
+                n: runCount(old, fMode),
+                mode: fMode,
+                victimName: nm.get(pid) ?? "?",
+                breakerName: breakers.map((b) => nm.get(b) ?? "?").join(" & "),
+                breakerIds: breakers,
+                machine,
+                key: ek,
+              });
+            }
+            continue;
+          }
+
+          // 🛡️ neue Stufe erreicht (4, 8, 12 … bzw. 3, 6, 9 …) und noch alles gewonnen
+          const level = Math.floor(runCount(r, fMode) / step);
+          if (isUnbeaten(r, fMode) && level > Math.floor(runCount(old, fMode) / step)) {
+            const uk = `${pid}|${level * step}`;
+            if (!celebratedUnbeatenRef.current.has(uk)) {
+              celebratedUnbeatenRef.current.add(uk);
+              found.push({
+                kind: "unbeaten",
+                n: runCount(r, fMode),
+                matches: r.played,
+                mode: fMode,
+                playerName: nm.get(pid) ?? "?",
+                playerId: pid,
+                key: uk,
+              });
+            }
+          }
+        }
+      }
+
       // 🔥 Siegesserien: Serie erstmals auf 3 (bzw. 5) gestiegen und STABLE_MS stabil → Karte
       const seenStreak = seenStreakRef.current;
       const pendingStreak = pendingStreakRef.current;
@@ -575,7 +765,7 @@ function RecordCelebrationInner({
           const breakers = (last?.winnerIds ?? []).filter((x) => x !== pid);
           if (last && breakers.length) {
             const ek = `${pid}|${last.matchId}`;
-            if (!celebratedStreakRef.current.has("end|" + ek)) {
+            if (!celebratedStreakRef.current.has("end|" + ek) && !suppressStreakEndRef.current.has(ek)) {
               celebratedStreakRef.current.add("end|" + ek);
               found.push({
                 kind: "streakEnd",
@@ -591,7 +781,9 @@ function RecordCelebrationInner({
         }
         // Meldung bei jeder neuen Stufe ab dem Mindestwert (Siege: 3, 4, 5 … · Round the Pinball: 2, 3, 4 …)
         const ck = streakKey(pid, n);
-        if (n >= streakMin(sMode) && !celebratedStreakRef.current.has(ck)) {
+        // gleiche Stufe schon als "🛡️ Noch unbesiegt" gemeldet (alle Matches gewonnen) → kein zusätzliches "On fire"
+        const asUnbeaten = celebratedUnbeatenRef.current.has(`${pid}|${n}`);
+        if (n >= streakMin(sMode) && !asUnbeaten && !celebratedStreakRef.current.has(ck)) {
           celebratedStreakRef.current.add(ck);
           found.push({ kind: "streak", n, mode: sMode, playerName: nameById.get(pid) ?? "?", key: ck });
         }
@@ -641,6 +833,10 @@ function RecordCelebrationInner({
         <StreakCard c={current} onClose={close} />
       ) : current.kind === "streakEnd" ? (
         <StreakEndCard c={current} onClose={close} />
+      ) : current.kind === "unbeaten" ? (
+        <UnbeatenCard c={current} onClose={close} />
+      ) : current.kind === "unbeatenEnd" ? (
+        <UnbeatenEndCard c={current} onClose={close} />
       ) : (
         <SmallPersonal c={current} onClose={close} />
       )}

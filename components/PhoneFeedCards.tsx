@@ -2,7 +2,8 @@
 
 // 📱 Persönliche Einblendungen am Handy aus dem 📣 Live-Ticker:
 // - 🏆 Allzeit- und 🥇 30-Tage-Highscore: für ALLE (beim Aufsteller persönlich formuliert)
-// - 💪 persönlicher Highscore, 🎉 Matchsieg-Meilenstein, 🔥 On fire, 🧯 Serie beendet: nur für den Betroffenen
+// - 🥋 Flawless Victory: für ALLE (beim Gewinner persönlich formuliert)
+// - 💪 persönlicher Highscore, 🎉 Matchsieg-Meilenstein, 🔥 On fire, 🧯 Serie beendet, 🛡️ unbesiegt, 💔 Traum gestoppt: nur für den Betroffenen
 // Bleibt stehen, bis man draufdrückt. Ein-/ausschaltbar unter 🔔 Meldungen & Sounds (Spalte Handy).
 // Beim ersten Laden schon vorhandene Einträge lösen nichts aus.
 
@@ -12,8 +13,8 @@ import { notifSetting } from "@/lib/notifications";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 
-const FOR_ALL = new Set(["record", "month"]);
-const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd"]);
+const FOR_ALL = new Set(["record", "month", "flawless"]);
+const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -24,6 +25,9 @@ const TONE: Record<string, string> = {
   wins: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-900",
   streak: "border-orange-200 bg-orange-50 text-orange-900",
   streakEnd: "border-sky-200 bg-sky-50 text-sky-900",
+  unbeaten: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  unbeatenEnd: "border-rose-200 bg-rose-50 text-rose-900",
+  flawless: "border-amber-300 bg-gradient-to-r from-amber-50 to-yellow-100 text-amber-900",
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
@@ -53,6 +57,29 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
             ? `${d.n} Siege in Folge im Turnier.`
             : x.body,
       };
+    case "unbeaten":
+      return {
+        title: "Noch unbesiegt! 🛡️",
+        text:
+          d.mode === "leads"
+            ? `Du liegst an allen ${d.n} bisherigen Flippern vorn – zieh es durch!`
+            : `${d.n} Siege ohne Niederlage – schaffst du die Flawless Victory?`,
+      };
+    case "unbeatenEnd":
+      return {
+        title: "Du hast den Traum gestoppt! 💔",
+        text: d.victim != null ? `${d.victim} ist nicht mehr unbesiegt – dank dir.` : x.body,
+      };
+    case "flawless":
+      return me
+        ? {
+            title: "FLAWLESS VICTORY! 🥋",
+            text:
+              d.mode === "leads"
+                ? `Du warst an allen ${d.n} Flippern vorn – makelloses Turnier!`
+                : `${d.beaten ?? d.n} Siege, keine einzige Niederlage – makelloses Turnier!`,
+          }
+        : { title: x.title, text: x.body };
     case "streakEnd":
       return {
         title: "Serie beendet! 🧯",

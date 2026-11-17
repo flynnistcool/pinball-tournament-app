@@ -12,6 +12,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { matchPoints, computeProvisionalRotationPoints } from "@/lib/points";
 import { calcRoundsPerCycle, mainRoundBars, type MainRoundBar } from "@/lib/roundProgress";
+import FlawlessCelebration from "@/components/FlawlessCelebration";
 import { RoundPointsBars } from "@/components/charts";
 import { computeFinalRanking } from "@/lib/finals";
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert
@@ -1089,6 +1090,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       {isRotation ? <RotationTurnSplash progress={rotProgress} variant="tv" detectStart data={data as any} /> : null}
       {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}
       {!isRotation && data ? <RoundSplash data={data as any} variant="tv" soundOn={soundOn} /> : null}
+      {/* 🥋 Flawless Victory am Turnierende (RtP: wenn alle Durchgänge fertig) */}
+      {data ? <FlawlessCelebration data={data as any} variant="tv" soundOn={soundOn} /> : null}
       {/* Platzhalter in skalierter Größe (für Zentrierung + Scrollen nur im Notfall) */}
       <div
         style={{
@@ -1313,7 +1316,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
               rivalry={rivalryOn ? rivalry : null}
-              ticker={<LiveTicker code={code} variant="tv" maxItems={5} refreshMs={8000} soundOn={soundOn} />}
+              ticker={<LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={430} refreshMs={8000} soundOn={soundOn} />}
               recLookup={recLookup}
               pbLookup={pbLookup}
               mv={matchView}
@@ -1353,7 +1356,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 {rtpRivalryOn ? (
                   <RivalryBar variant="tv" insights={rivalry} nameOf={(pid) => rowsTp.find((r) => r.id === pid)?.name ?? "?"} />
                 ) : null}
-                <LiveTicker code={code} variant="tv" maxItems={4} refreshMs={8000} soundOn={soundOn} />
+                <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={340} refreshMs={8000} soundOn={soundOn} />
               </div>
             ) : (
               <LeaderboardOnly rows={rowsTp} eloOn={view.eloOn} />
@@ -1717,8 +1720,11 @@ function MatchTvView({
               <div className="text-4xl font-extrabold tracking-tight">
                 Runde {cur.number}
                 {mv.perCycle ? (
-                  <span className="ml-3 text-xl font-semibold text-white/40">
+                  <span className="ml-3 inline-flex items-center gap-3 align-middle text-xl font-semibold text-white/40">
                     · Hauptrunde {Math.ceil(cur.number / mv.perCycle)}
+                    <MainRoundMini
+                      bar={mv.bars.find((b) => b.label === `Hauptrunde ${Math.ceil(cur.number / mv.perCycle!)}`) ?? null}
+                    />
                   </span>
                 ) : null}
               </div>
@@ -1807,8 +1813,7 @@ function MatchTvView({
           })}
         </div>
 
-        <RoundProgressCard mv={mv} />
-        {ticker ? <div className="mt-4">{ticker}</div> : null}
+        {ticker ? <div>{ticker}</div> : null}
       </div>
     </div>
   );
@@ -2115,6 +2120,61 @@ function ArchiveView({ blocks, rowById }: { blocks: RoundBlock[]; rowById: Recor
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * 📊 Fortschritt der aktuellen Hauptrunde, klein hinter "Hauptrunde N":
+ * je Runde ein Teil (fertig = voll, laufend = gestreift, offen = leer) – bei sehr vielen Runden ein durchgehender Balken.
+ * Farbe wie im Admin (Hauptrunde 1 rot, 2 orange, 3 gelb, 4 grün …).
+ */
+function MainRoundMini({ bar }: { bar: MainRoundBar | null }) {
+  if (!bar || !bar.total) return null;
+  const striped = {
+    backgroundColor: bar.color,
+    opacity: 0.45,
+    backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.45) 0 5px, transparent 5px 10px)",
+  };
+  const label = (
+    <span className="tabular-nums text-white/50">
+      {bar.done}/{bar.total}
+    </span>
+  );
+  if (bar.total > 8) {
+    const doneW = (bar.done / bar.total) * 100;
+    const runW = Math.min(100 - doneW, (bar.running / bar.total) * 100);
+    return (
+      <span className="inline-flex items-center gap-2">
+        <span className="flex h-3 w-40 overflow-hidden rounded-full bg-white/10">
+          <span className="h-full" style={{ width: `${doneW}%`, backgroundColor: bar.color, boxShadow: `0 0 10px ${bar.color}` }} />
+          {runW > 0 ? <span className="h-full" style={{ width: `${runW}%`, ...striped }} /> : null}
+        </span>
+        {label}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="flex gap-1">
+        {Array.from({ length: bar.total }).map((_, i) => {
+          const state = i < bar.done ? "done" : i < bar.done + bar.running ? "run" : "open";
+          return (
+            <span
+              key={i}
+              className="h-3 w-8 rounded-full"
+              style={
+                state === "done"
+                  ? { backgroundColor: bar.color, boxShadow: `0 0 10px ${bar.color}` }
+                  : state === "run"
+                  ? striped
+                  : { backgroundColor: "rgba(255,255,255,0.1)" }
+              }
+            />
+          );
+        })}
+      </span>
+      {label}
+    </span>
   );
 }
 

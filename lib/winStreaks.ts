@@ -5,6 +5,7 @@
 //   Sieg = Platz 1 in einem FERTIGEN Match (alle Spieler des Matches haben einen Platz).
 //   Serie = Siege in Folge, vom zuletzt fertigen Match des Spielers rückwärts gezählt.
 //   Noch laufende Matches unterbrechen die Serie nicht. Bei DYP zählt der Teamsieg für beide.
+//   Gezählt werden geschlagene Gegner: 4er-Match gewonnen = 3 Siege (DYP: 1 Sieg je Match).
 //   🔥 ab 3.
 // - "leads" (Round the Pinball / rotation): Plätze gibt es dort erst am Ende, deshalb live nach
 //   SCORES: Anzahl Flipper, an denen der Spieler AKTUELL den besten (oder gleich besten) Score hat –
@@ -72,16 +73,27 @@ function toScore(v: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** Siege in Folge (Platz 1 in fertigen Matches) */
+/**
+ * Wie viele Siege bringt Platz 1 in diesem Match? = geschlagene Gegner
+ * (1 gegen 1 → 1, 3er-Match → 2, 4er-Match → 3; DYP 2 gegen 2 → 1, das Team zählt als ein Gegner)
+ */
+export function matchWinValue(mps: { position?: number | null }[]): number {
+  const winners = mps.filter((x) => Number(x.position) === 1).length;
+  const losers = mps.filter((x) => Number(x.position) > 1).length;
+  return Math.max(1, Math.round(losers / Math.max(1, winners)));
+}
+
+/** Siege in Folge (Platz 1 in fertigen Matches; 4er-Match gewonnen = 3 Siege) */
 export function computeWinStreaks(data: StreakData): Record<string, number> {
   const { sorted, byMatch } = prepare(data);
   const streak: Record<string, number> = {};
   for (const m of sorted) {
     const mps = byMatch.get(String(m.id)) ?? [];
     if (!mps.length || !mps.every((x) => Number(x.position) > 0)) continue; // noch nicht fertig
+    const gain = matchWinValue(mps);
     for (const mp of mps) {
       const pid = String(mp.player_id);
-      streak[pid] = Number(mp.position) === 1 ? (streak[pid] ?? 0) + 1 : 0;
+      streak[pid] = Number(mp.position) === 1 ? (streak[pid] ?? 0) + gain : 0;
     }
   }
   return streak;

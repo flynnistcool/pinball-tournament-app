@@ -198,6 +198,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/ui";
 import { EloSparkline, WinrateSparkline } from "@/components/charts";
 import RivalsPanel from "@/components/RivalsPanel";
+import AchievementsPanel from "@/components/AchievementsPanel";
 import { SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 import BotToggle, { BotBadge, PlaceholderToggle, PlaceholderBadge } from "@/components/BotToggle";
@@ -6038,6 +6039,13 @@ return (
                             </div>
                           )}
                         </div>
+
+                        {/* 🏅 Auszeichnungen (nicht für Bots/Platzhalter) */}
+                        {!p.is_bot && !p.exclude_from_stats ? (
+                          <div className="mt-1">
+                            <AchievementsPanel profileId={String(p.id)} />
+                          </div>
+                        ) : null}
 
                         {/* ⚔️ Erzfeind & Lieblingsgegner (nicht für Bots/Platzhalter) */}
                         {!p.is_bot && !p.exclude_from_stats ? (

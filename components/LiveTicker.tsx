@@ -53,6 +53,7 @@ export default function LiveTicker({
   title = true,
   collapsible = false,
   soundOn,
+  scrollMaxPx,
 }: {
   code: string;
   /** strip = schmales Laufband (Handy unter der Match-Eintragung) */
@@ -66,6 +67,8 @@ export default function LiveTicker({
   collapsible?: boolean;
   /** 🔊 Ton bei neuen Einträgen erlaubt (TV: nach "Ton aktivieren"; Admin: ja; Handy: nein) */
   soundOn?: boolean;
+  /** 📜 Liste höchstens so hoch (px), darüber scrollbar (TV: feste Höhe, damit das Einpassen stabil bleibt) */
+  scrollMaxPx?: number;
 }) {
   const ns = useNotificationSettings();
   const nsRef = useRef(ns);
@@ -215,7 +218,14 @@ export default function LiveTicker({
       ) : !shown.length ? (
         <div className={tv ? "text-base text-white/40" : "text-xs text-neutral-400"}>Noch keine Meldungen – gleich geht's los.</div>
       ) : (
-        <ul className={tv ? "space-y-2" : "space-y-1.5"}>
+        <ul
+          className={(tv ? "space-y-2" : "space-y-1.5") + (scrollMaxPx ? " overflow-y-auto pr-1" : "")}
+          style={
+            scrollMaxPx
+              ? { maxHeight: scrollMaxPx, scrollbarWidth: "thin", scrollbarColor: tv ? "rgba(255,255,255,0.25) transparent" : undefined }
+              : undefined
+          }
+        >
           {shown.map((x) => {
             const isNew = fresh.has(x.id);
             return (
