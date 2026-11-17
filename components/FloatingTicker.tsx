@@ -182,7 +182,13 @@ function FloatingTickerWindow({ code }: { code: string }) {
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
 
   useEffect(() => {
-    setBox(load());
+    // gespeicherte Position in den sichtbaren Bereich holen (z. B. auf dem iPad gespeichert, als es anders gedreht war)
+    const b = load();
+    const w = Math.min(b.w, Math.max(240, window.innerWidth - 24));
+    const h = Math.min(b.h, Math.max(200, window.innerHeight - 24));
+    const x = Math.min(Math.max(0, b.x), Math.max(0, window.innerWidth - Math.min(w, 200)));
+    const y = Math.min(Math.max(0, b.y), Math.max(0, window.innerHeight - 60));
+    setBox({ ...b, x, y, w, h });
   }, []);
 
   const save = (b: Box) => {
@@ -250,6 +256,33 @@ function FloatingTickerWindow({ code }: { code: string }) {
     const y = Math.min(Math.max(0, e.clientY - d.dy), window.innerHeight - 48);
     update({ x, y }, false);
   }
+  // ↘ Größe ändern (eigene Ecke)
+  const resizeRef = useRef<{ sx: number; sy: number; w: number; h: number } | null>(null);
+  function onResizeDown(e: React.PointerEvent) {
+    if (!box) return;
+    e.stopPropagation();
+    resizeRef.current = { sx: e.clientX, sy: e.clientY, w: box.w, h: box.h };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function onResizeMove(e: React.PointerEvent) {
+    const r = resizeRef.current;
+    const b = boxRef.current;
+    if (!r || !b) return;
+    const w = Math.round(Math.min(Math.max(220, r.w + e.clientX - r.sx), window.innerWidth - b.x - 4));
+    const h = Math.round(Math.min(Math.max(160, r.h + e.clientY - r.sy), window.innerHeight - b.y - 4));
+    update({ w, h }, false);
+  }
+  function onResizeUp(e: React.PointerEvent) {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    if (boxRef.current) save(boxRef.current);
+  }
+
   function onPointerUp(e: React.PointerEvent) {
     if (!dragRef.current) return;
     dragRef.current = null;
@@ -290,7 +323,6 @@ function FloatingTickerWindow({ code }: { code: string }) {
         minHeight: box.open ? 160 : undefined,
         maxWidth: "90vw",
         maxHeight: "90vh",
-        resize: box.open ? "both" : "none",
       }}
     >
       {/* Kopfzeile = Griff zum Verschieben */}
@@ -325,6 +357,21 @@ function FloatingTickerWindow({ code }: { code: string }) {
       {box.open ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+        </div>
+      ) : null}
+      {/* ↘ Größe ändern – eigene Ecke (Maus UND Finger; die eingebaute Browser-Ecke geht auf dem iPad nicht) */}
+      {box.open ? (
+        <div
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          className="absolute bottom-0 right-0 flex h-7 w-7 cursor-se-resize touch-none select-none items-end justify-end p-1"
+          title="Zum Vergrößern/Verkleinern ziehen"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" className="text-neutral-400" aria-hidden="true">
+            <path d="M13 5 L5 13 M13 9 L9 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
         </div>
       ) : null}
     </div>
