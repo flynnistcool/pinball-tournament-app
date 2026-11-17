@@ -36,6 +36,8 @@ import {
   type MatchMoment,
 } from "@/lib/matchMoments";
 import { liveLeaderboard } from "@/lib/myMatch";
+import { premiereSlots, slotKey } from "@/lib/premiere";
+import { afterPendingDone } from "@/lib/feedOrder";
 import { flawlessMode, isUnbeaten, playerRuns, runCount, unbeatenStep, type FlawlessMode, type PlayerRun } from "@/lib/flawless";
 import { computeStreaks, lastFinishedMatchOf, streakRunIds, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
 
@@ -76,6 +78,8 @@ type LeaderShown = { kind: "leader"; playerName: string; playerId: string; point
 /** score = null: Match nur mit Plätzen gewertet (ohne Punkte) */
 type PremiereShown = { kind: "premiere"; playerName: string; playerId: string; machineName: string; score: number | null; key: string };
 /** 📈 Elo-Meilenstein: Live-Elo knackt eine Hunderter-Marke (again = im Turnier schon mal darüber) */
+/** 🌟 Premieren-Sieg: erstes Spiel an einem Flipper – und gleich gewonnen */
+type PremiereWinShown = { kind: "premiereWin"; playerName: string; playerId: string; machineName: string; score: number | null; key: string };
 type EloMarkShown = { kind: "eloMark"; playerName: string; playerId: string; mark: number; elo: number; again: boolean; key: string };
 type Shown =
   | Celebration
@@ -87,6 +91,7 @@ type Shown =
   | MomentShown
   | LeaderShown
   | PremiereShown
+  | PremiereWinShown
   | EloMarkShown;
 
 const SHOW_MS: Record<Shown["kind"], number> = {
@@ -103,6 +108,7 @@ const SHOW_MS: Record<Shown["kind"], number> = {
   blowout: 7_000,
   revenge: 6_000,
   premiere: 6_000,
+  premiereWin: 7_000,
   eloMark: 6_000,
   personal: 10_000,
 };
@@ -120,8 +126,9 @@ const KIND_ORDER: Record<Shown["kind"], number> = {
   wins: 10,
   streak: 11,
   streakEnd: 12,
-  premiere: 13,
-  personal: 14,
+  premiereWin: 13,
+  premiere: 14,
+  personal: 15,
 };
 const sortValue = (x: Shown) =>
   "n" in x ? x.n : "entry" in x ? x.entry.score : "points" in x ? x.points : "mark" in x ? x.mark : "score" in x ? x.score ?? 0 : 0;
@@ -150,7 +157,7 @@ function feedItemOf(c: Shown): FeedItemInput {
   if (c.kind === "unbeatenEnd")
     return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n, mode: c.mode, machine: c.machine } };
   if (c.kind === "leader") return { ...base, players: [c.playerId], data: { player: c.playerName, points: c.points } };
-  if (c.kind === "premiere")
+  if (c.kind === "premiere" || c.kind === "premiereWin")
     return { ...base, players: [c.playerId], data: { player: c.playerName, machine: c.machineName, score: c.score } };
   if (c.kind === "eloMark")
     return { ...base, players: [c.playerId], data: { player: c.playerName, mark: c.mark, elo: c.elo, again: c.again } };
@@ -235,7 +242,18 @@ function feedItemText(c: Shown): FeedItemInput {
         body:
           c.score != null
             ? `${c.playerName} spielt zum ersten Mal ${c.machineName} – Einstand mit ${fmt(c.score)} Punkten!`
-            : `${c.playerName} spielt zum ersten Mal ${c.machineName}!`,
+            : `${c.playerName} spielt gleich zum ersten Mal ${c.machineName}!`,
+      };
+    case "premiereWin":
+      return {
+        key: `premiereWin|${c.key}`,
+        kind: "premiereWin",
+        icon: "🌟",
+        title: "Premieren-Sieg",
+        body:
+          c.score != null
+            ? `${c.playerName} spielt zum ersten Mal ${c.machineName} und gewinnt sofort – mit ${fmt(c.score)} Punkten!`
+            : `${c.playerName} spielt zum ersten Mal ${c.machineName} und gewinnt sofort!`,
       };
     case "eloMark":
       return {
@@ -573,9 +591,29 @@ function PremiereCard({ c, onClose }: { c: PremiereShown; onClose?: () => void }
       <div className="rounded-3xl bg-gradient-to-br from-pink-500 to-rose-700 px-7 py-5 text-white shadow-2xl ring-4 ring-pink-300/60">
         <div className="text-[1.5vw] font-bold uppercase tracking-wider text-pink-100">🎰 Flipper-Premiere</div>
         <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">zum ersten Mal an {c.machineName}</div>
+        <div className="text-[1.8vw] font-extrabold">gleich zum ersten Mal an {c.machineName}</div>
         {c.score != null ? (
           <div className="mt-1 text-[1.2vw] font-semibold text-pink-100">Einstand mit {fmt(c.score)} Punkten</div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PremiereWinCard({ c, onClose }: { c: PremiereWinShown; onClose?: () => void }) {
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className="rounded-3xl bg-gradient-to-br from-fuchsia-500 to-amber-500 px-7 py-5 text-white shadow-2xl ring-4 ring-amber-200/60">
+        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-amber-50">🌟 Premieren-Sieg</div>
+        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[1.8vw] font-extrabold">erstes Spiel an {c.machineName} – gleich gewonnen!</div>
+        {c.score != null ? (
+          <div className="mt-1 text-[1.2vw] font-semibold text-amber-50">mit {fmt(c.score)} Punkten</div>
         ) : null}
       </div>
     </div>
@@ -699,6 +737,8 @@ function RecordCelebrationInner({
   const pendingLeaderRef = useRef<{ id: string | null; since: number } | null>(null);
   // 🎰 schon gemeldete Premieren (Eintrag-Key)
   const celebratedPremiereRef = useRef<Set<string>>(new Set());
+  // 🎰 schon gesehene (angekündigte) Premieren – null = noch nicht geladen
+  const seenPremiereRef = useRef<Set<string> | null>(null);
   // 📈 Live-Elo je Spieler: letzter Wert + höchster Wert im Turnier (inkl. Start)
   const eloSeenRef = useRef<Map<string, { last: number; max: number }>>(new Map());
   // aktueller Stand für die lokale 2-s-Prüfung
@@ -845,26 +885,6 @@ function RecordCelebrationInner({
         if (!enabledRef.current || finished) continue;
         const c = evaluateEntry(e, pr, entries);
         if (c) found.push(c);
-        // 🎰 Flipper-Premiere: noch nie an diesem Flipper (Location: beendete Turniere + dieses Turnier)
-        if (e.profileId && !celebratedPremiereRef.current.has(e.key)) {
-          const pk = personalKey(e.profileId, e.machineKey);
-          const excludedP = new Set(pr.excludedProfiles ?? []);
-          const playedBefore =
-            pk in pr.personal ||
-            (pr.played ?? []).includes(pk) ||
-            entries.some((o) => o.key !== e.key && o.profileId === e.profileId && o.machineKey === e.machineKey);
-          if (!playedBefore && !excludedP.has(e.profileId)) {
-            celebratedPremiereRef.current.add(e.key);
-            found.push({
-              kind: "premiere",
-              playerName: e.playerName,
-              playerId: pidOfKey(e.key),
-              machineName: e.machineName ?? "?",
-              score: e.score,
-              key: e.key,
-            });
-          }
-        }
       }
       // gelöschte Scores vergessen
       const live = new Set(entries.map((e) => e.key));
@@ -935,6 +955,32 @@ function RecordCelebrationInner({
         }
       }
 
+      // 🎰 Flipper-Premiere ankündigen: Runde erzeugt bzw. Durchgang begonnen (vor dem Spielen, ohne Score)
+      const pSlots = pr && enabledRef.current ? premiereSlots(d as any, pr) : [];
+      const premiereMap = new Map(pSlots.map((x) => [slotKey(x.matchId, x.playerId), x]));
+      if (pr && enabledRef.current) {
+        const active = pSlots.filter((x) => x.active);
+        if (!seenPremiereRef.current) {
+          seenPremiereRef.current = new Set(active.map((x) => slotKey(x.matchId, x.playerId))); // Bestand: nicht melden
+        } else {
+          for (const x of active) {
+            const k = slotKey(x.matchId, x.playerId);
+            if (seenPremiereRef.current.has(k)) continue;
+            seenPremiereRef.current.add(k);
+            if (finished || celebratedPremiereRef.current.has(k)) continue;
+            celebratedPremiereRef.current.add(k);
+            found.push({
+              kind: "premiere",
+              playerName: nameById2(d, x.playerId),
+              playerId: x.playerId,
+              machineName: x.machineName,
+              score: null,
+              key: k,
+            });
+          }
+        }
+      }
+
       // ⚡ Match-Momente (🧊 Favoritensturz, 📸 Fotofinish, 💣 Kantersieg): Match frisch fertig + STABLE_MS stabil
       if (mMode !== "none" && seenCompleteRef.current) {
         const seenC = seenCompleteRef.current;
@@ -957,40 +1003,35 @@ function RecordCelebrationInner({
           pendC.delete(id);
           seenC.add(id);
           if (finished) continue;
-          // 🎰 Premiere auch bei Matches NUR mit Plätzen (ohne Punkte – sonst kommt sie schon beim ersten Score)
-          if (pr && enabledRef.current) {
-            const mm = (d.matches ?? []).find((x) => String(x.id) === id) as { machine_id?: string | null } | undefined;
-            const machineName =
-              ((d as { machines?: { id: string; name: string | null }[] }).machines ?? []).find(
-                (x) => String(x.id) === String(mm?.machine_id ?? "")
-              )?.name ?? null;
-            const mk = machineKey(machineName);
-            const excludedP = new Set(pr.excludedProfiles ?? []);
-            const profOf = new Map((d.players ?? []).map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
-            const machineOfMatch = new Map((d.matches ?? []).map((x) => [String(x.id), String((x as { machine_id?: string | null }).machine_id ?? "")]));
-            for (const mp of (d.match_players ?? []).filter((x) => String(x.match_id) === id)) {
-              const pid = String(mp.player_id);
-              const key = `${id}|${pid}`;
-              const prof = profOf.get(pid);
-              if (!mk || !prof || celebratedPremiereRef.current.has(key) || excludedP.has(prof)) continue;
-              if (mp.score != null && mp.score !== "") continue; // mit Score → läuft über die Score-Prüfung
-              const pk = personalKey(prof, mk);
-              const playedHere = (d.match_players ?? []).some((o) => {
-                if (String(o.match_id) === id) return false;
-                if (profOf.get(String(o.player_id)) !== prof) return false;
-                const om = machineOfMatch.get(String(o.match_id));
-                const oName = ((d as { machines?: { id: string; name: string | null }[] }).machines ?? []).find((x) => String(x.id) === om)?.name;
-                return machineKey(oName ?? null) === mk && ((o as { position?: number | null }).position != null || (o.score != null && o.score !== ""));
-              });
-              if (pk in pr.personal || (pr.played ?? []).includes(pk) || playedHere) continue;
-              celebratedPremiereRef.current.add(key);
+          // 🌟 Premieren-Sieg: Sieger dieses Matches spielte hier zum ersten Mal
+          if (premiereMap.size) {
+            const mpsM = (d.match_players ?? []).filter((x) => String(x.match_id) === id) as {
+              player_id: string;
+              position?: number | null;
+              score?: number | string | null;
+            }[];
+            let winners: string[] = [];
+            if (mMode === "positions") {
+              winners = mpsM.filter((x) => Number(x.position) === 1).map((x) => String(x.player_id));
+            } else {
+              const sc = mpsM.filter((x) => x.score != null && x.score !== "").map((x) => ({ pid: String(x.player_id), s: Number(x.score) }));
+              const best = Math.max(...sc.map((x) => x.s));
+              const top = sc.filter((x) => x.s === best);
+              winners = top.length === 1 ? [top[0].pid] : []; // Gleichstand: kein klarer Sieger
+            }
+            for (const pid of winners) {
+              const k = slotKey(id, pid);
+              const slot = premiereMap.get(k);
+              if (!slot || celebratedPremiereRef.current.has("win|" + k)) continue;
+              celebratedPremiereRef.current.add("win|" + k);
+              const own = mpsM.find((x) => String(x.player_id) === pid);
               found.push({
-                kind: "premiere",
+                kind: "premiereWin",
                 playerName: nameById2(d, pid),
                 playerId: pid,
-                machineName: machineName ?? "?",
-                score: null,
-                key,
+                machineName: slot.machineName,
+                score: own?.score != null && own.score !== "" ? Number(own.score) : null,
+                key: k,
               });
             }
           }
@@ -1193,7 +1234,11 @@ function RecordCelebrationInner({
         // Rekorde zuerst, dann 30 Tage, Matchsiege, persönliche – jeweils höchster Wert zuerst
         found.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || sortValue(b) - sortValue(a));
         setQueue((q) => [...q, ...found]);
-        onEventsRef.current?.(found.map(feedItemOf)); // 📣 Live-Ticker
+        // 📣 Live-Ticker – Ankündigungen (Premiere) erst nach dem Abschluss der vorherigen Runde/des Durchgangs
+        const now2 = found.filter((x) => x.kind !== "premiere");
+        const later = found.filter((x) => x.kind === "premiere");
+        if (now2.length) onEventsRef.current?.(now2.map(feedItemOf));
+        if (later.length) afterPendingDone(() => onEventsRef.current?.(later.map(feedItemOf)));
       }
     }
     check();
@@ -1246,6 +1291,8 @@ function ShownView({ current, close }: { current: Shown; close?: () => void }) {
         <MomentCard c={current} onClose={close} />
       ) : current.kind === "premiere" ? (
         <PremiereCard c={current} onClose={close} />
+      ) : current.kind === "premiereWin" ? (
+        <PremiereWinCard c={current} onClose={close} />
       ) : current.kind === "eloMark" ? (
         <EloMarkCard c={current} onClose={close} />
       ) : current.kind === "leader" ? (
@@ -1282,6 +1329,7 @@ export const CELEBRATION_KINDS = [
   "blowout",
   "revenge",
   "premiere",
+  "premiereWin",
   "eloMark",
 ] as const;
 
@@ -1347,7 +1395,9 @@ function sampleShown(kind: (typeof CELEBRATION_KINDS)[number]): Shown {
         key: "preview",
       };
     case "premiere":
-      return { kind, playerName: "Christian", playerId: "a", machineName: "Godzilla Premium", score: 12_345_670, key: "preview" };
+      return { kind, playerName: "Christian", playerId: "a", machineName: "Godzilla Premium", score: null, key: "preview" };
+    case "premiereWin":
+      return { kind, playerName: "Christian", playerId: "a", machineName: "Godzilla Premium", score: 45_300_000, key: "preview" };
     case "eloMark":
       return { kind, playerName: "Andre", playerId: "a", mark: 1600, elo: 1604, again: false, key: "preview" };
   }

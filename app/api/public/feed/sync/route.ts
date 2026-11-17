@@ -15,7 +15,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { cleanFeedItem } from "@/lib/feed";
-import { feedCandidates, feedFingerprint, type FeedContext } from "@/lib/feedReplay";
+import { currentAge, feedCandidates, feedFingerprint, type FeedContext } from "@/lib/feedReplay";
 import { loadMachineRecords, loadPriorWins, loadStartElo } from "@/lib/feedContextServer";
 import { NOTIFICATION_SETTINGS_KEY, normalizeNotificationSettings, notifSetting, serverFeedOn } from "@/lib/notifications";
 import type { MmData } from "@/lib/myMatch";
@@ -129,7 +129,8 @@ export async function POST(req: Request) {
     const all = feedCandidates(data, await loadCtx());
     return ok({
       dry: true,
-      candidates: all.map((c) => ({ key: c.item.key, kind: c.item.kind, title: c.item.title, body: c.item.body })),
+      nowAge: currentAge(data),
+      candidates: all.map((c) => ({ key: c.item.key, kind: c.item.kind, title: c.item.title, body: c.item.body, age: c.age ?? null })),
     });
   }
 
@@ -140,8 +141,13 @@ export async function POST(req: Request) {
   }
 
   // Kandidaten: nur Arten, die im Ticker eingeschaltet sind
+  // nur Ereignisse der aktuellen + vorherigen Runde (bzw. Durchgang) nachtragen – ältere sind nicht mehr aktuell
+  const nowAge = currentAge(data);
   const cands = feedCandidates(data, await loadCtx()).filter(
-    (c) => !existing.has(c.item.key) && notifSetting(settings, c.item.kind, "ticker").enabled
+    (c) =>
+      !existing.has(c.item.key) &&
+      notifSetting(settings, c.item.kind, "ticker").enabled &&
+      (c.age == null || c.age >= nowAge - 1)
   );
 
   const pending: Pending = {};

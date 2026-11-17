@@ -435,8 +435,9 @@ export function insightFeedItem(
     key: `insight|${pairKey(ins.a, ins.b)}|${ins.kind}|${what}`,
     kind: "rivalryInsight",
     icon,
-    title: `Vor dem Match: ${INSIGHT_TITLE[ins.kind]}`,
-    body: machine ? `${text} – gleich an ${machine}` : text,
+    // ohne "Vor dem Match:" – die Formulierung ("gleich …") zeigt, dass es eine Ankündigung ist
+    title: INSIGHT_TITLE[ins.kind],
+    body: machine ? `${text} – gleich wieder an ${machine}` : text,
     players: [ins.a, ins.b],
     data: { ...ins },
   };

@@ -6,6 +6,7 @@
 // Admin + TV; beim ersten Laden der Seite wird nichts gezeigt (nur echte Wechsel).
 // An/aus, Dauer, Ton: 🔔 Meldungen & Sounds ("roundStart" / "roundDone"). Ticker: onFeed (nur Admin).
 
+import { afterPendingDone, scheduleDoneFeed } from "@/lib/feedOrder";
 import { useEffect, useRef, useState } from "react";
 import type { MmData } from "@/lib/myMatch";
 import { notifSetting } from "@/lib/notifications";
@@ -28,8 +29,8 @@ function roundFinished(data: MmData, roundId: string): boolean {
   });
 }
 
-/** Ticker-Eintrag "Runde abgeschlossen" erst nach den anderen Meldungen der Runde (10 s Schutz + Puffer) */
-export const FEED_DONE_DELAY_MS = 12_000;
+// Reihenfolge im Ticker (Abschluss verzögert, Ankündigungen danach): lib/feedOrder.ts
+export { FEED_DONE_DELAY_MS } from "@/lib/feedOrder";
 
 export function SummaryBlock({ s, tv, rotation = false }: { s: RoundSummary; tv: boolean; rotation?: boolean }) {
   const line = tv ? "text-2xl" : "text-sm";
@@ -138,8 +139,9 @@ export default function RoundSplash({
     //    Runde (Premiere, Matchsieg, Highscore … mit 10-s-Tippfehler-Schutz) stehen so darunter, der Rückblick oben
     const startItems = feed.filter((x) => x.kind !== "roundDone");
     const doneItems = feed.filter((x) => x.kind === "roundDone");
-    if (startItems.length) onFeedRef.current?.(startItems);
-    if (doneItems.length) window.setTimeout(() => onFeedRef.current?.(doneItems), FEED_DONE_DELAY_MS);
+    if (doneItems.length) scheduleDoneFeed(() => onFeedRef.current?.(doneItems));
+    // neue Runde erst NACH dem (verzögerten) Abschluss der vorherigen eintragen
+    if (startItems.length) afterPendingDone(() => onFeedRef.current?.(startItems));
     if (fresh.length) setQueue((q) => [...q, ...fresh]);
   }, [data]);
 

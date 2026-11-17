@@ -22,6 +22,7 @@ import { matchWinValue, streakMin, streakMode, streakText } from "@/lib/winStrea
 import { flawlessMode, flawlessText, flawlessWinners, rotationAllDone, unbeatenStep } from "@/lib/flawless";
 import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type PriorRecords } from "@/lib/recordWatch";
 import { isWinMilestone } from "@/lib/winMilestones";
+import { premiereSlots, slotKey } from "@/lib/premiere";
 import { completedMatchIds, MOMENT_ICON, MOMENT_TITLE, momentData, momentMode, momentsForMatch, momentText } from "@/lib/matchMoments";
 
 /** Zusatzdaten für Schritt 2 (vom Server geladen: lib/feedContextServer.ts) */
@@ -36,7 +37,9 @@ export type FeedContext = {
 
 const fmtNum = (n: number) => n.toLocaleString("de-DE");
 
-export type FeedCandidate = { item: FeedItemInput; sig: string };
+/** age = Runde (bzw. bei Round the Pinball: Durchgang), aus der das Ereignis stammt – der Server trägt
+ *  nur Ereignisse der aktuellen und der vorherigen Runde nach (ältere sind nicht mehr aktuell) */
+export type FeedCandidate = { item: FeedItemInput; sig: string; age?: number };
 
 const entered = (v: unknown) => v != null && v !== "" && Number.isFinite(Number(v));
 
@@ -179,6 +182,7 @@ function streakItems(data: MmData, out: FeedCandidate[]) {
 
   for (const m of sorted) {
     const mid = String(m.id);
+    const rno = roundNo.get(String(m.round_id)) ?? 0;
     const mps = by.get(mid) ?? [];
     if (mps.length < 2 || !mps.every((x) => Number(x.position) > 0)) continue; // noch nicht fertig
     const gain = matchWinValue(mps);
@@ -215,6 +219,7 @@ function streakItems(data: MmData, out: FeedCandidate[]) {
                 data: { player: breakerName, victim: nm.get(pid) ?? "?", n: oldRun.beaten, mode: "wins", machine: null },
               },
               sig,
+            age: rno,
             });
           }
         } else if (newRun.allWon && newRun.beaten >= step && Math.floor(newRun.beaten / step) > Math.floor(oldRun.beaten / step)) {
@@ -232,6 +237,7 @@ function streakItems(data: MmData, out: FeedCandidate[]) {
               data: { player: nm.get(pid) ?? "?", n: newRun.beaten, matches: newRun.played, mode: "wins" },
             },
             sig,
+            age: rno,
           });
         }
       }
@@ -254,6 +260,7 @@ function streakItems(data: MmData, out: FeedCandidate[]) {
               data: { player: nm.get(pid) ?? "?", n, mode: "wins" },
             },
             sig,
+            age: rno,
           });
         }
       } else {
@@ -275,6 +282,7 @@ function streakItems(data: MmData, out: FeedCandidate[]) {
                 data: { player: breakerName, victim: nm.get(pid) ?? "?", n: oldStreak },
               },
               sig,
+            age: rno,
             });
           }
         }
@@ -373,47 +381,62 @@ function recordItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
   }
 }
 
-/** 🎰 Flipper-Premiere: erstes Spiel eines Profils an einem Flipper (Location: alle Turniere dort + dieses) */
-function premiereItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
+/** 🎰 Flipper-Premiere (Ankündigung, sobald aktiv) + 🌟 Premieren-Sieg (Sieger des fertigen Matches) */
+function premiereItems(data: MmData, ctx: FeedContext, out: FeedCandidate[], after: FeedCandidate[]) {
   const pr = ctx.records;
   if (!pr || !pr.enabled) return;
-  const excluded = new Set(pr.excludedProfiles ?? []);
-  const played = new Set(pr.played ?? []);
   const nm = nameMap(data);
-  const profOf = new Map(data.players.map((p) => [String(p.id), p.profile_id ? String(p.profile_id) : null]));
-  const machineName = new Map(data.machines.map((m) => [String(m.id), m.name ?? null]));
+  const slots = premiereSlots(data, pr);
+  const bySlot = new Map(slots.map((x) => [slotKey(x.matchId, x.playerId), x]));
+  for (const x of slots) {
+    if (!x.active) continue;
+    out.push({
+      item: {
+        key: `premiere|${x.matchId}|${x.playerId}`,
+        kind: "premiere",
+        icon: "🎰",
+        title: "Flipper-Premiere",
+        body: `${nm.get(x.playerId) ?? "?"} spielt gleich zum ersten Mal ${x.machineName}!`,
+        players: [x.playerId],
+        data: { player: nm.get(x.playerId) ?? "?", machine: x.machineName, score: null },
+      },
+      sig: "1",
+    });
+  }
+  // 🌟 Sieger eines fertigen Matches, der dort Premiere hatte
+  const mode = momentMode(data.tournament.format);
+  if (mode === "none") return;
   const by = mpsByMatch(data);
-  const seen = new Set<string>(); // in diesem Turnier schon gespielt (Profil|Flipper)
-  for (const m of sortedMatches(data)) {
-    const mid = String(m.id);
-    const mName = machineName.get(String(m.machine_id ?? "")) ?? null;
-    const mk = machineKey(mName);
-    if (!mk) continue;
-    for (const mp of by.get(mid) ?? []) {
-      const hasScore = entered(mp.score);
-      if (!hasScore && mp.position == null) continue; // noch nicht gespielt
-      const pid = String(mp.player_id);
-      const prof = profOf.get(pid);
-      if (!prof) continue;
-      const pk = personalKey(prof, mk);
-      if (seen.has(pk)) continue;
-      seen.add(pk);
-      if (pk in pr.personal || played.has(pk) || excluded.has(prof)) continue;
-      const score = hasScore ? Number(mp.score) : null;
-      out.push({
+  for (const id of completedMatchIds(data, mode)) {
+    const mps = by.get(id) ?? [];
+    let winners: string[] = [];
+    if (mode === "positions") winners = mps.filter((x) => Number(x.position) === 1).map((x) => String(x.player_id));
+    else {
+      const sc = mps.filter((x) => entered(x.score)).map((x) => ({ pid: String(x.player_id), s: Number(x.score) }));
+      const best = Math.max(...sc.map((x) => x.s));
+      const top = sc.filter((x) => x.s === best);
+      winners = top.length === 1 ? [top[0].pid] : [];
+    }
+    for (const pid of winners) {
+      const slot = bySlot.get(slotKey(id, pid));
+      if (!slot) continue;
+      const own = mps.find((x) => String(x.player_id) === pid);
+      const score = own && entered(own.score) ? Number(own.score) : null;
+      const name = nm.get(pid) ?? "?";
+      after.push({
         item: {
-          key: `premiere|${mid}|${pid}`,
-          kind: "premiere",
-          icon: "🎰",
-          title: "Flipper-Premiere",
+          key: `premiereWin|${id}|${pid}`,
+          kind: "premiereWin",
+          icon: "🌟",
+          title: "Premieren-Sieg",
           body:
             score != null
-              ? `${nm.get(pid) ?? "?"} spielt zum ersten Mal ${mName ?? "?"} – Einstand mit ${fmtNum(score)} Punkten!`
-              : `${nm.get(pid) ?? "?"} spielt zum ersten Mal ${mName ?? "?"}!`,
+              ? `${name} spielt zum ersten Mal ${slot.machineName} und gewinnt sofort – mit ${fmtNum(score)} Punkten!`
+              : `${name} spielt zum ersten Mal ${slot.machineName} und gewinnt sofort!`,
           players: [pid],
-          data: { player: nm.get(pid) ?? "?", machine: mName ?? "?", score },
+          data: { player: name, machine: slot.machineName, score },
         },
-        sig: `${mp.score ?? ""}:${mp.position ?? ""}`,
+        sig: mps.map((x) => `${x.player_id}:${x.position ?? ""}:${x.score ?? ""}`).join(","),
       });
     }
   }
@@ -494,15 +517,18 @@ export function feedCandidates(data: MmData, ctx?: FeedContext | null): FeedCand
   if (rotation) rotationItems(data, out, done);
   else roundItems(data, out, done);
   if (!rotation) streakItems(data, out);
+  const premiereWins: FeedCandidate[] = [];
   if (ctx) {
-    premiereItems(data, ctx, out);
+    premiereItems(data, ctx, out, premiereWins);
     recordItems(data, ctx, out);
     winItems(data, ctx, out);
     momentItems(data, ctx, out);
   }
+  out.push(...premiereWins);
   out.push(...done);
   endItems(data, out);
-  return out;
+  annotateAge(data, out);
+  return sortForTicker(out);
 }
 
 /** kleiner, schneller Fingerabdruck des Turnierstands (gleich = nichts geändert) */
@@ -514,4 +540,72 @@ export function feedFingerprint(data: MmData): string {
   const s = parts.join("|");
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return `${s.length}:${h >>> 0}`;
+}
+
+/** Alter (Runde bzw. Durchgang) aus der Kennung ableiten, falls nicht schon gesetzt */
+function annotateAge(data: MmData, cands: FeedCandidate[]) {
+  const rotation = String(data.tournament.format ?? "") === "rotation";
+  if (rotation) {
+    const waveOf = rotationWaveMap(
+      data.matches.map((m) => String(m.id)),
+      data.match_players as Parameters<typeof rotationWaveMap>[1]
+    );
+    for (const c of cands) {
+      if (c.age != null) continue;
+      const t = c.item.key.split("|");
+      if (t[0] === "rotWave") c.age = Number(t[1]);
+      else if (t.length >= 3) {
+        const w = waveOf.get(`${t[1]}|${t[2]}`);
+        if (w != null) c.age = w;
+      }
+    }
+    return;
+  }
+  const roundNoById = new Map(data.rounds.map((r) => [String(r.id), Number(r.number ?? 0)]));
+  const roundOfMatch = new Map(data.matches.map((m) => [String(m.id), roundNoById.get(String(m.round_id)) ?? 0]));
+  for (const c of cands) {
+    if (c.age != null) continue;
+    for (const tok of c.item.key.split("|")) {
+      const r = roundNoById.get(tok) ?? roundOfMatch.get(tok);
+      if (r != null) {
+        c.age = Math.max(c.age ?? 0, r);
+      }
+    }
+  }
+}
+
+/** aktuelle Runde (bzw. bei Round the Pinball: aktueller Durchgang) */
+export function currentAge(data: MmData): number {
+  if (String(data.tournament.format ?? "") === "rotation") {
+    const ids = data.matches.map((m) => String(m.id));
+    if (!ids.length) return 0;
+    const p = rotationProgress(ids, data.match_players as Parameters<typeof rotationProgress>[1]);
+    return p.current;
+  }
+  return Math.max(0, ...data.rounds.map((r) => Number(r.number ?? 0)));
+}
+
+/**
+ * Eintragsreihenfolge wie bei den Geräten: Runde für Runde (bzw. Durchgang für Durchgang);
+ * innerhalb einer Runde erst Ankündigungen (Runde generiert, Premiere), dann Ereignisse, dann der Abschluss;
+ * Turnierende + Flawless Victory ganz zum Schluss. (Sortierung ist stabil → sonst bleibt alles wie berechnet.)
+ */
+function sortForTicker(cands: FeedCandidate[]): FeedCandidate[] {
+  const phase = (k: string) => (k === "roundStart" || k === "premiere" ? 0 : k === "roundDone" ? 2 : 1);
+  const isEnd = (k: string) => k === "tournamentEnd" || k === "flawless";
+  return cands
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => {
+      const ea = isEnd(a.c.item.kind) ? 1 : 0;
+      const eb = isEnd(b.c.item.kind) ? 1 : 0;
+      if (ea !== eb) return ea - eb;
+      const ga = a.c.age ?? 0;
+      const gb = b.c.age ?? 0;
+      if (ga !== gb) return ga - gb;
+      const pa = phase(a.c.item.kind);
+      const pb = phase(b.c.item.kind);
+      if (pa !== pb) return pa - pb;
+      return a.i - b.i;
+    })
+    .map((x) => x.c);
 }

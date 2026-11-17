@@ -302,6 +302,8 @@ function MatchTab({
         </div>
         {/* "Alle Flipper gespielt" (Round the Pinball): letztes Match ausblenden */}
         {last && !(mode === "own") ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
+        {/* 📊 Infos zum letzten Match (Rekorde, Winrates, Gegner-Bilanz – aktueller Stand nach dem Spiel) */}
+        {last && !(mode === "own") ? <PhoneMatchInsights code={code} data={data} info={last} meId={me.playerId} /> : null}
       </div>
     );
   }

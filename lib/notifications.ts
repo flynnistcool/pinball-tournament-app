@@ -221,12 +221,24 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "premiere",
     icon: "🎰",
     title: "Flipper-Premiere",
-    when: "Erster Score eines Spielers auf einem Flipper, den er an dieser Location noch nie gespielt hat (alle Turniere dort, egal welches Format)",
+    when: "Ankündigung: jemand spielt gleich zum ersten Mal an einem Flipper (Location: alle Turniere dort, egal welches Format) – sobald die Runde erzeugt ist bzw. bei Round the Pinball sein Durchgang beginnt",
     devices: {
       phone: PHONE_ME,
       ticker: TICKER,
       tv: { where: "Karte", seconds: 6, sound: { kind: "ding", label: "Ding" } },
       admin: { where: "Karte", seconds: 5, sound: SILENT, note: "Antippen schließt" },
+    },
+  },
+  {
+    id: "premiereWin",
+    icon: "🌟",
+    title: "Premieren-Sieg",
+    when: "Wer zum ersten Mal an einem Flipper spielt, gewinnt dort gleich (Platz 1; Round the Pinball: bester Score am Flipper, wenn alle gespielt haben)",
+    devices: {
+      phone: PHONE_ME,
+      ticker: TICKER,
+      tv: { where: "Karte", seconds: 7, sound: { kind: "ding", label: "Ding" } },
+      admin: { where: "Karte", seconds: 6, sound: SILENT, note: "Antippen schließt" },
     },
   },
   {
@@ -316,7 +328,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
   {
     id: "rivalryInsight",
     icon: "⚔️",
-    title: "Vor dem Match: Gegner-Hinweis",
+    title: "Gegner-Hinweis (vor dem Match)",
     when: "Das Gegner-Badge eines laufenden Matches (Serie, Erzfeind-Duell, Ebenbürtig, Jubiläum) – einmal pro Turnier, neu nur bei geänderter Aussage",
     devices: {
       ticker: TICKER,
@@ -564,6 +576,7 @@ export function serverHandlesKind(kind: string, rotation: boolean): boolean {
       "month",
       "personal",
       "premiere",
+      "premiereWin",
       "wins",
       "upset",
       "photo",
@@ -621,6 +634,7 @@ const SCOPE_OF: Record<string, NotifScope> = {
   blowout: "turnier",
   revenge: "turnier",
   premiere: "allzeit",
+  premiereWin: "allzeit",
   eloMark: "allzeit",
   rotationSplash: "turnier",
   roundStart: "turnier",

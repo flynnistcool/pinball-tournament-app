@@ -184,6 +184,27 @@ export default function LiveTicker({
   //    Neue Meldung → sofort nach oben, Ablauf beginnt von vorn.
   const listRef = useRef<HTMLUListElement | null>(null);
   const newestId = shown[0]?.id ?? null;
+
+  // ⬆️ neue Meldung → Ticker nach oben (auch wenn jemand von Hand runtergescrollt hat):
+  //    eigene Liste + umgebende Scroll-Bereiche (z. B. das verschiebbare Ticker-Fenster)
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const firstNewestRef = useRef<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (firstNewestRef.current === undefined) {
+      firstNewestRef.current = newestId; // erster Stand: nichts tun
+      return;
+    }
+    if (newestId == null || newestId === firstNewestRef.current) return;
+    firstNewestRef.current = newestId;
+    listRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    let el: HTMLElement | null = rootRef.current?.parentElement ?? null;
+    for (let i = 0; el && i < 4; i++, el = el.parentElement) {
+      const oy = window.getComputedStyle(el).overflowY;
+      if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight && el.scrollTop > 0) {
+        el.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+  }, [newestId]);
   const autoScroll = autoScrollProp && variant === "tv" && !!scrollMaxPx;
   useEffect(() => {
     const el = listRef.current;
@@ -251,6 +272,7 @@ export default function LiveTicker({
 
   return (
     <div
+      ref={rootRef}
       className={
         (tv
           ? "rounded-3xl bg-white/[0.04] p-4 ring-1 ring-white/10 "

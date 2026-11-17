@@ -12442,13 +12442,9 @@ async function reloadAll() {
       .slice(0, 3);
     if (!top.length) return;
     const nameOf = (pid: string) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?";
-    // bei Round the Pinball gibt es kein einzelnes "Match" → "Duell des Abends" statt "Vor dem Match"
     postFeedItems(
       code,
-      top.map((ins: any) => {
-        const it = insightFeedItem(ins, nameOf);
-        return { ...it, title: String(it.title).replace(/^Vor dem Match:/, "Duell des Abends:") };
-      })
+      top.map((ins: any) => insightFeedItem(ins, nameOf))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtpRivalry, rtpRivalryOn, isAdmin, code]);
@@ -12468,7 +12464,7 @@ async function reloadAll() {
                 key: ev.id,
                 kind: ev.kind,
                 icon: t.icon,
-                title: `Nach dem Match: ${t.title.replace(/!$/, "")}`,
+                title: t.title.replace(/!$/, ""), // ohne "Nach dem Match:" – kurz und klar
                 body: t.text,
                 players: [ev.winner, ev.loser],
                 data: { ...ev },

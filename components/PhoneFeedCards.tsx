@@ -14,7 +14,7 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 
 const FOR_ALL = new Set(["record", "month", "flawless"]);
-const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "eloMark"]);
+const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -34,6 +34,7 @@ const TONE: Record<string, string> = {
   blowout: "border-orange-200 bg-orange-50 text-orange-900",
   revenge: "border-violet-200 bg-violet-50 text-violet-900",
   premiere: "border-pink-200 bg-pink-50 text-pink-900",
+  premiereWin: "border-amber-200 bg-gradient-to-r from-fuchsia-50 to-amber-50 text-amber-900",
   eloMark: "border-emerald-200 bg-emerald-50 text-emerald-900",
 };
 
@@ -105,11 +106,16 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
     case "premiere":
       return {
         title: "Flipper-Premiere! 🎰",
+        text: d.machine != null ? `Dein erstes Spiel an ${machine} – viel Glück! 🍀` : x.body,
+      };
+    case "premiereWin":
+      return {
+        title: "Premieren-Sieg! 🌟",
         text:
           d.machine != null
             ? d.score != null
-              ? `Dein erstes Spiel an ${machine} – Einstand mit ${fmt(d.score)} Punkten.`
-              : `Dein erstes Spiel an ${machine}!`
+              ? `Erstes Spiel an ${machine} und gleich gewonnen – mit ${fmt(d.score)} Punkten!`
+              : `Erstes Spiel an ${machine} und gleich gewonnen!`
             : x.body,
       };
     case "eloMark":

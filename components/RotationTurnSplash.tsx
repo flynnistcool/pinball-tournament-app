@@ -7,7 +7,7 @@
 // - Admin: über startSignal (wird nach dem Erzeugen gesetzt)
 // - TV: detectStart = Wechsel von "keine Runden" auf "Runden da", solange die Seite offen ist
 
-import { FEED_DONE_DELAY_MS } from "@/components/RoundSplash";
+import { scheduleDoneFeed } from "@/lib/feedOrder";
 import { useEffect, useRef, useState } from "react";
 import type { RotationProgress } from "@/lib/rotationTurn";
 import { notifSetting } from "@/lib/notifications";
@@ -107,7 +107,7 @@ export default function RotationTurnSplash({
           body: summaryText(s, true) || "Alle Scores des Durchgangs sind da.",
         };
         // 📣 erst nach den anderen Meldungen des Durchgangs (die haben 10 s Tippfehler-Schutz) → Rückblick oben
-        window.setTimeout(() => onFeedRef.current?.([item]), FEED_DONE_DELAY_MS);
+        scheduleDoneFeed(() => onFeedRef.current?.([item]));
       }
       return s;
     };

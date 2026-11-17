@@ -174,7 +174,13 @@ export default function PhoneMatchInsights({
   // ⚔️ Gegner-Duell-Hinweise: nur eigene Gegner im laufenden Match (nicht Round the Pinball/Timeplay/DYP)
   const rivalryOn = !finished && !info.done && !["timeplay", "dyp_round_robin"].includes(format);
   // Round the Pinball: alle gegen alle → einmal pro Runde laden, nur die 2 spannendsten zeigen
-  const rivalry = useRivalry(code, isRotation ? rtpRefreshKey(data as any) : String(data.rounds?.length ?? 0), rivalryOn);
+  // neu laden je Runde UND nach jedem fertigen Match (damit "letzte X Duelle" nach dem Spiel aktuell ist)
+  const finishedMps = (data.match_players ?? []).filter((mp) => mp.position != null).length;
+  const rivalry = useRivalry(
+    code,
+    isRotation ? rtpRefreshKey(data as any) : `${data.rounds?.length ?? 0}-${finishedMps}`,
+    rivalryOn
+  );
   const myRivalries = rivalryOn
     ? info.players
         .map((mp) => String(mp.player_id))

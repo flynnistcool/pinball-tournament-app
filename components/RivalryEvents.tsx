@@ -46,6 +46,11 @@ const POPUP_KINDS = new Set<RivalryEvent["kind"]>([
   "evenReached",
 ]);
 
+/** 📱 Handy: "Serie geht weiter" bei JEDER Verlängerung als Karte für die Beteiligten (TV/Admin nur 3, 5, 10 …) */
+function showQuietForMe(e: RivalryEvent, onlyFor: string | null | undefined): boolean {
+  return !!onlyFor && e.kind === "streakGrow" && (e.winner === onlyFor || e.loser === onlyFor);
+}
+
 /** Arten mit Karte am Handy (siehe lib/notifications.ts: Platzierung "phone") */
 const PHONE_POPUP_KINDS = new Set<RivalryEvent["kind"]>([
   "streakBroken",
@@ -161,7 +166,7 @@ export function useRivalryEvents({
         );
         rtpPairsRef.current.set(k, applyDuel(st, d.winner));
         if (all.length) tickerEvs.push(...all);
-        let evs = all.filter((e) => POPUP_KINDS.has(e.kind) && !e.quiet);
+        let evs = all.filter((e) => POPUP_KINDS.has(e.kind) && (!e.quiet || showQuietForMe(e, onlyFor)));
         if (onlyFor) evs = evs.filter((e) => (e.winner === onlyFor || e.loser === onlyFor) && PHONE_POPUP_KINDS.has(e.kind));
         const top = evs[0];
         if (top && !firedRef.current.has(top.id)) {
@@ -205,7 +210,8 @@ export function useRivalryEvents({
       seen.add(id);
       const all = eventsForFinishedMatch(id, byMatch.get(id) ?? [], pairs);
       if (all.length) tickerEvs.push(...all); // 📣 Ticker: alle Ereignisse
-      let evs = all.filter((e) => POPUP_KINDS.has(e.kind) && !e.quiet); // Einblendung: nur diese Arten, ohne "leise"
+      // Einblendung: nur diese Arten, ohne "leise" (Handy: Serie wächst auch leise – betrifft ja mich)
+      let evs = all.filter((e) => POPUP_KINDS.has(e.kind) && (!e.quiet || showQuietForMe(e, onlyFor)));
       // 📱 Handy: nur Arten, die dort eine Karte haben – sonst würde z. B. "Serie wächst" den einzigen Platz
       //    belegen und die Karte (z. B. Jubiläum) fiele ganz weg
       if (onlyFor) evs = evs.filter((e) => (e.winner === onlyFor || e.loser === onlyFor) && PHONE_POPUP_KINDS.has(e.kind));
