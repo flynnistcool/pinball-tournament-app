@@ -97,24 +97,26 @@ function MobileTickerDock({ code }: { code: string }) {
     };
   }, [code, ns]);
 
-  // 📌 Die Ticker-Zeile bleibt ganz unten; die Menüleiste der Admin-Seite (Runde erzeugen …) rutscht darüber.
-  //    Höhe der Zeile als CSS-Variable --pb-ticker-dock (0, wenn nur der 📣-Knopf zu sehen ist).
-  const barRef = useRef<HTMLDivElement | null>(null);
+  // 📌 über der Menüleiste der Admin-Seite (Runde erzeugen …) sitzen, solange diese sichtbar ist
+  const [lift, setLift] = useState(0);
   useEffect(() => {
-    const root = document.documentElement;
-    if (hidden) {
-      root.style.setProperty("--pb-ticker-dock", "0px");
-      return;
-    }
-    const set = () => root.style.setProperty("--pb-ticker-dock", `${barRef.current?.offsetHeight ?? 0}px`);
-    set();
-    const ro = typeof ResizeObserver !== "undefined" && barRef.current ? new ResizeObserver(set) : null;
-    if (ro && barRef.current) ro.observe(barRef.current);
-    return () => {
-      ro?.disconnect();
-      root.style.setProperty("--pb-ticker-dock", "0px");
+    const calc = () => {
+      const bar = document.querySelector("[data-pb-bottombar]") as HTMLElement | null;
+      if (!bar) return setLift(0);
+      const r = bar.getBoundingClientRect();
+      const visible = Math.max(0, Math.round(window.innerHeight - r.top));
+      setLift((cur) => (Math.abs(cur - visible) > 1 ? visible : cur));
     };
-  }, [hidden]);
+    calc();
+    const t = window.setInterval(calc, 300); // Menüleiste fährt beim Scrollen ein/aus
+    window.addEventListener("resize", calc);
+    window.addEventListener("scroll", calc, { passive: true });
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("resize", calc);
+      window.removeEventListener("scroll", calc);
+    };
+  }, []);
 
   // unten Platz lassen, damit die Leiste nichts verdeckt
   useEffect(() => {
@@ -131,7 +133,8 @@ function MobileTickerDock({ code }: { code: string }) {
       <button
         type="button"
         onClick={() => setHiddenSaved(false)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+12px)] left-3 z-[60] rounded-full border bg-white px-3 py-2 text-sm font-semibold shadow-lg"
+        className="fixed left-3 z-[60] rounded-full border bg-white px-3 py-2 text-sm font-semibold shadow-lg"
+        style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${12 + lift}px)` }}
         title="Live-Ticker einblenden"
       >
         📣
@@ -144,14 +147,16 @@ function MobileTickerDock({ code }: { code: string }) {
       {open ? (
         <div className="fixed inset-0 z-[60] bg-black/30" onClick={() => setOpen(false)} aria-hidden="true" />
       ) : null}
-      <div className="fixed inset-x-0 bottom-0 z-[61] pb-[env(safe-area-inset-bottom,0px)]">
+      <div
+        className="fixed inset-x-0 z-[61] transition-[bottom] duration-200"
+        style={{ bottom: lift, paddingBottom: lift ? 0 : "env(safe-area-inset-bottom, 0px)" }}
+      >
         {open ? (
           <div className="mx-2 mb-1 max-h-[55vh] overflow-y-auto rounded-2xl border bg-white p-2 shadow-lg">
             <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
           </div>
         ) : null}
         <div
-          ref={barRef}
           className={
             "flex items-center gap-2 border-t px-3 py-2 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] transition-colors duration-700 " +
             (flash ? "bg-amber-100" : "bg-white")
