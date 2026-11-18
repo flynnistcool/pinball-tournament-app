@@ -45,7 +45,8 @@ import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/P
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
-import RotationTimerBadge, { type RotationTimerState } from "@/components/RotationTimerBadge";
+import { type RotationTimerState } from "@/components/RotationTimerBadge";
+import TvRotationTimer from "@/components/TvRotationTimer";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 /** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
@@ -185,6 +186,8 @@ type MatchPlayer = {
 type PublicTournament = {
   /** ⏱️ Round the Pinball: Timer-Stand vom Admin-iPad */
   rotation_timer?: RotationTimerState | null;
+  /** Sprache der Ansagen ("en" | "de") */
+  speech_lang?: string;
   /** Server-Uhr beim Laden (Abgleich der Restzeit) */
   server_now?: number;
   tournament?: {
@@ -1270,11 +1273,13 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             <div className="whitespace-nowrap pb-2 text-right text-sm text-white/50">
               {/* Ton einmalig freischalten (Browser-Vorgabe) */}
               <div className="mb-2 flex items-center justify-end gap-2">
-                {/* ⏱️ Round the Pinball: Timer läuft / pausiert (vom Admin-iPad) */}
-                {isRotation ? (
-                  <RotationTimerBadge
-                    timer={data?.rotation_timer}
+                {/* ⏱️ Round the Pinball: Timer – am TV startbar (läuft dann nur hier), sonst Anzeige des Admin-Timers */}
+                {isRotation && !isFinished ? (
+                  <TvRotationTimer
+                    code={code}
+                    adminTimer={data?.rotation_timer}
                     offsetMs={data?.server_now && updatedAt ? data.server_now - updatedAt.getTime() : 0}
+                    speechLang={data?.speech_lang === "de" ? "de" : "en"}
                   />
                 ) : null}
                 {/* Stand der Daten (läuft die Uhrzeit nicht weiter → TV hängt) – platzsparend in derselben Zeile */}

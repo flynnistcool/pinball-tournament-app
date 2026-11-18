@@ -105,11 +105,18 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     const { data: rt, error: rtErr } = await sb.from("tournaments").select("rotation_timer").eq("id", t.id).maybeSingle();
     if (!rtErr) rotationTimer = (rt as { rotation_timer?: unknown } | null)?.rotation_timer ?? null;
   }
+  // 🔊 Sprache der Ansagen (TV-Timer) – Spalte evtl. nicht vorhanden → Englisch
+  let speechLang: string = "en";
+  if (t.format === "rotation") {
+    const { data: sl, error: slErr } = await sb.from("tournaments").select("speech_lang").eq("id", t.id).maybeSingle();
+    if (!slErr && (sl as { speech_lang?: string } | null)?.speech_lang === "de") speechLang = "de";
+  }
 
   return NextResponse.json({
     tournament: t,
     final,
     rotation_timer: rotationTimer,
+    speech_lang: speechLang,
     server_now: Date.now(), // TV: Uhr-Abgleich für die Restzeit
     profiles: profiles ?? [],
     start_ratings: startRatings ?? [],
