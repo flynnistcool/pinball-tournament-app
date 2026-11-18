@@ -9470,6 +9470,11 @@ try {
                           profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
                           machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
                           liveEntries={liveRecordEntries}
+                          playerId={mp?.player_id ? String(mp.player_id) : null}
+                          format={tournament?.format ?? null}
+                          opponents={(mps ?? [])
+                            .filter((o: any) => o?.player_id && String(o.player_id) !== String(mp.player_id))
+                            .map((o: any) => ({ id: String(o.player_id), name: String(playersById?.[String(o.player_id)]?.name ?? "?") }))}
                         />
                       </div>
                     ) : null}

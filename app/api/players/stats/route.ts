@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllRows } from "@/lib/supabaseChunks";
 import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,8 @@ export async function POST(req: Request) {
     //
     // 1) MATCHES (wie gehabt)
     //
-    const { data, error } = await sb
+    const { data, error } = await fetchAllRows<any>(() =>
+      sb
       .from("match_players")
       .select(
         `
@@ -63,7 +65,10 @@ export async function POST(req: Request) {
         )
       `
       )
-      .eq("players.profile_id", profileId);
+      .eq("players.profile_id", profileId)
+        .order("match_id")
+        .order("player_id") as any
+    );
 
     if (error) {
       console.error("players/stats supabase error:", error);

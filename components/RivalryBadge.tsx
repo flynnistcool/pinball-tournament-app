@@ -5,11 +5,13 @@
 
 import { useEffect, useState } from "react";
 import { insightText, type PairState, type RivalryInsight } from "@/lib/rivalryInsights";
+import type { PairMachineStat } from "@/lib/rivals";
 import { useBadgeOn } from "@/components/DisplayDevice";
 
 type Insights = Record<string, RivalryInsight>;
-export type RivalryData = { insights: Insights; pairs: Record<string, PairState> };
-const EMPTY: RivalryData = { insights: {}, pairs: {} };
+/** pairMachine: Paar ("x|y") → Flipper (machineKey) → Duell-Stand an diesem Flipper an der Location des Turniers */
+export type RivalryData = { insights: Insights; pairs: Record<string, PairState>; pairMachine: Record<string, Record<string, PairMachineStat>> };
+const EMPTY: RivalryData = { insights: {}, pairs: {}, pairMachine: {} };
 
 const store = new Map<string, { key: string; data: RivalryData | null; promise: Promise<RivalryData> | null }>();
 
@@ -21,7 +23,7 @@ function load(code: string, refreshKey: string): Promise<RivalryData> {
   }
   const promise = fetch(`/api/public/rivalry?code=${encodeURIComponent(code)}&ts=${Date.now()}`, { cache: "no-store" })
     .then((r) => r.json())
-    .then((j): RivalryData => (j?.ok ? { insights: j.insights ?? {}, pairs: j.pairs ?? {} } : EMPTY))
+    .then((j): RivalryData => (j?.ok ? { insights: j.insights ?? {}, pairs: j.pairs ?? {}, pairMachine: j.pairMachine ?? {} } : EMPTY))
     .catch(() => EMPTY)
     .then((data) => {
       const now = store.get(code);
@@ -49,6 +51,15 @@ export function useRivalryData(code: string | null | undefined, refreshKey: stri
     };
   }, [code, refreshKey, enabled]);
   return data;
+}
+
+/**
+ * Wie useRivalryData, aber mit dem refreshKey, den die Seite gerade ohnehin benutzt (kein doppeltes Laden,
+ * kein Hin-und-her zwischen verschiedenen Schlüsseln). Noch nichts geladen → einmal mit "init" laden.
+ */
+export function useRivalryDataShared(code: string | null | undefined, enabled = true): RivalryData {
+  const key = (code ? store.get(code)?.key : null) ?? "init";
+  return useRivalryData(code, key, enabled);
 }
 
 /** nur die Hinweise (Badges) */

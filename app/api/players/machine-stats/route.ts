@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllRows } from "@/lib/supabaseChunks";
 import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
@@ -54,7 +55,8 @@ export async function POST(req: Request) {
      * - joinen uns die Maschinen + Location nur dazu
      * - dadurch kann die Summe über alle Maschinen niemals > Matches sein
      */
-    const { data, error } = await sb
+    const { data, error } = await fetchAllRows<any>(() =>
+      sb
       .from("match_players")
       .select(
         `
@@ -84,7 +86,10 @@ export async function POST(req: Request) {
         )
       `
       )
-      .eq("players.profile_id", profileId);
+      .eq("players.profile_id", profileId)
+        .order("match_id")
+        .order("player_id") as any
+    );
 
     if (error) {
       console.error("machine-stats query error:", error);

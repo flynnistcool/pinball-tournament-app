@@ -3,8 +3,12 @@
 // 📈 Aufklapp-Bereich im Match (Admin): alle bisherigen Scores eines Spielers auf diesem Flipper
 // an dieser Location – als Verlauf (Säulen, älteste links) mit Ø-Linie, darunter die Liste.
 // Grundlage wie beim 💪 Pers. Highscore: beendete Turniere hier (ohne Timeplay/DYP); "heute" kommt live dazu.
+// Darüber (wenn Gegner übergeben werden): ⚔️ Bilanz gegen jeden Gegner im Match – Allzeit, an diesem Flipper,
+// an diesem Flipper nur im Format des laufenden Turniers (Daten: /api/public/rivalry).
 
 import { useMachineRecords } from "@/components/MatchRecordsLine";
+import { useRivalryDataShared } from "@/components/RivalryBadge";
+import { pairKey } from "@/lib/rivalryInsights";
 import { formatLabel } from "@/lib/formatLabel";
 import { machineKey, personalKey, type LiveEntry, type PersonalHistoryEntry } from "@/lib/recordWatch";
 
@@ -27,17 +31,40 @@ export default function PlayerMachineHistory({
   profileId,
   machineName,
   liveEntries,
+  playerId,
+  opponents,
+  format,
 }: {
   code: string;
   profileId: string | null | undefined;
   machineName: string | null | undefined;
   liveEntries: readonly LiveEntry[];
+  /** ⚔️ für die Gegner-Bilanz: dieser Spieler (players.id) + die anderen im Match */
+  playerId?: string | null;
+  opponents?: readonly { id: string; name: string }[];
+  /** Format des laufenden Turniers (für die Spalte "Flipper – nur dieses Format") */
+  format?: string | null;
 }) {
   const loaded = useMachineRecords(code, true, [profileId]);
   if (!profileId || !machineName) return null;
-  if (!loaded) return <div className="text-[11px] text-neutral-400">lädt…</div>;
+  const duels =
+    playerId && opponents?.length ? (
+      <OpponentBalance code={code} playerId={playerId} opponents={opponents} machineName={machineName} format={format ?? null} />
+    ) : null;
+  if (!loaded)
+    return (
+      <div className="space-y-2">
+        {duels}
+        <div className="text-[11px] text-neutral-400">lädt…</div>
+      </div>
+    );
   if (!loaded.enabled) {
-    return <div className="text-[11px] text-neutral-400">Kein Verlauf (Turnier ohne Location oder Timeplay/DYP).</div>;
+    return (
+      <div className="space-y-2">
+        {duels}
+        <div className="text-[11px] text-neutral-400">Kein Score-Verlauf (Turnier ohne Location oder Timeplay/DYP).</div>
+      </div>
+    );
   }
 
   const mKey = machineKey(machineName);
@@ -48,7 +75,12 @@ export default function PlayerMachineHistory({
   const points = [...past, ...today];
 
   if (!points.length) {
-    return <div className="text-[11px] text-neutral-400">Noch keine Scores auf diesem Flipper an dieser Location.</div>;
+    return (
+      <div className="space-y-2">
+        {duels}
+        <div className="text-[11px] text-neutral-400">Noch keine Scores auf diesem Flipper an dieser Location.</div>
+      </div>
+    );
   }
 
   const max = Math.max(...points.map((p) => p.score));
@@ -61,6 +93,7 @@ export default function PlayerMachineHistory({
 
   return (
     <div className="space-y-2">
+      {duels}
       <div className="flex flex-wrap items-baseline gap-x-3 text-[11px] text-neutral-500">
         <span className="font-semibold text-neutral-700">📈 {machineName} – alle Scores hier</span>
         <span>{past.length} {past.length === 1 ? "Spiel" : "Spiele"} bisher</span>
@@ -135,6 +168,101 @@ export default function PlayerMachineHistory({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** Bilanz aus Sicht von "me": Siege, Niederlagen, Unentschieden, Quote (Unentschieden halb) */
+function balance(meWins: number, otherWins: number, duels: number) {
+  const draws = Math.max(0, duels - meWins - otherWins);
+  const pct = duels ? ((meWins + draws / 2) / duels) * 100 : null;
+  return { w: meWins, l: otherWins, d: draws, duels, pct };
+}
+
+function BalanceCell({ b }: { b: ReturnType<typeof balance> | null }) {
+  if (!b || !b.duels) return <span className="text-neutral-300">—</span>;
+  const tone = b.pct == null ? "" : b.pct > 50 ? "text-emerald-600" : b.pct < 50 ? "text-rose-600" : "text-neutral-600";
+  return (
+    <span className="whitespace-nowrap" title={`${b.duels} Duelle: ${b.w} Siege, ${b.l} Niederlagen${b.d ? `, ${b.d} unentschieden` : ""}`}>
+      <b className="text-neutral-700">
+        {b.w} : {b.l}
+      </b>
+      {b.d ? <span className="text-neutral-400"> ({b.d} =)</span> : null}{" "}
+      <b className={tone}>{Math.round(b.pct ?? 0)} %</b>
+    </span>
+  );
+}
+
+/** ⚔️ Bilanz gegen jeden Gegner im Match: Allzeit (alle Matches), an diesem Flipper, an diesem Flipper nur im Format */
+function OpponentBalance({
+  code,
+  playerId,
+  opponents,
+  machineName,
+  format,
+}: {
+  code: string;
+  playerId: string;
+  opponents: readonly { id: string; name: string }[];
+  machineName: string;
+  format: string | null;
+}) {
+  const fmtKey = String(format ?? "").toLowerCase();
+  const riv = useRivalryDataShared(code);
+  const mk = machineKey(machineName);
+  const rows = opponents.map((o) => {
+    const key = pairKey(playerId, o.id);
+    const meIsX = playerId < o.id;
+    const side = (s: { xWins: number; yWins: number; duels: number } | undefined) =>
+      s ? balance(meIsX ? s.xWins : s.yWins, meIsX ? s.yWins : s.xWins, s.duels) : null;
+    return {
+      o,
+      all: side(riv.pairs[key]),
+      here: side(riv.pairMachine?.[key]?.[mk]),
+      hereFmt: fmtKey ? side(riv.pairMachine?.[key]?.[`${mk}@${fmtKey}`]) : null,
+    };
+  });
+  return (
+    <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
+      <table className="w-full text-[11px] tabular-nums">
+        <thead>
+          <tr className="border-b border-neutral-100 align-bottom text-neutral-400">
+            <th className="px-2 py-1 text-left font-semibold text-neutral-700">⚔️ Bilanz gegen</th>
+            <th className="px-2 py-1 text-left font-normal">
+              Allzeit
+              <span className="block text-[10px] leading-tight">alle Matches</span>
+            </th>
+            <th className="px-2 py-1 text-left font-normal" title="dieser Flipper an dieser Location, alle Formate">
+              {machineName}
+              <span className="block text-[10px] leading-tight">alle Formate</span>
+            </th>
+            {fmtKey ? (
+              <th className="px-2 py-1 text-left font-normal" title="dieser Flipper an dieser Location, nur dieses Format">
+                {machineName}
+                <span className="block text-[10px] leading-tight">nur {formatLabel(fmtKey)}</span>
+              </th>
+            ) : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ o, all, here, hereFmt }) => (
+            <tr key={o.id} className="border-b border-neutral-100 last:border-0">
+              <td className="px-2 py-1 text-neutral-700">{o.name}</td>
+              <td className="px-2 py-1">
+                <BalanceCell b={all} />
+              </td>
+              <td className="px-2 py-1">
+                <BalanceCell b={here} />
+              </td>
+              {fmtKey ? (
+                <td className="px-2 py-1">
+                  <BalanceCell b={hereFmt} />
+                </td>
+              ) : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

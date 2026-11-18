@@ -243,3 +243,53 @@ export function duelLog(myProfileId: string, opponentId: string, rows: readonly 
   }
   return out;
 }
+
+/** Duell-Stand eines Paars an einem Flipper (x/y = players.id wie bei PairState) */
+export type PairMachineStat = { xWins: number; yWins: number; duels: number };
+
+/**
+ * ⚔️ Duell-Bilanz je Paar UND Flipper (nur Zeilen mit machineKey – der Aufrufer setzt ihn nur für
+ * Matches an der Location des Turniers). Gleiche Regeln wie computeRivalStats: besserer Platz gewinnt,
+ * DYP/Teams zählen nicht, ausgeschlossene Profile (Bots/Platzhalter) zählen nicht.
+ * Ergebnis: pairKey("x|y", x < y) → machineKey → Stand; zusätzlich "machineKey@format" = nur dieses Format
+ */
+export function pairMachineStats(
+  rows: readonly (RivalRow & { machineKey?: string | null })[],
+  players: readonly { playerId: string; profileId: string }[],
+  excludedProfileIds: ReadonlySet<string> = new Set()
+): Record<string, Record<string, PairMachineStat>> {
+  const playerOfProfile = new Map(players.map((p) => [p.profileId, p.playerId]));
+  const byMatch = new Map<string, (RivalRow & { machineKey?: string | null })[]>();
+  for (const r of rows) {
+    if (!r.machineKey) continue;
+    const list = byMatch.get(r.match_id) ?? [];
+    list.push(r);
+    byMatch.set(r.match_id, list);
+  }
+  const out: Record<string, Record<string, PairMachineStat>> = {};
+  byMatch.forEach((list) => {
+    if (String(list[0]?.format ?? "") === "dyp_round_robin" || list.some((r) => hasTeam(r.team))) return;
+    const mk = String(list[0].machineKey);
+    const mkF = `${mk}@${String(list[0].format ?? "").toLowerCase()}`;
+    const ins = list.filter(
+      (r) => r.profile_id && typeof r.position === "number" && playerOfProfile.has(r.profile_id) && !excludedProfileIds.has(r.profile_id)
+    );
+    for (let i = 0; i < ins.length; i++) {
+      for (let j = i + 1; j < ins.length; j++) {
+        const a = playerOfProfile.get(ins[i].profile_id as string)!;
+        const b = playerOfProfile.get(ins[j].profile_id as string)!;
+        if (a === b) continue;
+        const [x, y, px, py] = a < b ? [a, b, ins[i].position!, ins[j].position!] : [b, a, ins[j].position!, ins[i].position!];
+        const key = `${x}|${y}`;
+        const byM = out[key] ?? (out[key] = {});
+        for (const k of [mk, mkF]) {
+          const s = byM[k] ?? (byM[k] = { xWins: 0, yWins: 0, duels: 0 });
+          s.duels += 1;
+          if (px < py) s.xWins += 1;
+          else if (py < px) s.yWins += 1;
+        }
+      }
+    }
+  });
+  return out;
+}

@@ -8,7 +8,8 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 import { loadStatsExclusions } from "@/lib/statsExclusions";
-import { computeRivalStats, type RivalRow, type RivalStat } from "@/lib/rivals";
+import { computeRivalStats, pairMachineStats, type PairMachineStat, type RivalRow, type RivalStat } from "@/lib/rivals";
+import { machineKey } from "@/lib/machineStats";
 import { buildInsights, buildPairStates, type PairState, type RivalryInsight } from "@/lib/rivalryInsights";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,11 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 const fail = (error: string, status: number) => NextResponse.json({ ok: false, error }, { status, headers: NO_STORE });
 
 const CACHE_MS = 60_000;
-const cache = new Map<string, { at: number; key: string; insights: Record<string, RivalryInsight>; pairs: Record<string, PairState> }>();
+type PairMachine = Record<string, Record<string, PairMachineStat>>;
+const cache = new Map<
+  string,
+  { at: number; key: string; insights: Record<string, RivalryInsight>; pairs: Record<string, PairState>; pairMachine: PairMachine }
+>();
 
 type MpRow = {
   match_id: string;
@@ -37,7 +42,7 @@ export async function GET(req: Request) {
   if (!code) return fail("code fehlt", 400);
 
   const sb = supabaseAdmin();
-  const { data: t, error: tErr } = await sb.from("tournaments").select("id, format").eq("code", code).maybeSingle();
+  const { data: t, error: tErr } = await sb.from("tournaments").select("id, format, location_id").eq("code", code).maybeSingle();
   if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
   if (!t) return fail("Turnier nicht gefunden", 404);
 
@@ -62,7 +67,10 @@ export async function GET(req: Request) {
   const key = `${players.map((p) => p.playerId).sort().join(",")}#${placed ?? "?"}`;
   const hit = cache.get(code);
   if (hit && hit.key === key && Date.now() - hit.at < CACHE_MS) {
-    return NextResponse.json({ ok: true, insights: hit.insights, pairs: hit.pairs, cached: true }, { headers: NO_STORE });
+    return NextResponse.json(
+      { ok: true, insights: hit.insights, pairs: hit.pairs, pairMachine: hit.pairMachine, cached: true },
+      { headers: NO_STORE }
+    );
   }
 
   const profileIds = Array.from(new Set(players.map((p) => p.profileId)));
@@ -116,6 +124,46 @@ export async function GET(req: Request) {
 
   const insights = buildInsights(players, statsByProfile);
   const pairs = buildPairStates(players, statsByProfile);
-  cache.set(code, { at: Date.now(), key, insights, pairs });
-  return NextResponse.json({ ok: true, insights, pairs }, { headers: NO_STORE });
+  // ⚔️ Bilanz je Paar an jedem Flipper DIESER Location (Admin: aufgeklappter Spieler) – Fehler → leer
+  const pairMachine = await loadPairMachine(sb, t.location_id ? String(t.location_id) : null, matchIds, rows, players, ex.excludedProfileIds).catch(
+    () => ({} as PairMachine)
+  );
+  cache.set(code, { at: Date.now(), key, insights, pairs, pairMachine });
+  return NextResponse.json({ ok: true, insights, pairs, pairMachine }, { headers: NO_STORE });
+}
+
+/** Flipper (Name) je Match – nur Matches an der Location des Turniers; dann Bilanz je Paar + Flipper */
+async function loadPairMachine(
+  sb: ReturnType<typeof supabaseAdmin>,
+  locationId: string | null,
+  matchIds: string[],
+  rows: RivalRow[],
+  players: { playerId: string; profileId: string }[],
+  excluded: ReadonlySet<string>
+): Promise<PairMachine> {
+  if (!locationId || !matchIds.length) return {};
+  const ma = await fetchAllIn<{ id: string; machine_id: string | null }>(matchIds, (chunk) =>
+    sb.from("matches").select("id, machine_id").in("id", chunk).order("id")
+  );
+  if (ma.error) throw new Error(ma.error.message);
+  const machineIds = Array.from(new Set(ma.data.map((m) => m.machine_id).filter(Boolean).map(String)));
+  const mc = await fetchAllIn<{ id: string; name: string | null; tournament_id: string | null }>(machineIds, (chunk) =>
+    sb.from("machines").select("id, name, tournament_id").in("id", chunk).order("id")
+  );
+  if (mc.error) throw new Error(mc.error.message);
+  const tIds = Array.from(new Set(mc.data.map((m) => m.tournament_id).filter(Boolean).map(String)));
+  const tl = await fetchAllIn<{ id: string; location_id: string | null }>(tIds, (chunk) =>
+    sb.from("tournaments").select("id, location_id").in("id", chunk).order("id")
+  );
+  if (tl.error) throw new Error(tl.error.message);
+  const here = new Set(tl.data.filter((x) => String(x.location_id ?? "") === locationId).map((x) => String(x.id)));
+  const keyOfMachine = new Map(
+    mc.data.filter((m) => m.tournament_id && here.has(String(m.tournament_id))).map((m) => [String(m.id), machineKey(m.name)])
+  );
+  const keyOfMatch = new Map(ma.data.map((m) => [String(m.id), m.machine_id ? keyOfMachine.get(String(m.machine_id)) ?? null : null]));
+  return pairMachineStats(
+    rows.map((r) => ({ ...r, machineKey: keyOfMatch.get(r.match_id) ?? null })),
+    players,
+    excluded
+  );
 }

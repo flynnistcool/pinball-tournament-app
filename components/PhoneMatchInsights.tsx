@@ -317,7 +317,17 @@ export default function PhoneMatchInsights({
               ) : null}
               {histOpen[pid] ? (
                 <div className="mt-2 border-t border-neutral-200/70 pt-2">
-                  <PlayerMachineHistory code={code} profileId={profileOf(pid)} machineName={machineName} liveEntries={live} />
+                  <PlayerMachineHistory
+                    code={code}
+                    profileId={profileOf(pid)}
+                    machineName={machineName}
+                    liveEntries={live}
+                    playerId={pid}
+                    opponents={info.players
+                      .filter((o) => String(o.player_id) !== pid)
+                      .map((o) => ({ id: String(o.player_id), name: nameOf(String(o.player_id)) }))}
+                    format={format}
+                  />
                 </div>
               ) : null}
             </div>

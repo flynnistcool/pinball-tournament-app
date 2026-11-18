@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export async function GET(req: Request) {
@@ -12,10 +13,14 @@ export async function GET(req: Request) {
   const { data: prof, error: pErr } = await sb.from("profiles").select("id, name, avatar_url, rating, matches_played, provisional_matches, created_at").eq("id", profileId).single();
   if (pErr || !prof) return NextResponse.json({ error: "Profil nicht gefunden" }, { status: 404 });
 
-  const { data: rows, error } = await sb
+  const { data: rows, error } = await fetchAllRows<any>(() =>
+      sb
     .from("match_players")
     .select("match_id, player_id, position, matches!inner(id, machine_id, rounds!inner(tournament_id)), players!inner(profile_id)")
-    .eq("players.profile_id", profileId);
+    .eq("players.profile_id", profileId)
+        .order("match_id")
+        .order("player_id") as any
+    );
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -23,7 +28,7 @@ export async function GET(req: Request) {
   const machineIds = Array.from(new Set((rows ?? []).map((r:any)=>r.matches?.machine_id).filter(Boolean)));
   let machineName: Record<string,string> = {};
   if (machineIds.length) {
-    const { data: ms } = await sb.from("machines").select("id, name").in("id", machineIds);
+    const { data: ms } = await fetchAllIn<any>(machineIds as string[], (chunk) => sb.from("machines").select("id, name").in("id", chunk).order("id"));
     machineName = Object.fromEntries((ms ?? []).map((m:any)=>[m.id, m.name]));
   }
 

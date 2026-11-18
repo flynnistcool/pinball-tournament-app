@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { fetchAllIn } from "@/lib/supabaseChunks";
 import { isExcludedProfile, loadHumanMatchContext, loadStatsExclusions } from "@/lib/statsExclusions";
 
 export const dynamic = "force-dynamic";
@@ -49,10 +50,13 @@ export async function POST(req: Request) {
     return noStoreJson({ rows: [] });
   }
 
-  const { data, error } = await sb
-    .from("match_players")
-    .select(
-      `
+  // 📄 In Paketen über die Turniere der Location + seitenweise laden (Supabase liefert sonst max. 1000 Zeilen
+  // und schneidet still ab → Flipper-Winrate fehlte bei Vielspielern). Gleich wie /api/public/machine-winrates.
+  const { data, error } = await fetchAllIn<any>(tournamentIds, (chunk) =>
+    sb
+      .from("match_players")
+      .select(
+        `
       match_id,
       player_id,
       position,
@@ -64,14 +68,17 @@ export async function POST(req: Request) {
         rounds!inner(tournament_id)
       )
     `
-    )
-    .in("players.profile_id", profileIds)
-    // IMPORTANT: group by *machine name* (like the player statistics page).
-    // This avoids "new machine_id" resets when you recreate machines but keep the same name.
-    .in("matches.machines.name", machineNames)
-    // Don't rely on match status. We only count rows with a position anyway.
-    .in("matches.rounds.tournament_id", tournamentIds)
-    .not("position", "is", null);
+      )
+      .in("players.profile_id", profileIds)
+      // IMPORTANT: group by *machine name* (like the player statistics page).
+      // This avoids "new machine_id" resets when you recreate machines but keep the same name.
+      .in("matches.machines.name", machineNames)
+      // Don't rely on match status. We only count rows with a position anyway.
+      .in("matches.rounds.tournament_id", chunk)
+      .not("position", "is", null)
+      .order("match_id")
+      .order("player_id") as any
+  );
 
   if (error) {
     return noStoreJson({ error: error.message, rows: [] }, { status: 500 });
