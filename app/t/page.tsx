@@ -90,6 +90,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
 import ScoreFormWatcher from "@/components/ScoreFormWatcher";
+import EloCalculator from "@/components/EloCalculator";
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
@@ -9964,6 +9965,8 @@ if (joined)
   if (joined)
   return (
     <div className="grid gap-4 grid-cols-1">
+      {/* 🧮 Elo-Rechner: versteckter Knopf rechts unten (nur Admin, ab Tablet-Breite) */}
+      {isAdmin ? <EloCalculator /> : null}
       {/* 🔸 Dein Header oben rechts (wie in AdminHome) */}
       <div className="flex items-center justify-end gap-2">
         <ThemeToggle />
@@ -10146,6 +10149,8 @@ if (joined)
 
   return (
     <div className="grid gap-4 grid-cols-1">
+      {/* 🧮 Elo-Rechner: versteckter Knopf rechts unten (nur Admin, ab Tablet-Breite) */}
+      {isAdmin ? <EloCalculator /> : null}
 
             {/* 🔸 Neuer Header oben rechts mit Logout */}
 <div className="flex items-center justify-end gap-2">

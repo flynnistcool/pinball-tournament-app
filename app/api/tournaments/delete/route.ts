@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { unbookElo } from "@/lib/eloBooking";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -56,17 +57,15 @@ export async function POST(req: Request) {
         .eq("is_bot", true);
       const botIds = new Set((botRows ?? []).map((b: any) => String(b.id)));
 
-      // Profile auf Startzustand zurücksetzen
-      for (const row of trRows) {
-        if (botIds.has(String(row.profile_id))) continue;
-        await sb
-          .from("profiles")
-          .update({
-            rating: row.rating_before,
-            matches_played: row.matches_before,
-            provisional_matches: row.provisional_before,
-          })
-          .eq("id", row.profile_id);
+      // 🏦 Anteil dieses Turniers zurückbuchen (Buchungsprinzip – Elo aus anderen Turnieren bleibt erhalten;
+      // Altbestand/ohne SQL: wie früher aufs Foto zurück). Fehler → abbrechen, bevor etwas gelöscht wird.
+      try {
+        for (const row of trRows) {
+          if (botIds.has(String(row.profile_id))) continue;
+          await unbookElo(sb, String(tid), String(row.profile_id), row as any);
+        }
+      } catch (e: any) {
+        return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });
       }
 
       // Einträge aus tournament_ratings für dieses Turnier entfernen

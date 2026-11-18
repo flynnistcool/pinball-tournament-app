@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { eloAllowedInFormat } from "@/lib/botRules";
+import { bookElo, type BookStatus } from "@/lib/eloBooking";
 
 // ✅ no-store (verhindert Next/Vercel Caching)
 export const dynamic = "force-dynamic";
@@ -113,18 +114,19 @@ export async function POST(req: Request) {
 
   const roundIds = (rounds ?? []).map((r: any) => r.id);
 
-  // Wenn keine fertigen Elo-Runden: auf Startwerte zurücksetzen und fertig
+  // Wenn keine fertigen Elo-Runden: Ergebnis dieses Turniers = 0 (🏦 eigenen Anteil zurückbuchen, andere Turniere bleiben)
   if (!roundIds.length) {
-    for (const row of trRows) {
-      if (isBotProfile(row.profile_id)) continue; // 🤖 Bot-Elo bleibt fest
-      await sb
-        .from("profiles")
-        .update({
-          rating: row.rating_before,
-          matches_played: row.matches_before,
-          provisional_matches: row.provisional_before,
-        })
-        .eq("id", row.profile_id);
+    try {
+      for (const row of trRows) {
+        if (isBotProfile(row.profile_id)) continue; // 🤖 Bot-Elo bleibt fest
+        await bookElo(sb, String(t.id), String(row.profile_id), {
+          rating: Number(row.rating_before),
+          matches: Number(row.matches_before ?? 0),
+          provisional: Number(row.provisional_before ?? 0),
+        });
+      }
+    } catch (e: any) {
+      return json({ error: String(e?.message ?? e) }, 500);
     }
 
     return json({
@@ -377,22 +379,27 @@ for (const r of rounds ?? []) {
   lastRoundShieldedByProfile = shieldedThisRound;
 }
 
-  // 6) Profile aktualisieren
-  for (const [profileId, st] of stateByProfile.entries()) {
-    if (isBotProfile(profileId)) continue; // 🤖 Bot-Elo bleibt fest
-    await sb
-      .from("profiles")
-      .update({
+  // 6) Profile aktualisieren – 🏦 Buchungsprinzip: nur der Unterschied zum bisher Gebuchten kommt ins Profil
+  //    (lib/eloBooking.ts → DB-Funktion elo_book). Gleichzeitige Turniere überschreiben sich so nicht mehr.
+  const booking: Record<string, number> = {};
+  try {
+    for (const [profileId, st] of Array.from(stateByProfile.entries())) {
+      if (isBotProfile(profileId)) continue; // 🤖 Bot-Elo bleibt fest
+      const status: BookStatus = await bookElo(sb, String(t.id), profileId, {
         rating: st.rating,
-        matches_played: st.matches_played,
-        provisional_matches: st.provisional_matches,
-      })
-      .eq("id", profileId);
+        matches: st.matches_played,
+        provisional: st.provisional_matches,
+      });
+      booking[status] = (booking[status] ?? 0) + 1;
+    }
+  } catch (e: any) {
+    return json({ error: String(e?.message ?? e), booking }, 500);
   }
 
   return json({
     ok: true,
     message: "Elo für dieses Turnier wurde neu berechnet.",
+    booking, // 🏦 z. B. { booked: 8 } – "fallback" = SQL noch nicht ausgeführt
     shieldedByProfile: lastRoundShieldedByProfile, // ✅ nur letzte Runde
   });
 }
