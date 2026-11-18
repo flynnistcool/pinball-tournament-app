@@ -19,11 +19,23 @@ export type PriorRecords = {
   monthly: Record<string, PriorRecord>;
   /** `${profileId}|${machineKey}` → bisheriger persönlicher Bestwert */
   personal: Record<string, number>;
+  /** `${profileId}|${machineKey}` → woher der persönliche Bestwert stammt (für den Mouseover) */
+  personalInfo?: Record<string, PersonalRecordInfo>;
+  /** `${profileId}|${machineKey}` → Durchschnittsscore + Anzahl Spiele (gleiche Basis wie der Bestwert) */
+  personalAvg?: Record<string, { avg: number; n: number }>;
+  /** `${profileId}|${machineKey}` → alle bisherigen Scores (älteste zuerst) – für den Verlauf beim Aufklappen */
+  personalHistory?: Record<string, PersonalHistoryEntry[]>;
   /** 🤖/🚫 Profile im laufenden Turnier, die keine Allzeit-/30-Tage-Rekorde halten dürfen (Bots, Platzhalter) */
   excludedProfiles?: string[];
   /** 🎰 `${profileId}|${machineKey}`: an dieser Location schon gespielt – alle anderen Turniere dort, jedes Format */
   played?: string[];
 };
+
+/** Herkunft eines persönlichen Bestwerts: Turnierdatum, Turniername, Format */
+export type PersonalRecordInfo = { at: string | null; tournament: string | null; format: string | null };
+
+/** ein bisheriger Score eines Spielers auf einem Flipper */
+export type PersonalHistoryEntry = PersonalRecordInfo & { score: number };
 
 export const personalKey = (profileId: string, mKey: string) => `${profileId}|${mKey}`;
 
@@ -45,7 +57,12 @@ export function buildPriorRecords(input: {
   recentTournamentIds?: readonly string[];
   /** Turnier-ID → Datum (für "aufgestellt am") */
   tournamentDates?: Readonly<Record<string, string | null>>;
+  /** Turnier-ID → Name + Format (für "aufgestellt in") */
+  tournamentInfo?: Readonly<Record<string, { name: string | null; format: string | null }>>;
+  /** nur diese Turniere zählen für den Durchschnitt (gleiches Punkteniveau); fehlt = alle */
+  avgTournamentIds?: readonly string[];
 }): PriorRecords {
+  const avgOk = input.avgTournamentIds ? new Set(input.avgTournamentIds.map(String)) : null;
   const machineById = new Map(input.machines.map((m) => [String(m.id), m]));
   const machineIdByMatch = new Map(input.matches.map((m) => [String(m.id), m.machine_id ? String(m.machine_id) : null]));
   const playerById = new Map(input.players.map((p) => [String(p.id), p]));
@@ -55,6 +72,9 @@ export function buildPriorRecords(input: {
   const records: Record<string, PriorRecord> = {};
   const monthly: Record<string, PriorRecord> = {};
   const personal: Record<string, number> = {};
+  const personalInfo: Record<string, PersonalRecordInfo> = {};
+  const personalSum: Record<string, { sum: number; n: number }> = {};
+  const personalHistory: Record<string, PersonalHistoryEntry[]> = {};
 
   for (const mp of input.matchPlayers) {
     const score = toScore(mp.score);
@@ -81,10 +101,33 @@ export function buildPriorRecords(input: {
     const pid = player?.profile_id ? String(player.profile_id) : null;
     if (pid && wanted.has(pid)) {
       const pk = personalKey(pid, key);
-      if (!(pk in personal) || score > personal[pk]) personal[pk] = score;
+      const tid = machine?.tournament_id ? String(machine.tournament_id) : null;
+      const info: PersonalRecordInfo = {
+        at: tid ? input.tournamentDates?.[tid] ?? null : null,
+        tournament: tid ? input.tournamentInfo?.[tid]?.name ?? null : null,
+        format: tid ? input.tournamentInfo?.[tid]?.format ?? null : null,
+      };
+      if (!avgOk || (tid && avgOk.has(tid))) {
+        const acc = personalSum[pk] ?? (personalSum[pk] = { sum: 0, n: 0 });
+        acc.sum += score;
+        acc.n += 1;
+      }
+      (personalHistory[pk] ?? (personalHistory[pk] = [])).push({ score, ...info });
+      const prev = personalInfo[pk];
+      if (!(pk in personal) || score > personal[pk]) {
+        personal[pk] = score;
+        personalInfo[pk] = info;
+      } else if (score === personal[pk] && info.at && (!prev?.at || info.at < prev.at)) {
+        personalInfo[pk] = info; // gleich hoch → der erste (älteste) zählt
+      }
     }
   }
-  return { records, monthly, personal };
+  const personalAvg: Record<string, { avg: number; n: number }> = {};
+  for (const [pk, a] of Object.entries(personalSum)) personalAvg[pk] = { avg: Math.round(a.sum / a.n), n: a.n };
+  for (const list of Object.values(personalHistory)) {
+    list.sort((a, b) => String(a.at ?? "").localeCompare(String(b.at ?? "")));
+  }
+  return { records, monthly, personal, personalInfo, personalAvg, personalHistory };
 }
 
 /** Ein Score im laufenden Turnier (Match + Spieler). */

@@ -34,6 +34,11 @@ export async function POST(req: Request) {
     );
   }
 
+  // 🛡️ Elo-Felder sind optional: nur was mitgeschickt wird, wird geändert
+  // (Farbe/Icon/Name speichern darf nie einen alten Elo-Wert zurückschreiben).
+  const hasRating = rating !== undefined && rating !== null;
+  const hasProvisional = provisionalMatches !== undefined && provisionalMatches !== null;
+
   // Rating normalisieren
   const ratingNum = Number(rating);
   const newRating =
@@ -59,12 +64,33 @@ export async function POST(req: Request) {
 
   const sb = supabaseAdmin();
 
+  // 🛡️ Elo ändern ist gesperrt, solange der Spieler in einem laufenden Turnier ist
+  // (das Turnier rechnet seine Elo laufend neu und würde die Änderung überschreiben bzw. durcheinanderbringen).
+  if (hasRating || hasProvisional || resetMatchesPlayed) {
+    const running = await runningTournamentsOf(sb, id);
+    if (running.error) {
+      return NextResponse.json({ ok: false, error: running.error }, { status: 500 });
+    }
+    if (running.names.length) {
+      const list = running.names.map((n) => `„${n}“`).join(", ");
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            `Elo kann gerade nicht geändert werden – der Spieler ist im laufenden Turnier ${list}. ` +
+            `Bitte erst das Turnier beenden. (Farbe, Icon usw. lassen sich ohne Elo-Änderung speichern.)`,
+        },
+        { status: 409 }
+      );
+    }
+  }
+
   const update: any = {
-    rating: newRating,
-    provisional_matches: newProvisional,
     color: colorStr,
     icon: iconStr,
   };
+  if (hasRating) update.rating = newRating;
+  if (hasProvisional) update.provisional_matches = newProvisional;
 
   // 🤖 KI-Bot-Schalter nur ändern, wenn er mitgeschickt wird (alte Aufrufer bleiben unverändert)
   if (typeof isBot === "boolean") {
@@ -94,5 +120,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ profile: data });
+  return NextResponse.json({ ok: true, profile: data });
+}
+
+/** Namen der nicht beendeten Turniere, in denen dieses Profil mitspielt */
+async function runningTournamentsOf(
+  sb: ReturnType<typeof supabaseAdmin>,
+  profileId: string
+): Promise<{ names: string[]; error?: string }> {
+  const { data: pl, error: pErr } = await sb.from("players").select("tournament_id").eq("profile_id", profileId);
+  if (pErr) return { names: [], error: pErr.message };
+  const ids = Array.from(new Set((pl ?? []).map((p: any) => p.tournament_id).filter(Boolean)));
+  if (!ids.length) return { names: [] };
+  const { data: ts, error: tErr } = await sb.from("tournaments").select("id, name, code, status").in("id", ids);
+  if (tErr) return { names: [], error: tErr.message };
+  return {
+    names: (ts ?? [])
+      .filter((t: any) => String(t.status ?? "") !== "finished")
+      .map((t: any) => String(t.name || t.code || "?")),
+  };
 }

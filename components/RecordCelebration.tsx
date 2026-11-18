@@ -24,6 +24,7 @@ export { playDing };
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert (createPortal funktioniert trotzdem)
 import { createPortal } from "react-dom";
 import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type Celebration, type PriorRecords } from "@/lib/recordWatch";
+import { scoreForm } from "@/lib/scoreForm";
 import { isWinMilestone, liveWinsFrom, milestoneIcon, milestoneTitle } from "@/lib/winMilestones";
 import {
   completedMatchIds,
@@ -170,6 +171,12 @@ function feedItemOf(c: Shown): FeedItemInput {
   return { ...base, players: [String(c.key).split("|")[0]], data: { player: c.playerName, n: c.n, mode: c.mode } };
 }
 
+/** 📊 angehängter Score-Form-Satz (nur Highscore-Meldungen) */
+function formSuffix(c: Shown): string {
+  const line = (c as { formLine?: string }).formLine;
+  return line ? ` · ${line}` : "";
+}
+
 function feedItemText(c: Shown): FeedItemInput {
   switch (c.kind) {
     case "record":
@@ -178,7 +185,7 @@ function feedItemText(c: Shown): FeedItemInput {
         kind: "record",
         icon: "🏆",
         title: "Allzeit-Highscore!",
-        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}`,
+        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}` + formSuffix(c),
       };
     case "month":
       return {
@@ -186,7 +193,7 @@ function feedItemText(c: Shown): FeedItemInput {
         kind: "month",
         icon: "🥇",
         title: "30-Tage-Highscore",
-        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}`,
+        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}` + formSuffix(c),
       };
     case "personal":
       return {
@@ -194,7 +201,7 @@ function feedItemText(c: Shown): FeedItemInput {
         kind: "personal",
         icon: "💪",
         title: "Persönlicher Highscore",
-        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}`,
+        body: `${c.entry.playerName} an ${c.entry.machineName ?? "?"} – ${fmt(c.entry.score)}` + formSuffix(c),
       };
     case "wins":
       return {
@@ -774,6 +781,7 @@ function RecordCelebrationInner({
           records: j.records ?? {},
           monthly: j.monthly ?? {},
           personal: j.personal ?? {},
+          personalAvg: j.personalAvg ?? {}, // 📊 Schnitt je Spieler+Flipper → Satz an der Highscore-Meldung
           excludedProfiles: j.excludedProfiles ?? [], // 🤖/🚫 kein Rekord-Jubel für Bots/Platzhalter
           played: Array.isArray(j.played) ? j.played.map(String) : [], // 🎰 schon irgendwann gespielt
         });
@@ -884,7 +892,13 @@ function RecordCelebrationInner({
         seen.set(e.key, e.score);
         if (!enabledRef.current || finished) continue;
         const c = evaluateEntry(e, pr, entries);
-        if (c) found.push(c);
+        if (c) {
+          // 📊 Score-Form an die Highscore-Meldung hängen (statt eigener Meldung, siehe ScoreFormWatcher)
+          const a = e.profileId ? pr.personalAvg?.[personalKey(e.profileId, e.machineKey)] : null;
+          const form = a ? scoreForm(e.score, a.avg, a.n, `${e.key}|${e.score}`) : null;
+          if (form) (c as { formLine?: string }).formLine = form.line;
+          found.push(c);
+        }
       }
       // gelöschte Scores vergessen
       const live = new Set(entries.map((e) => e.key));

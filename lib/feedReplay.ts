@@ -9,7 +9,7 @@
 //     Durchgang geschafft (mit Rückblick), 🔥 On fire, 🧯 Serie beendet, 🛡️ Noch unbesiegt, 💔 Traum geplatzt
 //     (nicht Round the Pinball), 🥋 Flawless Victory, 🏁 Turnier beendet
 //   Schritt 2 – mit Zusatzdaten (FeedContext): 🏆 🥇 💪 Highscores, 🎰 Flipper-Premiere, 🎉 Matchsieg-Meilenstein,
-//     🧊 Favoritensturz, 📸 Fotofinish, 💣 Kantersieg, 🔄 Revanche
+//     🧊 Favoritensturz, 📸 Fotofinish, 💣 Kantersieg, 🔄 Revanche, 📊 Score-Form (Score vs. eigener Schnitt)
 //   Nicht (hängen am zeitlichen Verlauf): 👑 Tabellenführer, 📈 Elo-Meilenstein, ⚔️ Duelle → nur Admin-Seite
 //
 // sig = die Daten, an denen eine Meldung hängt – ändert sich sig, startet der 10-s-Tippfehler-Schutz neu.
@@ -20,7 +20,8 @@ import { rotationProgress, rotationWaveMap } from "@/lib/rotationTurn";
 import { roundSummary, rotationWaveSummary, summaryText } from "@/lib/roundSummary";
 import { matchWinValue, streakMin, streakMode, streakText } from "@/lib/winStreaks";
 import { flawlessMode, flawlessText, flawlessWinners, rotationAllDone, unbeatenStep } from "@/lib/flawless";
-import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type PriorRecords } from "@/lib/recordWatch";
+import { evaluateEntry, liveEntriesFrom, machineKey, personalKey, type LiveEntry, type PriorRecords } from "@/lib/recordWatch";
+import { scoreForm, scoreFormFeedItem } from "@/lib/scoreForm";
 import { isWinMilestone } from "@/lib/winMilestones";
 import { premiereSlots, slotKey } from "@/lib/premiere";
 import { completedMatchIds, MOMENT_ICON, MOMENT_TITLE, momentData, momentMode, momentsForMatch, momentText } from "@/lib/matchMoments";
@@ -372,10 +373,54 @@ function recordItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
         kind: c.kind,
         icon: meta[c.kind].icon,
         title: meta[c.kind].title,
-        body: `${e.playerName} an ${e.machineName ?? "?"} – ${fmtNum(e.score)}`,
+        body: `${e.playerName} an ${e.machineName ?? "?"} – ${fmtNum(e.score)}` + formSuffixFor(e, pr),
         players: [pid],
         data: { player: e.playerName, machine: e.machineName ?? "?", score: e.score },
       },
+      sig: `${e.score}`,
+    });
+  }
+}
+
+/** 📊 Score-Form-Satz zu einem Score (gleiche Rechnung wie die Geräte, lib/scoreForm.ts) */
+function formFor(e: LiveEntry, pr: PriorRecords) {
+  const a = e.profileId ? pr.personalAvg?.[personalKey(e.profileId, e.machineKey)] : null;
+  const form = a ? scoreForm(e.score, a.avg, a.n, `${e.key}|${e.score}`) : null;
+  return form && a ? { form, a } : null;
+}
+function formSuffixFor(e: LiveEntry, pr: PriorRecords): string {
+  const f = formFor(e, pr);
+  return f ? ` · ${f.form.line}` : "";
+}
+
+/** 📊 Score-Form (Turnier-Shortnews): jeder Score im Vergleich zum eigenen Schnitt – außer bei neuem Highscore
+ *  (dort hängt der Satz an der Highscore-Meldung). Gleiche Kennung wie components/ScoreFormWatcher.tsx. */
+function scoreFormItems(data: MmData, ctx: FeedContext, out: FeedCandidate[]) {
+  const pr = ctx.records;
+  if (!pr || !pr.enabled) return;
+  const excluded = new Set(pr.excludedProfiles ?? []);
+  const entries = liveEntriesFrom(data);
+  const machineOfMatch = new Map(data.matches.map((m) => [String(m.id), String(m.machine_id ?? "")]));
+  const iconOfMachine = new Map(
+    (data.machines ?? []).map((m) => [String(m.id), String((m as { icon_emoji?: string | null }).icon_emoji ?? "").trim() || null])
+  );
+  for (const e of entries) {
+    if (!e.profileId || excluded.has(e.profileId)) continue;
+    if (evaluateEntry(e, pr, entries)) continue; // neuer Highscore → Satz hängt dort
+    const f = formFor(e, pr);
+    if (!f) continue;
+    const matchId = e.key.split("|")[0];
+    out.push({
+      item: scoreFormFeedItem({
+        entryKey: e.key,
+        playerName: e.playerName,
+        machineName: e.machineName ?? "?",
+        machineIcon: iconOfMachine.get(machineOfMatch.get(matchId) ?? "") ?? null,
+        score: e.score,
+        avg: f.a.avg,
+        n: f.a.n,
+        form: f.form,
+      }),
       sig: `${e.score}`,
     });
   }
@@ -521,6 +566,7 @@ export function feedCandidates(data: MmData, ctx?: FeedContext | null): FeedCand
   if (ctx) {
     premiereItems(data, ctx, out, premiereWins);
     recordItems(data, ctx, out);
+    scoreFormItems(data, ctx, out);
     winItems(data, ctx, out);
     momentItems(data, ctx, out);
   }

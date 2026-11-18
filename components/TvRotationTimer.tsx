@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import RotationTimerBadge, { type RotationTimerState } from "@/components/RotationTimerBadge";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
+import MusicPreviewButton from "@/components/MusicPreviewButton";
 import { pickTrack, loadMusicChoice, saveMusicChoice, ROTATION_CATEGORIES, ROTATION_TRACKS, type MusicChoice } from "@/lib/rotationMusic";
 import { normalizeSoundSettings, SOUND_SETTINGS_KEY, TIMER_MINUTE_OPTIONS, type SoundSettings } from "@/lib/soundSettings";
 import { rotationSpeech, SPEECH_LOCALE, type SpeechLang } from "@/lib/speechTexts";
@@ -337,6 +338,12 @@ export default function TvRotationTimer({
           <span className="mb-2 flex items-center justify-between">
             <span className="text-sm font-semibold">Rotation Timer (TV)</span>
             <span className="flex items-center gap-1">
+              <MusicPreviewButton
+                choice={music}
+                volume={settings.musicVol}
+                disabled={running || paused}
+                className="rounded-lg px-1.5 text-base text-white/60 hover:bg-white/10 disabled:opacity-40"
+              />
               <button type="button" onClick={() => setFull(true)} disabled={!local} className="rounded-lg px-1.5 text-base text-white/60 hover:bg-white/10 disabled:opacity-40" title="Timer groß anzeigen (Vollbild)">
                 ⛶
               </button>

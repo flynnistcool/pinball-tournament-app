@@ -443,6 +443,17 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     },
   },
   {
+    id: "scoreForm",
+    icon: "📊",
+    title: "Shortnews: Score im Vergleich zum eigenen Schnitt",
+    when:
+      "Nach jedem Score (10 s Tippfehler-Schutz): Vergleich mit dem eigenen Schnitt auf diesem Flipper an dieser Location (gleiches Punkteniveau, ab 3 früheren Spielen) – 🚀 Ultra · 🔥 Mega · 💪 Stark · 😌 Solide · 😬 Ausbaufähig · 🙈 Streichergebnis. Bei neuem Highscore hängt der Satz an der Highscore-Meldung. Nicht bei Timeplay/DYP.",
+    devices: {
+      phone: PHONE_ME,
+      ticker: TICKER,
+    },
+  },
+  {
     id: "timer",
     icon: "⏱️",
     title: "Round-the-Pinball-Timer: Ansagen & End-Ton",
@@ -609,6 +620,7 @@ export function serverHandlesKind(kind: string, rotation: boolean): boolean {
       "photo",
       "blowout",
       "revenge",
+      "scoreForm",
     ].includes(kind)
   )
     return true;
@@ -682,6 +694,7 @@ const SCOPE_OF: Record<string, NotifScope> = {
   rivalryInsight: "duell",
   matchShort: "short",
   waveShort: "short",
+  scoreForm: "short",
 };
 
 export function scopeOf(kind: string): NotifScope | null {

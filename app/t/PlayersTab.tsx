@@ -1949,6 +1949,12 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
     const provisionalMatches = Number(draft.provisional || 10);
     const resetMatchesPlayed = draft.resetMatchesPlayed === true;
 
+    // 🛡️ Elo-Felder nur mitschicken, wenn sie wirklich geändert wurden –
+    // sonst würde ein länger offenes Formular einen alten (gerundeten) Elo-Wert zurückschreiben.
+    const orig = profiles.find((p) => String(p.id) === String(id));
+    const ratingChanged = !orig || orig.rating == null || Math.round(orig.rating) !== rating;
+    const provisionalChanged = !orig || (orig.provisional_matches ?? 10) !== provisionalMatches;
+
     setSavingKey(id);
     setError(null);
     try {
@@ -1957,8 +1963,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id,
-          rating,
-          provisionalMatches,
+          ...(ratingChanged ? { rating } : {}),
+          ...(provisionalChanged ? { provisionalMatches } : {}),
           resetMatchesPlayed,
           color: draft.color || null,
           icon: draft.icon || null,

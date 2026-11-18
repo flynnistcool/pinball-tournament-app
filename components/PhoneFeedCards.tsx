@@ -14,7 +14,7 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 
 const FOR_ALL = new Set(["record", "month", "flawless"]);
-const FOR_ME = new Set(["personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark"]);
+const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -36,6 +36,7 @@ const TONE: Record<string, string> = {
   premiere: "border-pink-200 bg-pink-50 text-pink-900",
   premiereWin: "border-amber-200 bg-gradient-to-r from-fuchsia-50 to-amber-50 text-amber-900",
   eloMark: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  scoreForm: "border-indigo-200 bg-indigo-50 text-indigo-900",
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
@@ -133,6 +134,11 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
                 : `${d.beaten ?? d.n} Siege, keine einzige Niederlage – makelloses Turnier!`,
           }
         : { title: x.title, text: x.body };
+    case "scoreForm":
+      return {
+        title: d.score != null ? `Dein Score an ${machine}: ${fmt(d.score)}` : x.title,
+        text: typeof d.line === "string" ? d.line : x.body,
+      };
     case "streakEnd":
       return {
         title: "Serie beendet! 🧯",

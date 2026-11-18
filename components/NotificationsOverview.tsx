@@ -157,7 +157,7 @@ export default function NotificationsOverview() {
             Sicherheitsnetz: Die Admin-Seite trägt wie bisher sofort ein. Zusätzlich rechnet der Server nach und
             ergänzt, was fehlt – z. B. wenn das iPad aus war oder die Seite im Hintergrund lag (etwa 10–20 s später).
             Es reicht, wenn irgendein Gerät offen ist (TV, Handy, Admin). Gilt für: Runde generiert/abgeschlossen,
-            Durchgänge, On fire, Serie beendet, Noch unbesiegt, Traum geplatzt, Flawless Victory, Turnierende.
+            Durchgänge, On fire, Serie beendet, Noch unbesiegt, Traum geplatzt, Flawless Victory, Turnierende, Score im Vergleich zum Schnitt.
             Ausschalten = wieder wie vorher.
             Benötigt einmalig <code>supabase_tournament_feed_state.sql</code> (10-Sekunden-Tippfehler-Schutz).
           </span>

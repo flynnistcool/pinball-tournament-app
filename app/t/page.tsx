@@ -28,6 +28,7 @@ import EntryLogMatchLine from "@/components/EntryLogLine";
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
+import MusicPreviewButton from "@/components/MusicPreviewButton";
 import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdown";
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } from "@/components/RivalryBadge";
 import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
@@ -87,6 +88,8 @@ import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
 import ThemeToggle from "@/components/ThemeToggle";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
+import PlayerMachineHistory from "@/components/PlayerMachineHistory";
+import ScoreFormWatcher from "@/components/ScoreFormWatcher";
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
@@ -5286,6 +5289,7 @@ function RotationGlobalTimerSticky({
   onMusicChoice,
   defaultMinutes,
   onOpenSettings,
+  musicVol,
 }: {
   locked: boolean;
   timeLeftLabel: string;
@@ -5303,6 +5307,8 @@ function RotationGlobalTimerSticky({
   /** ⚙️ Standard-Dauer aus den Sound- & Timer-Einstellungen */
   defaultMinutes?: number;
   onOpenSettings?: () => void;
+  /** ▶️ Probehören: Lautstärke wie die Timer-Musik (0..1) */
+  musicVol?: number;
 }) {
   const [minutes, setMinutes] = useState(defaultMinutes ?? 10);
   // neue Standard-Dauer übernehmen, solange der Timer nicht läuft
@@ -5336,6 +5342,14 @@ function RotationGlobalTimerSticky({
       <div className="flex items-center justify-between gap-2 px-2.5 pt-3 pb-2 border-b">
         <div className="text-sm font-semibold">Rotation Timer</div>
         <div className="flex items-center gap-0.5">
+        {onMusicChoice ? (
+          <MusicPreviewButton
+            choice={musicChoice ?? "random"}
+            volume={musicVol ?? 0.43}
+            disabled={locked || running || paused}
+            className="-my-1 rounded-lg px-1.5 py-0.5 text-base text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
+          />
+        ) : null}
         {onFullscreen ? (
           <button
             type="button"
@@ -6373,6 +6387,8 @@ function RoundMatchesCard({
   playersCount?: number | null;
 }) {
   const [openRoundId, setOpenRoundId] = useState<string | null>(null);
+  // 📈 aufgeklappter Spieler-Verlauf im Match (Schlüssel matchId|playerId)
+  const [mhOpen, setMhOpen] = useState<Record<string, boolean>>({});
   // ✅ Elimination: alle aktiven (status=open) Runden bleiben automatisch aufgeklappt.
   // Finished-Runden können optional manuell aufgeklappt werden.
   const [openFinishedRoundIds, setOpenFinishedRoundIds] = useState<Set<string>>(() => new Set());
@@ -8810,13 +8826,25 @@ disabled={
 <div className="flex flex-col min-w-0">
   <div className="flex flex-col gap-0.5">
   <div className="flex items-center gap-2 text-[14px]">
-    <PlayerPill
-      player={
-        playersById[mp.player_id] ?? {
-          name: "Unbekannt",
+    {/* 📈 Antippen = Verlauf auf diesem Flipper auf-/zuklappen */}
+    <button
+      type="button"
+      className="min-w-0 rounded-lg text-left hover:opacity-80"
+      title="Alle Scores auf diesem Flipper hier anzeigen"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={() => {
+        const key = k(mp.match_id, mp.player_id);
+        setMhOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+      }}
+    >
+      <PlayerPill
+        player={
+          playersById[mp.player_id] ?? {
+            name: "Unbekannt",
+          }
         }
-      }
-    />
+      />
+    </button>
     {/* dezent: aktuelle Elo hinter dem Namen (Bots haben ihr Abzeichen unten) */}
     {!playersById?.[mp.player_id]?.isBot && typeof playersById?.[mp.player_id]?.elo === "number" ? (
       <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">
@@ -9434,6 +9462,17 @@ try {
                         ) : null}
 
                     </div>
+                    {/* 📈 aufgeklappt: alle Scores dieses Spielers auf diesem Flipper hier */}
+                    {mhOpen[k(mp.match_id, mp.player_id)] ? (
+                      <div className="basis-full border-t border-neutral-200/70 pt-2" onPointerDown={(e) => e.stopPropagation()}>
+                        <PlayerMachineHistory
+                          code={code}
+                          profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
+                          machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
+                          liveEntries={liveRecordEntries}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </SortablePlayerRow>
               );
@@ -13962,6 +14001,8 @@ const tasksById = useMemo(() => {
       {!isRotationFormat && isAdmin ? (
         <ShortNewsWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} />
       ) : null}
+      {/* 📊 Score-Form: jeder Score im Vergleich zum eigenen Schnitt (alle Formate außer Timeplay/DYP) */}
+      {isAdmin ? <ScoreFormWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} /> : null}
       <RecordCelebration
         code={code}
         data={data}
@@ -14862,6 +14903,7 @@ const tasksById = useMemo(() => {
       onMusicChoice={setRotMusicChoice}
       defaultMinutes={soundSettings.defaultMinutes}
       onOpenSettings={() => setSoundOpen(true)}
+      musicVol={soundSettings.musicVol}
       onFullscreen={() => {
         rotTimerAutoOpenedRef.current = true;
         setRotTimerFullscreen(true);

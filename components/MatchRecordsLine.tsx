@@ -7,13 +7,23 @@
 
 import { useBadgeOn } from "@/components/DisplayDevice";
 import { useEffect, useState } from "react";
-import type { LiveEntry, PriorRecords } from "@/lib/recordWatch";
+import { machineKey, personalKey, type LiveEntry, type PriorRecords } from "@/lib/recordWatch";
+import { personalRecordTitle as personalTitle } from "@/lib/personalRecordTitle";
+import { levelText } from "@/lib/scoreForm";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 type Loaded = {
   enabled: boolean;
   prior: Pick<PriorRecords, "records" | "monthly" | "excludedProfiles">;
   personal: PriorRecords["personal"];
+  /** woher der persönliche Bestwert stammt (Mouseover) */
+  personalInfo: NonNullable<PriorRecords["personalInfo"]>;
+  /** Ø-Score + Anzahl Spiele je Profil|Flipper */
+  personalAvg: NonNullable<PriorRecords["personalAvg"]>;
+  /** alle bisherigen Scores je Profil|Flipper (Verlauf beim Aufklappen) */
+  personalHistory: NonNullable<PriorRecords["personalHistory"]>;
+  /** Punkteniveau, nach dem der Ø gebildet wird ("normal" | "high") */
+  avgLevel: string | null;
   /** 🎰 an dieser Location schon gespielt (Profil|Flipper) */
   played: ReadonlySet<string>;
   /** für diese Profile wurde gerechnet (fehlt eins → neu laden) */
@@ -40,6 +50,10 @@ function loadRecords(code: string, force = false): Promise<Loaded | null> {
         enabled: !!j.enabled,
         prior: { records: j.records ?? {}, monthly: j.monthly ?? {}, excludedProfiles: j.excludedProfiles ?? [] },
         personal: j.personal ?? {},
+        personalInfo: j.personalInfo ?? {},
+        personalAvg: j.personalAvg ?? {},
+        personalHistory: j.personalHistory ?? {},
+        avgLevel: j.avgLevel ?? null,
         played: new Set<string>(Array.isArray(j.played) ? j.played.map(String) : []),
         profiles: new Set<string>(Array.isArray(j.profiles) ? j.profiles.map(String) : []),
       };
@@ -183,6 +197,7 @@ function PersonalBestLineInner({
   if (!profileId || !machineName || !loaded?.enabled) return null;
 
   const { before, today } = personalForMachine(profileId, machineName, loaded.personal, liveEntries);
+  const avg = loaded.personalAvg?.[personalKey(String(profileId), machineKey(machineName))];
   const beaten = before != null && today != null && today > before;
   const premiere = premiereOn && isPremiere(profileId, machineName, loaded.personal, liveEntries, matchId, loaded.played);
   return (
@@ -197,13 +212,24 @@ function PersonalBestLineInner({
       ) : null}
       <span>💪 Pers. Highscore</span>
       {/* leer = noch nie an dieser Location auf dem Flipper gespielt */}
-      {before != null ? <span className="font-semibold text-indigo-600">{fmt(before)}</span> : null}
-      {today != null ? (
-        <span className={beaten ? "font-semibold text-emerald-600" : ""}>
-          · heute {fmt(today)}
-          {beaten ? " 🎉 übertroffen" : ""}
+      {before != null ? (
+        <span
+          className="cursor-help font-semibold text-indigo-600"
+          title={personalTitle(loaded.personalInfo[personalKey(String(profileId), machineKey(machineName))])}
+        >
+          {fmt(before)}
         </span>
       ) : null}
+      {avg && avg.n > 0 ? (
+        <span
+          className="cursor-help"
+          title={`Durchschnittsscore aus ${avg.n} ${avg.n === 1 ? "Spiel" : "Spielen"} an diesem Flipper (${levelText(loaded.avgLevel)}, beendete Turniere hier, ohne heute)`}
+        >
+          · Ø <span className="font-semibold text-neutral-700">{fmt(avg.avg)}</span>
+        </span>
+      ) : null}
+      {/* "heute" steht schon im Punkte-Feld daneben – nur noch das Übertroffen-Zeichen */}
+      {beaten ? <span className="font-semibold text-emerald-600">🎉 übertroffen</span> : null}
     </div>
   );
 }

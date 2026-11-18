@@ -11,7 +11,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
-import { liveEntriesFrom } from "@/lib/recordWatch";
+import { liveEntriesFrom, machineKey, personalKey } from "@/lib/recordWatch";
+import PlayerMachineHistory from "@/components/PlayerMachineHistory";
+import { levelText } from "@/lib/scoreForm";
 import { topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import StreakFire from "@/components/StreakFire";
@@ -113,6 +115,8 @@ export default function PhoneMatchInsights({
   const mwrRows = useMachineWinrates(code);
 
   const live = useMemo(() => liveEntriesFrom(data), [data]);
+  // 📈 Name antippen = alle Scores dieses Spielers auf dem Flipper hier auf-/zuklappen (wie im Admin)
+  const [histOpen, setHistOpen] = useState<Record<string, boolean>>({});
   const twr = useMemo(() => tournamentWinrates(data), [data]);
 
   const profileOf = (pid: string) => {
@@ -121,8 +125,13 @@ export default function PhoneMatchInsights({
   };
   const nameOf = (pid: string) => String(data.players.find((x) => String(x.id) === String(pid))?.name ?? "?");
 
-  // Round the Pinball: alle spielen jeden Flipper → nur die eigene Zeile zeigen
-  const rows = isRotation ? info.players.filter((mp) => String(mp.player_id) === String(meId)) : info.players;
+  // Round the Pinball: alle spielen jeden Flipper → alle zeigen, die eigene Zeile ganz oben
+  const rows = isRotation
+    ? [
+        ...info.players.filter((mp) => String(mp.player_id) === String(meId)),
+        ...info.players.filter((mp) => String(mp.player_id) !== String(meId)),
+      ]
+    : info.players;
 
   const mwrFor = (pid: string): MwrRow | null => {
     const prof = profileOf(pid);
@@ -233,7 +242,15 @@ export default function PhoneMatchInsights({
           return (
             <div key={pid} className={"px-3 py-2 " + (isMe ? "bg-indigo-50/60" : "")}>
               <div className="flex items-center gap-1.5 font-bold">
-                <span className="truncate">{nameOf(pid)}</span>
+                <button
+                  type="button"
+                  className="truncate text-left active:opacity-70"
+                  onClick={() => setHistOpen((prev) => ({ ...prev, [pid]: !prev[pid] }))}
+                  aria-expanded={!!histOpen[pid]}
+                  title="Alle Scores auf diesem Flipper hier anzeigen"
+                >
+                  {nameOf(pid)} <span className="text-xs font-normal text-neutral-400">{histOpen[pid] ? "▴" : "▾"}</span>
+                </button>
                 {(() => {
                   // dezent: aktuelle Elo hinter dem Namen (Bots: lila Abzeichen)
                   const pr = (data.profiles ?? []).find((x) => String(x.id) === profileOf(pid));
@@ -284,12 +301,23 @@ export default function PhoneMatchInsights({
                   ) : (
                     <span className="text-neutral-400">noch keiner</span>
                   )}
-                  {pb.today != null ? (
-                    <span className={beaten ? "font-semibold text-emerald-600" : ""}>
-                      · heute {fmt.format(pb.today)}
-                      {beaten ? " 🎉 übertroffen" : ""}
-                    </span>
-                  ) : null}
+                  {(() => {
+                    // Ø wie im Admin (gleiche Basis wie der Highscore)
+                    const prof = profileOf(pid);
+                    const a = prof && machineName ? records?.personalAvg?.[personalKey(prof, machineKey(machineName))] : null;
+                    return a && a.n > 0 ? (
+                      <span title={`Ø aus ${a.n} ${a.n === 1 ? "Spiel" : "Spielen"} (${levelText(records?.avgLevel)})`}>
+                        · Ø <span className="font-semibold text-neutral-700">{fmt.format(a.avg)}</span>
+                      </span>
+                    ) : null;
+                  })()}
+                  {/* "heute" steht schon in der Eingabe – nur noch das Übertroffen-Zeichen (wie im Admin) */}
+                  {beaten ? <span className="font-semibold text-emerald-600">🎉 übertroffen</span> : null}
+                </div>
+              ) : null}
+              {histOpen[pid] ? (
+                <div className="mt-2 border-t border-neutral-200/70 pt-2">
+                  <PlayerMachineHistory code={code} profileId={profileOf(pid)} machineName={machineName} liveEntries={live} />
                 </div>
               ) : null}
             </div>
