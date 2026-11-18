@@ -99,9 +99,18 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     };
   }
 
+  // ⏱️ Round the Pinball: Timer-Stand (Spalte aus supabase_rotation_timer.sql – fehlt sie, einfach ohne)
+  let rotationTimer: unknown = null;
+  if (t.format === "rotation") {
+    const { data: rt, error: rtErr } = await sb.from("tournaments").select("rotation_timer").eq("id", t.id).maybeSingle();
+    if (!rtErr) rotationTimer = (rt as { rotation_timer?: unknown } | null)?.rotation_timer ?? null;
+  }
+
   return NextResponse.json({
     tournament: t,
     final,
+    rotation_timer: rotationTimer,
+    server_now: Date.now(), // TV: Uhr-Abgleich für die Restzeit
     profiles: profiles ?? [],
     start_ratings: startRatings ?? [],
     players: players ?? [],

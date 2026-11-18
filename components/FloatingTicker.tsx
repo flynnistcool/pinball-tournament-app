@@ -10,6 +10,9 @@ import { useEffect, useRef, useState } from "react";
 import LiveTicker from "@/components/LiveTicker";
 import type { FeedItem } from "@/lib/feed";
 import { notifSetting } from "@/lib/notifications";
+
+/** 🧪 Admin-Ticker: Meldungen etwas größer (1 = wie vorher) */
+const TICKER_ZOOM = 1.12;
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 
 type Box = { x: number; y: number; w: number; h: number; open: boolean; shown: boolean };
@@ -154,7 +157,10 @@ function MobileTickerDock({ code, onWindow }: { code: string; onWindow?: () => v
       >
         {open ? (
           <div className="mb-1 max-h-[55vh] overflow-y-auto rounded-2xl border bg-white p-2 shadow-lg">
-            <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+            {/* 🧪 Test: Meldungen etwas größer (≈ halbe Schriftstufe) */}
+            <div style={{ zoom: TICKER_ZOOM }}>
+              <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+            </div>
           </div>
         ) : null}
         <div
@@ -426,7 +432,10 @@ function FloatingTickerWindow({ code, onDock }: { code: string; onDock?: () => v
       </div>
       {box.open ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+          {/* 🧪 Test: Meldungen etwas größer (≈ halbe Schriftstufe) */}
+            <div style={{ zoom: TICKER_ZOOM }}>
+              <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+            </div>
         </div>
       ) : null}
       {/* ↘ Größe ändern – eigene Ecke (Maus UND Finger; die eingebaute Browser-Ecke geht auf dem iPad nicht) */}

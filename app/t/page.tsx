@@ -13233,6 +13233,40 @@ useEffect(() => {
 
   const rotPaused = !rotRunning && Number.isFinite(rotTimer?.remainingMs);
 
+  // ⏱️ Timer-Stand für den TV speichern ("Timer läuft" / "pausiert") – nur Admin, nur bei Änderungen
+  // (nicht beim ersten Laden: sonst würde ein zweites Admin-Gerät einen laufenden Timer löschen)
+  const rotTimerSyncRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isAdmin || !isRotationFormat || !code) return;
+    const endAt = typeof rotTimer?.endAt === "number" ? rotTimer.endAt : null;
+    const rem = Number.isFinite(rotTimer?.remainingMs) ? (rotTimer.remainingMs as number) : null;
+    const state = endAt != null ? "running" : rem != null ? "paused" : "off";
+    const sig = `${code}|${state}|${endAt ?? ""}|${rem ?? ""}`;
+    if (rotTimerSyncRef.current === null) {
+      rotTimerSyncRef.current = sig;
+      return;
+    }
+    if (rotTimerSyncRef.current === sig) return;
+    rotTimerSyncRef.current = sig;
+    const send = (st: string, remainingMs: number) =>
+      fetch("/api/tournaments/rotation-timer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, state: st, remainingMs, durationSec: rotTimer?.durationSec ?? 0 }),
+      }).catch(() => {
+        /* Anzeige am TV ist nur Zusatz */
+      });
+    if (state === "running") {
+      const left = Math.max(0, (endAt as number) - Date.now());
+      send("running", left);
+      // abgelaufen → am TV ausblenden
+      const t = window.setTimeout(() => send("off", 0), left + 1500);
+      return () => window.clearTimeout(t);
+    }
+    send(state, rem ?? 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, isRotationFormat, code, rotTimer?.endAt, rotTimer?.remainingMs]);
+
   useEffect(() => {
   if (!isRotationFormat) {
     rotMusicStop();

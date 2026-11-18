@@ -45,6 +45,7 @@ import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/P
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
+import RotationTimerBadge, { type RotationTimerState } from "@/components/RotationTimerBadge";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 /** Highscore + 30-Tage-Highscore eines Flippers (null = nicht anzeigen, z. B. Timeplay/DYP) */
@@ -182,6 +183,10 @@ type MatchPlayer = {
   start_position?: number | null;
 };
 type PublicTournament = {
+  /** ⏱️ Round the Pinball: Timer-Stand vom Admin-iPad */
+  rotation_timer?: RotationTimerState | null;
+  /** Server-Uhr beim Laden (Abgleich der Restzeit) */
+  server_now?: number;
   tournament?: {
     name?: string | null;
     code?: string | null;
@@ -1158,6 +1163,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    ro.observe(vp); // auch wenn eine Scrollleiste kommt/geht (Breite ändert sich ohne Fenster-resize)
     window.addEventListener("resize", measure);
     return () => {
       ro.disconnect();
@@ -1264,6 +1270,13 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             <div className="whitespace-nowrap pb-2 text-right text-sm text-white/50">
               {/* Ton einmalig freischalten (Browser-Vorgabe) */}
               <div className="mb-2 flex items-center justify-end gap-2">
+                {/* ⏱️ Round the Pinball: Timer läuft / pausiert (vom Admin-iPad) */}
+                {isRotation ? (
+                  <RotationTimerBadge
+                    timer={data?.rotation_timer}
+                    offsetMs={data?.server_now && updatedAt ? data.server_now - updatedAt.getTime() : 0}
+                  />
+                ) : null}
                 {/* Stand der Daten (läuft die Uhrzeit nicht weiter → TV hängt) – platzsparend in derselben Zeile */}
                 <span className="mr-1 text-xs tabular-nums text-white/40">
                   {error ? (
@@ -1329,7 +1342,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                       title={tickerAutoScroll ? "Live-Ticker scrollt von selbst – zum Ausschalten tippen" : "Live-Ticker steht still – zum Einschalten tippen"}
                       className={
                         "rounded-full px-2.5 py-0.5 font-semibold ring-1 transition " +
-                        (tickerAutoScroll ? "bg-white/20 text-white ring-white/25" : "bg-white/5 text-white/50 ring-white/15 hover:bg-white/10")
+                        // gleiche Farben wie der ⟳ Auto-Knopf
+                        (tickerAutoScroll ? "bg-emerald-400/15 text-emerald-300 ring-emerald-300/40" : "text-white/40 ring-white/15 hover:bg-white/10")
                       }
                     >
                       ↕ Auto-Scroll {tickerAutoScroll ? "an" : "aus"}
@@ -1353,7 +1367,9 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                           onClick={() => {
                             smoothSwitch(() => {
                               setTableSub(v);
+                              // Handwahl → automatischer Wechsel ganz aus (auch die großen Reiter)
                               setTableSubAuto(false);
+                              setAutoTab(false);
                             });
                           }}
                           className={
@@ -1377,7 +1393,9 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                         onClick={() => {
                           smoothSwitch(() => {
                             setTvTab(t);
+                            // Handwahl → automatischer Wechsel ganz aus (auch Tabelle ⇄ Verlauf)
                             setAutoTab(false);
+                            setTableSubAuto(false);
                           });
                         }}
                         className={
@@ -1396,7 +1414,12 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setAutoTab((a) => !a)}
+                    onClick={() => {
+                      // an/aus für beides: große Reiter + Tabelle ⇄ Verlauf
+                      const on = !autoTab;
+                      setAutoTab(on);
+                      setTableSubAuto(on);
+                    }}
                     title="Automatisch zwischen den Ansichten wechseln"
                     className={
                       "rounded-full px-2.5 py-1 text-xs font-semibold ring-1 transition " +
@@ -1505,7 +1528,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                     finished={isFinished}
                     // ⚔️ Duelle des Abends in der freien Ecke über der Spielerspalte (spart eine Zeile)
                     corner={
-                      rtpRivalryOn ? (
+                      rtpRivalryOn && Object.keys(rivalry ?? {}).length ? (
                         <RivalryBar
                           variant="tvStack"
                           insights={rivalry}
@@ -1519,7 +1542,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                   <div className="flex items-start gap-4">
                     <div className="min-w-0 flex-1 space-y-3">{table}</div>
                     {/* mindestens so hoch wie die Tabelle daneben, bei Platz bis zum unteren Fensterrand */}
-                    <FillHeightTicker minPx={Math.max(320, 170 + rowsTp.length * 76)}>
+                    <FillHeightTicker minPx={Math.max(320, 170 + rowsTp.length * 76)} scale={scale}>
                       {(px) => (
                         <LiveTicker
                           code={code}
@@ -1705,9 +1728,7 @@ function RotationTable({
             ) : (
               <>
                 <th className="px-3 pb-3 pt-4" />
-                <th className="px-3 pb-3 pt-4 text-left text-sm font-semibold uppercase tracking-widest text-white/40">
-                  Spieler
-                </th>
+                <th className="px-3 pb-3 pt-4" />
               </>
             )}
             {columns.map((c) => (
@@ -1755,11 +1776,12 @@ function RotationTable({
                   p ? `bg-gradient-to-r ${p.row} to-transparent` : ""
                 }`}
               >
-                <td className="relative py-2 pl-4 pr-2">
+                {/* w-px = Platz- und Spielerspalte nur so breit wie nötig → übriger Platz geht an die Flipper-Spalten */}
+                <td className="relative w-px py-2 pl-4 pr-2">
                   {p ? <span className={`absolute inset-y-1 left-0 w-1.5 rounded-r ${p.bar}`} /> : null}
                   <PlaceBadge place={r.place} total={r.total} />
                 </td>
-                <td className="px-3 py-2">
+                <td className="w-px px-3 py-2">
                   <div className="flex max-w-[17em] items-center gap-3">
                     <PlayerAvatar row={r} />
                     <div className="min-w-0">
@@ -3050,28 +3072,47 @@ function LeaderboardOnly({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
  * 📜 Ticker rechts neben der Tabelle: Liste so hoch, dass die Karte bis zum unteren Fensterrand reicht
  * (mindestens minPx). Rechnet bei Größenänderung des Fensters neu.
  */
-function FillHeightTicker({ minPx, children }: { minPx: number; children: (px: number) => React.ReactNode }) {
+function FillHeightTicker({
+  minPx,
+  scale,
+  children,
+}: {
+  minPx: number;
+  /** aktueller Zoom der TV-Seite (Einpassen per scale()) – Bildschirm-Pixel ≠ Inhalts-Pixel */
+  scale: number;
+  children: (px: number) => React.ReactNode;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [px, setPx] = useState(minPx);
   useEffect(() => {
     const calc = () => {
       const el = ref.current;
       if (!el) return;
-      const top = el.getBoundingClientRect().top + window.scrollY;
-      // Kopf der Ticker-Karte + Innenabstand + kleiner Rand unten
-      const free = Math.floor(window.innerHeight - top - 110);
-      setPx(Math.max(minPx, free));
+      const top = el.getBoundingClientRect().top; // Bildschirm-Pixel (schon gezoomt)
+      const s = scale > 0 ? scale : 1;
+      // Kopf der Ticker-Karte + Innenabstand = Kartenhöhe minus Liste (Inhalts-Pixel, gemessen)
+      const list = el.querySelector("ul");
+      const chrome = list ? el.offsetHeight - list.offsetHeight : 100;
+      // freier Platz bis zum unteren Rand (abzüglich Seitenrand) → in Inhalts-Pixel umrechnen,
+      // sonst wird der Ticker zu hoch und die ganze Seite kleiner gezoomt (Ränder links/rechts)
+      const free = Math.floor((window.innerHeight - FIT_PAD - top) / s - chrome - 2);
+      const next = Math.max(minPx, free);
+      setPx((prev) => (Math.abs(prev - next) < 2 ? prev : next));
     };
     calc();
     window.addEventListener("resize", calc);
+    // Ticker-Inhalt geladen / Kopf verändert → neu rechnen
+    const ro = new ResizeObserver(calc);
+    if (ref.current) ro.observe(ref.current);
     const t = window.setTimeout(calc, 500); // nach dem Einblenden noch einmal (Layout steht dann)
     return () => {
       window.removeEventListener("resize", calc);
+      ro.disconnect();
       window.clearTimeout(t);
     };
-  }, [minPx]);
+  }, [minPx, scale]);
   return (
-    <div ref={ref} className="w-[440px] shrink-0">
+    <div ref={ref} className="w-[400px] shrink-0">
       {children(px)}
     </div>
   );
