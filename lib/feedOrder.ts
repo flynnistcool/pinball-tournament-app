@@ -19,10 +19,13 @@ export function scheduleDoneFeed(post: () => void) {
  * Kurze Vorlaufzeit, weil Abschluss und Ankündigung aus derselben Datenänderung stammen können
  * und die Reihenfolge, in der die Seite sie erkennt, nicht feststeht.
  */
-export function afterPendingDone(post: () => void) {
+export function afterPendingDone(post: () => void, extraMs = 0) {
   window.setTimeout(() => {
     const wait = doneDueAt - Date.now();
-    if (wait > 0) window.setTimeout(post, wait + 400);
+    if (wait > 0) window.setTimeout(post, wait + 400 + extraMs);
     else post();
-  }, 1_500);
+  }, 1_500 + extraMs);
 }
+
+/** Hinweise ZU einer neuen Runde (Premiere, Duell-Hinweis): nach "Runde generiert" eintragen */
+export const AFTER_ROUND_START_MS = 700;

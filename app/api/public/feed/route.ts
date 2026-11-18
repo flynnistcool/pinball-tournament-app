@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { FEED_MAX_ITEMS, type FeedItem } from "@/lib/feed";
+import { scopeOf } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -48,5 +49,84 @@ export async function GET(req: Request) {
     players: Array.isArray(r.player_ids) ? r.player_ids.map(String) : [],
     data: r.data && typeof r.data === "object" ? r.data : null,
   }));
+  await fillShortNewsIcons(sb, t.id, items);
+  await fillAllzeitMachineIcons(sb, t.id, items);
   return NextResponse.json({ ok: true, items }, { headers: NO_STORE });
+}
+
+/**
+ * 📰 Turnier-Shortnews: fehlt bei älteren Meldungen das Flipper-Icon,
+ * wird es hier über den Flipper-Namen ergänzt. Nur Anzeige – die DB bleibt unverändert.
+ */
+async function fillShortNewsIcons(sb: ReturnType<typeof supabaseAdmin>, tournamentId: string, items: FeedItem[]) {
+  const needs = items.filter(
+    (it) =>
+      (it.kind === "matchShort" || it.kind === "waveShort") &&
+      Array.isArray(it.data?.lines) &&
+      ((it.data!.lines as { machine?: string; machineIcon?: string | null }[]).some((l) => l?.machine && !l?.machineIcon) ||
+        (it.kind === "matchShort" && it.data?.machineIcon === undefined))
+  );
+  if (!needs.length) return;
+  try {
+    const { data: machines } = await sb.from("machines").select("name, icon_emoji").eq("tournament_id", tournamentId);
+    const iconByMachine = new Map<string, string>();
+    for (const m of machines ?? []) {
+      const ic = String((m as any).icon_emoji ?? "").trim();
+      if (ic && (m as any).name) iconByMachine.set(String((m as any).name), ic);
+    }
+    for (const it of needs) {
+      const lines = (it.data!.lines as { machine?: string; machineIcon?: string | null }[]).map(
+        (l) => {
+          if (!l) return l;
+          const out = { ...l };
+          if (!out.machineIcon && out.machine && iconByMachine.has(out.machine)) out.machineIcon = iconByMachine.get(out.machine);
+          return out;
+        }
+      );
+      it.data = { ...it.data, lines };
+      // Matchplay: Flipper-Icon vor den Titel ("Jaws: X gewinnt")
+      const mName = typeof it.data.machine === "string" ? it.data.machine : "";
+      const mIcon = mName ? iconByMachine.get(mName) : undefined;
+      if (it.kind === "matchShort" && it.data.machineIcon === undefined && mIcon && it.title.startsWith(mName + ":")) {
+        it.title = `${mIcon} ${it.title}`;
+      }
+    }
+  } catch {
+    // Icons sind nur Schmuck – Ticker trotzdem ausliefern
+  }
+}
+
+/**
+ * ♾️ Allzeit-Meldungen (Highscore, persönlicher Rekord, Premiere …): Flipper-Icon vor den Flipper-Namen
+ * in Titel und Text setzen. Nur Anzeige – die DB bleibt unverändert; gilt damit auch für ältere Meldungen.
+ */
+async function fillAllzeitMachineIcons(sb: ReturnType<typeof supabaseAdmin>, tournamentId: string, items: FeedItem[]) {
+  const targets = items.filter((it) => scopeOf(it.kind) === "allzeit");
+  if (!targets.length) return;
+  try {
+    const { data: machines } = await sb.from("machines").select("name, icon_emoji").eq("tournament_id", tournamentId);
+    const iconByName = new Map<string, string>();
+    for (const m of machines ?? []) {
+      const name = String((m as any).name ?? "").trim();
+      const ic = String((m as any).icon_emoji ?? "").trim();
+      if (name && ic) iconByName.set(name, ic);
+    }
+    if (!iconByName.size) return;
+    // längste Namen zuerst ("Jaws Premium" vor "Jaws"); nur ganze Wörter
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const names = Array.from(iconByName.keys()).sort((a, b) => b.length - a.length);
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])(${names.map(esc).join("|")})(?![\\p{L}\\p{N}])`, "gu");
+    const addIcons = (text: string) =>
+      text.replace(re, (name: string, _g: string, offset: number, whole: string) => {
+        const icon = iconByName.get(name)!;
+        // steht das Icon schon davor → nichts tun
+        return whole.slice(Math.max(0, offset - icon.length - 1), offset).startsWith(icon) ? name : `${icon} ${name}`;
+      });
+    for (const it of targets) {
+      it.title = addIcons(it.title);
+      it.body = addIcons(it.body);
+    }
+  } catch {
+    // Icons sind nur Schmuck – Ticker trotzdem ausliefern
+  }
 }

@@ -36,7 +36,7 @@ export function SummaryBlock({ s, tv, rotation = false }: { s: RoundSummary; tv:
   const line = tv ? "text-2xl" : "text-sm";
   const fmt = (n: number) => n.toLocaleString("de-DE");
   return (
-    <div className={"mx-auto mt-4 space-y-1.5 text-left font-semibold text-white/95 " + (tv ? "max-w-2xl" : "max-w-sm")}>
+    <div className={"mx-auto mt-4 space-y-1.5 text-center font-semibold text-white/95 " + (tv ? "max-w-2xl" : "max-w-sm")}>
       {s.winners.length ? (
         <div className={line}>
           🥇 {rotation ? "Vorn an ihrem Flipper" : "Rundensieger"}:{" "}

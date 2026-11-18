@@ -92,6 +92,9 @@ import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
 import FlawlessCelebration from "@/components/FlawlessCelebration";
 import { useFeedSync } from "@/components/useFeedSync";
+import FeedPopups from "@/components/FeedPopups";
+import ShortNewsWatcher from "@/components/ShortNewsWatcher";
+import { afterPendingDone, AFTER_ROUND_START_MS } from "@/lib/feedOrder";
 import { rotationAllDone } from "@/lib/flawless";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
@@ -963,9 +966,10 @@ const kBadgeClass =
             return (
               <div
                 key={p.id}
-                className="flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3"
+                // 📱 am Handy umbrechen: Name/K/Elo oben, QR + aktiv darunter rechts
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border bg-white px-4 py-3"
               >
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                       <div className="flex items-center gap-2 min-w-0">
                         <PlayerPill player={pv} />
 
@@ -988,7 +992,7 @@ const kBadgeClass =
 
 
                   {p.profile_id && profRating?.[p.profile_id] != null ? (
-                    <span className="ml-2 inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-sm">
+                    <span className="inline-flex items-center rounded-full bg-neutral-100 px-3 py-1 text-sm">
                       Elo{" "}
                       <span className="ml-2 font-semibold tabular-nums">
                         {Math.round(profRating[p.profile_id])}
@@ -1027,7 +1031,7 @@ const kBadgeClass =
 
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="ml-auto flex items-center gap-2">
                   {code ? (
                     isAdmin ? (
                       !locked ? (
@@ -6399,7 +6403,8 @@ function RoundMatchesCard({
       const machine = m.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null;
       items.push(insightFeedItem(ins, (pid) => playersById?.[pid]?.name ?? "?", machine));
     }
-    if (items.length) postFeedItems(code, items);
+    // nach "Runde generiert" (das wartet ggf. auf den Abschluss der vorigen Runde) eintragen
+    if (items.length) afterPendingDone(() => postFeedItems(code, items), AFTER_ROUND_START_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rivalryInsights, matches, matchPlayers, rivalryOn, locked, code]);
   // 🏷️ ★ Favorit-Abzeichen an/aus (🔔 Meldungen & Sounds → Dauerhafte Anzeigen)
@@ -7764,7 +7769,8 @@ return (
     </CardHeader>
     <CardBody>
       <div className="overflow-hidden rounded-2xl border bg-white">
-        <div className="grid grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
+        {/* 📱 Spaltenköpfe nur ab Tablet – am Handy ist jede Runde eine kompakte Zeile */}
+        <div className="hidden grid-cols-12 gap-2 border-b bg-neutral-50 px-4 py-3 text-sm text-neutral-600 sm:grid">
           <div className="col-span-1">#</div>
           <div className="col-span-3">Format</div>
           <div className="col-span-2">Status</div>
@@ -7862,7 +7868,7 @@ const winnersText = (() => {
                 className="border-b last:border-b-0"
               >
                 <button
-                  className="w-full grid grid-cols-12 gap-2 px-4 py-3 items-center text-left hover:bg-neutral-50"
+                  className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-neutral-50 sm:grid sm:grid-cols-12 sm:gap-2"
                   onClick={() => {
                     if (isEliminationFormat) {
                       // Aktive Runden bleiben immer offen
@@ -7954,11 +7960,13 @@ const winnersText = (() => {
                       </span>
                     </div>
                   </div>
-                  <div className="col-span-4 text-center text-xs sm:text-xs text-neutral-700">
+                  {/* Handy: Sieger in eigener Zeile über die ganze Breite (order-last), ab Tablet als Spalte */}
+                  <div className="order-last basis-full text-left text-xs text-neutral-700 sm:order-none sm:col-span-4 sm:basis-auto sm:text-center">
                     {winnersText}
                   </div>
-                  <div className="col-span-2 text-right tabular-nums text-xs sm:text-xs">
-                   {ms.length}
+                  <div className="ml-auto text-right tabular-nums text-xs sm:col-span-2 sm:ml-0">
+                    {ms.length}
+                    <span className="text-neutral-400 sm:hidden"> {ms.length === 1 ? "Spiel" : "Spiele"}</span>
                   </div>
                 </button>
 
@@ -11288,7 +11296,7 @@ const matchSize =
               {
                 key: `sfGame|${st?.final_id ?? ""}|${games}`,
                 kind: "superfinalGame",
-                icon: "🎯",
+                icon: "🕹️",
                 title: `Finalspiel ${games}: ${winner} gewinnt`,
                 body: `Stand: ${standing} (Ziel ${st?.target_points ?? 4})`,
                 players: [winnerId],
@@ -12442,10 +12450,9 @@ async function reloadAll() {
       .slice(0, 3);
     if (!top.length) return;
     const nameOf = (pid: string) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?";
-    postFeedItems(
-      code,
-      top.map((ins: any) => insightFeedItem(ins, nameOf))
-    );
+    // nach dem Abschluss des vorigen Durchgangs eintragen (chronologisch)
+    const items = top.map((ins: any) => insightFeedItem(ins, nameOf));
+    afterPendingDone(() => postFeedItems(code, items), AFTER_ROUND_START_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rtpRivalry, rtpRivalryOn, isAdmin, code]);
   const rivEvents = useRivalryEvents({
@@ -13911,9 +13918,15 @@ const tasksById = useMemo(() => {
       {/* 🏆 Highscore-Jubel wie am TV – hier ohne Ton, Antippen schließt */}
       {/* 📣 Live-Ticker als schwebendes, verschiebbares Fenster (zum Ausprobieren; alter Ticker rechts bleibt) */}
       <FloatingTicker code={code} />
+      {/* 🪧 Karten für Ticker-Meldungen ohne eigene Einblendung (z. B. Finalspiel im Superfinale) */}
+      <FeedPopups code={code} variant="admin" />
       {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}
       {!isRotationFormat ? (
         <RoundSplash data={data} variant="admin" onFeed={isAdmin ? (items) => postFeedItems(code, items) : undefined} />
+      ) : null}
+      {/* 📰 Turnier-Shortnews: Match-Ergebnis in den Ticker (Round the Pinball: je Durchgang in RotationTurnSplash) */}
+      {!isRotationFormat && isAdmin ? (
+        <ShortNewsWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} />
       ) : null}
       <RecordCelebration
         code={code}

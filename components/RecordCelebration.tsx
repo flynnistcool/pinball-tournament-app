@@ -37,7 +37,7 @@ import {
 } from "@/lib/matchMoments";
 import { liveLeaderboard } from "@/lib/myMatch";
 import { premiereSlots, slotKey } from "@/lib/premiere";
-import { afterPendingDone } from "@/lib/feedOrder";
+import { afterPendingDone, AFTER_ROUND_START_MS } from "@/lib/feedOrder";
 import { flawlessMode, isUnbeaten, playerRuns, runCount, unbeatenStep, type FlawlessMode, type PlayerRun } from "@/lib/flawless";
 import { computeStreaks, lastFinishedMatchOf, streakRunIds, streakFire, streakMin, streakMode, streakText, type StreakMode } from "@/lib/winStreaks";
 
@@ -363,17 +363,17 @@ function BigRecord({ c, onClose }: { c: Extract<Celebration, { kind: "record" }>
     >
       <Confetti />
       <div className="relative px-8 text-center" style={{ animation: "recPop 0.7s ease-out both" }}>
-        <div className="text-[9vw] leading-none">🏆</div>
+        <div className="text-[max(44px,9vw)] leading-none">🏆</div>
         <div
-          className="mt-2 text-[7vw] font-black uppercase leading-none tracking-tight text-amber-300"
+          className="mt-2 text-[max(40px,7vw)] font-black uppercase leading-none tracking-tight text-amber-300"
           style={{ animation: "recGlow 1.6s ease-in-out infinite" }}
         >
           Neuer Rekord!
         </div>
-        <div className="mt-6 text-[3.6vw] font-extrabold text-white">{c.entry.playerName}</div>
-        <div className="mt-1 font-mono text-[5vw] font-black tabular-nums text-white">{fmt(c.entry.score)}</div>
-        <div className="mt-2 text-[2.2vw] font-semibold text-white/80">🎰 {c.entry.machineName ?? "Flipper"}</div>
-        <div className="mt-5 text-[1.6vw] text-white/55">
+        <div className="mt-6 text-[max(28px,3.6vw)] font-extrabold text-white">{c.entry.playerName}</div>
+        <div className="mt-1 font-mono text-[max(32px,5vw)] font-black tabular-nums text-white">{fmt(c.entry.score)}</div>
+        <div className="mt-2 text-[max(19px,2.2vw)] font-semibold text-white/80">🎰 {c.entry.machineName ?? "Flipper"}</div>
+        <div className="mt-5 text-[max(15px,1.6vw)] text-white/55">
           vorher {fmt(c.previous.score)}
           {c.previous.holder ? ` von ${c.previous.holder}` : ""}
         </div>
@@ -393,17 +393,17 @@ function MonthRecord({ c, onClose }: { c: Extract<Celebration, { kind: "month" }
         className="relative rounded-[3vw] bg-gradient-to-b from-sky-900/90 to-slate-950/95 px-[5vw] py-[3vw] text-center ring-4 ring-sky-300/70"
         style={{ animation: "recPop 0.6s ease-out both", boxShadow: "0 0 80px rgba(56,189,248,.45)" }}
       >
-        <div className="text-[6vw] leading-none">🥇</div>
-        <div className="mt-2 text-[5vw] font-black uppercase leading-none tracking-tight text-sky-300">
+        <div className="text-[max(36px,6vw)] leading-none">🥇</div>
+        <div className="mt-2 text-[max(32px,5vw)] font-black uppercase leading-none tracking-tight text-sky-300">
           30-Tage-Highscore
         </div>
-        <div className="mt-1 text-[1.4vw] font-semibold uppercase tracking-widest text-sky-100/60">
+        <div className="mt-1 text-[max(14px,1.4vw)] font-semibold uppercase tracking-widest text-sky-100/60">
           bester Score der letzten 30 Tage
         </div>
-        <div className="mt-5 text-[3vw] font-extrabold text-white">{c.entry.playerName}</div>
-        <div className="mt-1 font-mono text-[4.2vw] font-black tabular-nums text-white">{fmt(c.entry.score)}</div>
-        <div className="mt-2 text-[2vw] font-semibold text-white/80">🎰 {c.entry.machineName ?? "Flipper"}</div>
-        <div className="mt-4 text-[1.5vw] text-white/55">
+        <div className="mt-5 text-[max(24px,3vw)] font-extrabold text-white">{c.entry.playerName}</div>
+        <div className="mt-1 font-mono text-[max(30px,4.2vw)] font-black tabular-nums text-white">{fmt(c.entry.score)}</div>
+        <div className="mt-2 text-[max(18px,2vw)] font-semibold text-white/80">🎰 {c.entry.machineName ?? "Flipper"}</div>
+        <div className="mt-4 text-[max(14px,1.5vw)] text-white/55">
           vorher {fmt(c.previous.score)}
           {c.previous.holder ? ` von ${c.previous.holder}` : ""}
         </div>
@@ -423,12 +423,12 @@ function WinMilestone({ c, onClose }: { c: WinShown; onClose?: () => void }) {
         className="relative rounded-[3vw] bg-gradient-to-b from-violet-800/90 to-slate-950/95 px-[5vw] py-[3vw] text-center ring-4 ring-violet-300/70"
         style={{ animation: "recPop 0.6s ease-out both", boxShadow: "0 0 80px rgba(167,139,250,.5)" }}
       >
-        <div className="text-[7vw] leading-none">{milestoneIcon(c.n)}</div>
-        <div className="mt-3 text-[5vw] font-black uppercase leading-none tracking-tight text-violet-200">
+        <div className="text-[max(40px,7vw)] leading-none">{milestoneIcon(c.n)}</div>
+        <div className="mt-3 text-[max(32px,5vw)] font-black uppercase leading-none tracking-tight text-violet-200">
           {milestoneTitle(c.n)}
         </div>
-        <div className="mt-5 text-[3.4vw] font-extrabold text-white">{c.playerName}</div>
-        <div className="mt-2 text-[1.6vw] font-semibold uppercase tracking-widest text-violet-100/60">
+        <div className="mt-5 text-[max(26px,3.4vw)] font-extrabold text-white">{c.playerName}</div>
+        <div className="mt-2 text-[max(15px,1.6vw)] font-semibold uppercase tracking-widest text-violet-100/60">
           {c.n === 1 ? "Willkommen im Club der Sieger" : "Matchsiege insgesamt – herzlichen Glückwunsch!"}
         </div>
       </div>
@@ -439,16 +439,16 @@ function WinMilestone({ c, onClose }: { c: WinShown; onClose?: () => void }) {
 function SmallPersonal({ c, onClose }: { c: Extract<Celebration, { kind: "personal" }>; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 px-7 py-5 text-white shadow-2xl ring-4 ring-emerald-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-emerald-100">💪 Persönlicher Rekord</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.entry.playerName}</div>
-        <div className="font-mono text-[2.4vw] font-extrabold tabular-nums">{fmt(c.entry.score)}</div>
-        <div className="text-[1.2vw] text-emerald-50/90">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-emerald-100">💪 Persönlicher Rekord</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.entry.playerName}</div>
+        <div className="font-mono text-[max(22px,2.4vw)] font-extrabold tabular-nums">{fmt(c.entry.score)}</div>
+        <div className="text-[max(13px,1.2vw)] text-emerald-50/90">
           🎰 {c.entry.machineName ?? "Flipper"} · vorher {fmt(c.previous)}
         </div>
       </div>
@@ -459,17 +459,17 @@ function SmallPersonal({ c, onClose }: { c: Extract<Celebration, { kind: "person
 function StreakCard({ c, onClose }: { c: StreakShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-orange-500 to-red-600 px-7 py-5 text-white shadow-2xl ring-4 ring-orange-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-orange-100">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-orange-100">
           {streakFire(c.n, streakMin(c.mode))} On fire!
         </div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">{streakText(c.mode, c.n)}</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">{streakText(c.mode, c.n)}</div>
       </div>
     </div>
   );
@@ -478,15 +478,15 @@ function StreakCard({ c, onClose }: { c: StreakShown; onClose?: () => void }) {
 function StreakEndCard({ c, onClose }: { c: StreakEndShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-sky-600 to-indigo-700 px-7 py-5 text-white shadow-2xl ring-4 ring-sky-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-sky-100">🧯 Serie beendet!</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.breakerName}</div>
-        <div className="text-[1.8vw] font-extrabold">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-sky-100">🧯 Serie beendet!</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.breakerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">
           stoppt {c.victimName} nach {c.n} Siegen in Folge
         </div>
       </div>
@@ -497,18 +497,18 @@ function StreakEndCard({ c, onClose }: { c: StreakEndShown; onClose?: () => void
 function UnbeatenCard({ c, onClose }: { c: UnbeatenShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-700 px-7 py-5 text-white shadow-2xl ring-4 ring-emerald-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-emerald-100">🛡️ Noch unbesiegt</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-emerald-100">🛡️ Noch unbesiegt</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">
           {c.mode === "leads" ? `an allen ${c.n} Flippern vorn` : `${c.n} Siege ohne Niederlage`}
         </div>
-        <div className="mt-1 text-[1.2vw] font-semibold text-emerald-100">Schafft er die Flawless Victory?</div>
+        <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-emerald-100">Schafft er die Flawless Victory?</div>
       </div>
     </div>
   );
@@ -517,20 +517,20 @@ function UnbeatenCard({ c, onClose }: { c: UnbeatenShown; onClose?: () => void }
 function UnbeatenEndCard({ c, onClose }: { c: UnbeatenEndShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-rose-600 to-fuchsia-800 px-7 py-5 text-white shadow-2xl ring-4 ring-rose-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-rose-100">💔 Traum geplatzt</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.breakerName}</div>
-        <div className="text-[1.8vw] font-extrabold">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-rose-100">💔 Traum geplatzt</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.breakerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">
           {c.mode === "leads"
             ? `überbietet ${c.victimName}${c.machine ? ` an ${c.machine}` : ""}`
             : `stoppt ${c.victimName} nach ${c.n} Siegen`}
         </div>
-        <div className="mt-1 text-[1.2vw] font-semibold text-rose-100">Keine Flawless Victory</div>
+        <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-rose-100">Keine Flawless Victory</div>
       </div>
     </div>
   );
@@ -563,18 +563,18 @@ function MomentCard({ c, onClose }: { c: MomentShown; onClose?: () => void }) {
       : `${fmt(m.winnerScore)} zu ${fmt(m.loserScore)}${m.machine ? ` · ${m.machine}` : ""}`;
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className={"rounded-3xl bg-gradient-to-br px-7 py-5 text-white shadow-2xl ring-4 " + MOMENT_TONE[m.kind]}>
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-white/80">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-white/80">
           {MOMENT_ICON[m.kind]} {MOMENT_TITLE[m.kind]}
         </div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.winnerName}</div>
-        <div className="text-[1.8vw] font-extrabold">{line}</div>
-        <div className="mt-1 text-[1.2vw] font-semibold text-white/80">{sub}</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.winnerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">{line}</div>
+        <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-white/80">{sub}</div>
       </div>
     </div>
   );
@@ -583,17 +583,17 @@ function MomentCard({ c, onClose }: { c: MomentShown; onClose?: () => void }) {
 function PremiereCard({ c, onClose }: { c: PremiereShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-pink-500 to-rose-700 px-7 py-5 text-white shadow-2xl ring-4 ring-pink-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-pink-100">🎰 Flipper-Premiere</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">gleich zum ersten Mal an {c.machineName}</div>
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-pink-100">🎰 Flipper-Premiere</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">gleich zum ersten Mal an {c.machineName}</div>
         {c.score != null ? (
-          <div className="mt-1 text-[1.2vw] font-semibold text-pink-100">Einstand mit {fmt(c.score)} Punkten</div>
+          <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-pink-100">Einstand mit {fmt(c.score)} Punkten</div>
         ) : null}
       </div>
     </div>
@@ -603,17 +603,17 @@ function PremiereCard({ c, onClose }: { c: PremiereShown; onClose?: () => void }
 function PremiereWinCard({ c, onClose }: { c: PremiereWinShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-fuchsia-500 to-amber-500 px-7 py-5 text-white shadow-2xl ring-4 ring-amber-200/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-amber-50">🌟 Premieren-Sieg</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">erstes Spiel an {c.machineName} – gleich gewonnen!</div>
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-amber-50">🌟 Premieren-Sieg</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">erstes Spiel an {c.machineName} – gleich gewonnen!</div>
         {c.score != null ? (
-          <div className="mt-1 text-[1.2vw] font-semibold text-amber-50">mit {fmt(c.score)} Punkten</div>
+          <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-amber-50">mit {fmt(c.score)} Punkten</div>
         ) : null}
       </div>
     </div>
@@ -623,18 +623,18 @@ function PremiereWinCard({ c, onClose }: { c: PremiereWinShown; onClose?: () => 
 function EloMarkCard({ c, onClose }: { c: EloMarkShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-emerald-500 to-green-800 px-7 py-5 text-white shadow-2xl ring-4 ring-emerald-300/60">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-emerald-100">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-emerald-100">
           📈 {c.again ? "Erneut geknackt" : "Elo-Meilenstein"}
         </div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">knackt {c.again ? "erneut " : ""}die {c.mark}</div>
-        <div className="mt-1 text-[1.2vw] font-semibold text-emerald-100">jetzt {c.elo} Elo</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">knackt {c.again ? "erneut " : ""}die {c.mark}</div>
+        <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-emerald-100">jetzt {c.elo} Elo</div>
       </div>
     </div>
   );
@@ -643,18 +643,18 @@ function EloMarkCard({ c, onClose }: { c: EloMarkShown; onClose?: () => void }) 
 function LeaderCard({ c, onClose }: { c: LeaderShown; onClose?: () => void }) {
   return (
     <div
-      className={"fixed bottom-[4vh] right-[2vw] z-[100] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
       style={{ animation: "recSlide 0.5s ease-out both" }}
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-yellow-400 to-amber-600 px-7 py-5 text-amber-950 shadow-2xl ring-4 ring-yellow-200/70">
-        <div className="text-[1.5vw] font-bold uppercase tracking-wider text-amber-900">👑 Neuer Tabellenführer</div>
-        <div className="mt-1 text-[2.4vw] font-black leading-tight">{c.playerName}</div>
-        <div className="text-[1.8vw] font-extrabold">
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-amber-900">👑 Neuer Tabellenführer</div>
+        <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
+        <div className="text-[max(17px,1.8vw)] font-extrabold">
           {c.prevName ? `übernimmt die Spitze von ${c.prevName}` : "führt jetzt allein"}
         </div>
-        <div className="mt-1 text-[1.2vw] font-semibold text-amber-900/80">{c.points} Punkte</div>
+        <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-amber-900/80">{c.points} Punkte</div>
       </div>
     </div>
   );
@@ -1238,7 +1238,7 @@ function RecordCelebrationInner({
         const now2 = found.filter((x) => x.kind !== "premiere");
         const later = found.filter((x) => x.kind === "premiere");
         if (now2.length) onEventsRef.current?.(now2.map(feedItemOf));
-        if (later.length) afterPendingDone(() => onEventsRef.current?.(later.map(feedItemOf)));
+        if (later.length) afterPendingDone(() => onEventsRef.current?.(later.map(feedItemOf)), AFTER_ROUND_START_MS);
       }
     }
     check();

@@ -112,9 +112,10 @@ export function rotationWaveSummary(data: AnyData, wave: number): RoundSummary {
 /** kurze Textfassung (Ticker) */
 export function summaryText(s: RoundSummary, rotation = false): string {
   const parts: string[] = [];
-  if (s.winners.length) {
+  // Round the Pinball: "Vorn an ihrem Flipper" entfällt – steht schon in den Turnier-Shortnews
+  if (s.winners.length && !rotation) {
     parts.push(
-      (rotation ? "Vorn an ihrem Flipper: " : "Rundensieger: ") +
+      "Rundensieger: " +
         s.winners
           .slice(0, 6)
           .map((w) => `${w.name} (${w.machine})`)

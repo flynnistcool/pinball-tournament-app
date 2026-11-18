@@ -385,7 +385,8 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     when: "Turnier wird beendet (bzw. Superfinale entschieden) – im Ticker mit Platz 1 – 3",
     devices: {
       ticker: TICKER,
-      tv: { where: "wechselt zur Siegerehrung", seconds: null, sound: { kind: "drumFanfare", label: "Trommelwirbel + Fanfare" } },
+      tv: { where: "wechselt zur Siegerehrung + große Karte (Mitte, 10 s)", seconds: null, sound: { kind: "drumFanfare", label: "Trommelwirbel + Fanfare" } },
+      admin: { where: "große Karte (Mitte)", seconds: 8, sound: SILENT, note: "Antippen schließt" },
     },
   },
   {
@@ -399,11 +400,13 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
   },
   {
     id: "superfinalGame",
-    icon: "🎯",
+    icon: "🕹️",
     title: "Superfinale: Finalspiel",
     when: "Nach jedem Finalspiel – Sieger und Zwischenstand",
     devices: {
       ticker: TICKER,
+      tv: { where: "Karte", seconds: 8, sound: { kind: "ding", label: "Ding" } },
+      admin: { where: "Karte", seconds: 6, sound: SILENT, note: "Antippen schließt" },
     },
   },
   {
@@ -413,6 +416,30 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     when: "Superfinale entschieden",
     devices: {
       ticker: TICKER,
+      tv: { where: "große Karte (Mitte)", seconds: 10, sound: SILENT, note: "Fanfare kommt mit der Siegerehrung" },
+      admin: { where: "große Karte (Mitte)", seconds: 8, sound: SILENT, note: "Antippen schließt" },
+    },
+  },
+  {
+    id: "matchShort",
+    icon: "🏁",
+    title: "Shortnews: Match-Ergebnis",
+    when: "Matchplay & Co.: alle Plätze eines Matches stehen fest (10 s Tippfehler-Schutz)",
+    devices: {
+      ticker: TICKER,
+      tv: { where: "kleine Karte unten links", seconds: 5, sound: SILENT },
+      admin: { where: "kleine Karte unten links", seconds: 4, sound: SILENT, note: "Antippen schließt" },
+    },
+  },
+  {
+    id: "waveShort",
+    icon: "🎱",
+    title: "Shortnews: Scores des Durchgangs",
+    when: "Round the Pinball: Durchgang fertig – alle Scores mit aktuellem Platz am Flipper",
+    devices: {
+      ticker: TICKER,
+      tv: { where: "kleine Karte unten links", seconds: 8, sound: SILENT },
+      admin: { where: "kleine Karte unten links", seconds: 6, sound: SILENT, note: "Antippen schließt" },
     },
   },
   {
@@ -608,7 +635,7 @@ export function notifSetting(
 // ─────────────────────────────────────────────────────────────────────────────
 // 🏷️ Bereich einer Mitteilung – worauf bezieht sie sich? (Plakette in Ticker, Einblendung, Einstellungen)
 
-export type NotifScope = "turnier" | "30tage" | "allzeit" | "duell";
+export type NotifScope = "turnier" | "30tage" | "allzeit" | "duell" | "short";
 
 export const SCOPE_INFO: Record<NotifScope, { icon: string; label: string; long: string }> = {
   turnier: { icon: "🏟️", label: "Turnier", long: "in diesem Turnier" },
@@ -616,6 +643,7 @@ export const SCOPE_INFO: Record<NotifScope, { icon: string; label: string; long:
   allzeit: { icon: "♾️", label: "Allzeit", long: "über alle Turniere" },
   // Duelle zählen über alle Turniere → eine Allzeit-Variante (eigene Farbe, damit man sie erkennt)
   duell: { icon: "♾️", label: "Allzeit · Duell", long: "Duell-Bilanz über alle Turniere" },
+  short: { icon: "📰", label: "Turnier-Shortnews", long: "kurzes Ergebnis aus diesem Turnier" },
 };
 
 const SCOPE_OF: Record<string, NotifScope> = {
@@ -652,6 +680,8 @@ const SCOPE_OF: Record<string, NotifScope> = {
   evenReached: "duell",
   jubilee: "duell",
   rivalryInsight: "duell",
+  matchShort: "short",
+  waveShort: "short",
 };
 
 export function scopeOf(kind: string): NotifScope | null {

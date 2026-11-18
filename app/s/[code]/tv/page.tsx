@@ -14,6 +14,7 @@ import { matchPoints, computeProvisionalRotationPoints } from "@/lib/points";
 import { calcRoundsPerCycle, mainRoundBars, type MainRoundBar } from "@/lib/roundProgress";
 import FlawlessCelebration from "@/components/FlawlessCelebration";
 import { useFeedSync } from "@/components/useFeedSync";
+import FeedPopups from "@/components/FeedPopups";
 import { RoundPointsBars } from "@/components/charts";
 import { computeFinalRanking } from "@/lib/finals";
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert
@@ -60,18 +61,18 @@ const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
 // Ansichten (Tabs) mit Auto-Wechsel; Dauer je Ansicht
 type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race" | "players" | "qr";
 const TAB_DURATION_MS: Record<TvTab, number> = {
-  current: 10000, // Aktuelle Runde (laufendes Turnier: ⇄ Verlauf)
+  current: 15000, // Aktuelle Runde (laufendes Turnier: ⇄ Verlauf)
   archive: 15000, // Alle Runden
   table: 20000, // Tabelle (Rotation) / Leaderboard
   podium: 20000, // Siegerehrung
   superfinal: 20000, // 🔥 Superfinale
   series: 16000, // 📊 Turnierserie (innen: Serie ⇄ Turniername)
   race: 10000, // 📈 Verlauf (Matchplay & Co.)
-  players: 32000, // 🃏 Spielerkarten (blättert innen alle 8 s)
+  players: 30000, // 🃏 Spielerkarten (blättert innen alle 10 s)
   qr: 30000, // 📱 QR-Codes (nur per Antippen, nicht im Auto-Wechsel)
 };
-// Nach Turnierende schneller wechseln (Siegerehrung -> Superfinale -> Runden/Tabelle)
-const FINISHED_TAB_MS = 6000;
+// Nach Turnierende: Siegerehrung -> Superfinale -> Verlauf, je 10 s
+const FINISHED_TAB_MS = 10000;
 const TAB_LABEL: Record<TvTab, string> = {
   current: "Aktuelle Runde",
   archive: "Alle Runden",
@@ -771,6 +772,23 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     });
   }, [data]);
 
+  // ── 🔥 Superfinale läuft gerade (noch nicht beendet) → ersetzt "Aktuelle Runde" ──
+  const liveFinal: LiveFinal | null = useMemo(() => {
+    const f = data?.final;
+    if (!f || f.status === "finished" || !f.players?.length) return null;
+    return {
+      target: Number(f.target_points ?? 0) || 4,
+      players: f.players
+        .map((p) => ({
+          playerId: String(p.player_id),
+          seed: Number(p.seed) || 0,
+          startPoints: Number(p.start_points) || 0,
+          points: Number(p.points) || 0,
+        }))
+        .sort((a, b) => a.seed - b.seed),
+    };
+  }, [data]);
+
   // ── Ansichten (Tabs) je nach Modus + Turnierstatus ─────────────────────────
   // laufend:  Matchplay & Co: Aktuelle Runde ⇄ Alle Runden
   // beendet:  Siegerehrung ⇄ Alle Runden / Tabelle (⇄ 🔥 Superfinale, falls gespielt)
@@ -1009,7 +1027,9 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   //   Matchplay & Co.: nur Aktuelle Runde ⇄ Verlauf (je 10 s) – "Alle Runden" + Serie per Klick
   const autoTabs: TvTab[] = (
     isFinished
-      ? tabs.filter((t) => t !== "players")
+      ? tabs.filter((t) => t === "podium" || t === "superfinal" || t === "race")
+      : liveFinal && isMatchFormat
+      ? (["current"] as TvTab[]) // 🔥 Superfinale läuft: nur die Superfinale-Tabelle, kein Wechsel
       : preStart
       ? (["players"] as TvTab[]) // vor Runde 1: nur die Spielerkarten
       : isMatchFormat
@@ -1023,12 +1043,15 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     // vor Runde 1: Startseite = 📱 QR-Codes (wenn als Admin angemeldet), sonst die Spielerkarten
     const startTab: TvTab = hasQr ? "qr" : "players";
     if (preStart && tvTab !== startTab) setTvTab(startTab);
-    else if (!preStart && !betweenRounds && !isFinished && (tvTab === "players" || tvTab === "qr")) {
+    else if (liveFinal && isMatchFormat && !isFinished && tvTab !== "current") {
+      // 🔥 Superfinale läuft: zur Superfinale-Tabelle
+      setTimeout(() => smoothSwitch(() => setTvTab("current")), 0);
+    } else if (!preStart && !betweenRounds && !isFinished && (tvTab === "players" || tvTab === "qr")) {
       // Runde gestartet (erste oder nächste): Karten sofort verlassen, nicht erst nach Ablauf
       setTimeout(() => smoothSwitch(() => setTvTab(isMatchFormat ? "current" : "table")), 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, preStart, betweenRounds, autoTab, hasQr]);
+  }, [data, preStart, betweenRounds, autoTab, hasQr, liveFinal]);
   useEffect(() => {
     if (!autoTab || autoTabs.length < 2) {
       setMainTimer(null);
@@ -1052,8 +1075,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   // Reiter "Tabelle" (Rotation & Co.): innen 📋 Tabelle ⇄ 📈 Verlauf – Umschalter sitzt oben in der Kopfzeile
   const showTableSub = !isMatchFormat && hasRace && activeTab === "table";
   const [tableSub, setTableSub] = useState<"table" | "race">("table");
-  // 📣 Round the Pinball: Live-Ticker rechts neben oder unter der Tabelle (Auto: bis 5 Flipper rechts)
-  const [tickerPos, setTickerPos] = useState<"auto" | "right" | "below">("auto");
+  // 📣 Round the Pinball: Live-Ticker rechts neben oder unter der Tabelle (Standard: rechts; Auto: bis 5 Flipper rechts)
+  const [tickerPos, setTickerPos] = useState<"auto" | "right" | "below">("right");
   useEffect(() => {
     try {
       const v = window.localStorage.getItem("pb_tvTickerPos");
@@ -1062,6 +1085,25 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       /* ignore */
     }
   }, []);
+  // 📜 Live-Ticker läuft von selbst (an/aus im Kopf, je Gerät gemerkt)
+  const [tickerAutoScroll, setTickerAutoScroll] = useState(true);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("pb_tvTickerAutoScroll") === "0") setTickerAutoScroll(false);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleTickerAutoScroll = () => {
+    setTickerAutoScroll((on) => {
+      try {
+        window.localStorage.setItem("pb_tvTickerAutoScroll", on ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !on;
+    });
+  };
   const chooseTickerPos = (v: "auto" | "right" | "below") => {
     setTickerPos(v);
     try {
@@ -1135,6 +1177,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       {!isRotation && data ? <RoundSplash data={data as any} variant="tv" soundOn={soundOn} /> : null}
       {/* 🥋 Flawless Victory am Turnierende (RtP: wenn alle Durchgänge fertig) */}
       {data ? <FlawlessCelebration data={data as any} variant="tv" soundOn={soundOn} /> : null}
+      {/* 🪧 Karten für Ticker-Meldungen ohne eigene Einblendung (z. B. Finalspiel im Superfinale) */}
+      {data ? <FeedPopups code={code} variant="tv" soundOn={soundOn} /> : null}
       {/* Platzhalter in skalierter Größe (für Zentrierung + Scrollen nur im Notfall) */}
       <div
         style={{
@@ -1205,6 +1249,15 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                     🏷️ {data.tournament.category}
                   </span>
                 ) : null}
+                {/* 🔑 Turniercode (zum Ablesen, z. B. für /s/CODE am Handy) */}
+                {code ? (
+                  <span
+                    className="shrink-0 rounded-full bg-white/[0.06] px-3.5 py-0.5 text-xl font-semibold leading-snug tracking-wider text-white/70 ring-1 ring-white/15"
+                    title="Turniercode"
+                  >
+                    # {String(code).toUpperCase()}
+                  </span>
+                ) : null}
                 {rotProgress && !isFinished ? <RotationProgressBar progress={rotProgress} variant="tv" /> : null}
               </div>
             </div>
@@ -1269,6 +1322,18 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                         </button>
                       ))}
                     </span>
+                    {/* 📜 Auto-Scroll an/aus */}
+                    <button
+                      type="button"
+                      onClick={toggleTickerAutoScroll}
+                      title={tickerAutoScroll ? "Live-Ticker scrollt von selbst – zum Ausschalten tippen" : "Live-Ticker steht still – zum Einschalten tippen"}
+                      className={
+                        "rounded-full px-2.5 py-0.5 font-semibold ring-1 transition " +
+                        (tickerAutoScroll ? "bg-white/20 text-white ring-white/25" : "bg-white/5 text-white/50 ring-white/15 hover:bg-white/10")
+                      }
+                    >
+                      ↕ Auto-Scroll {tickerAutoScroll ? "an" : "aus"}
+                    </button>
                   </span>
                 </div>
               ) : null}
@@ -1324,7 +1389,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                             : "text-white/60 hover:bg-white/10")
                         }
                       >
-                        {TAB_LABEL[t]}
+                        {t === "current" && liveFinal ? "🔥 Superfinale" : TAB_LABEL[t]}
                         {activeTab === t ? <TabProgress timer={mainTimer} /> : null}
                       </button>
                     ))}
@@ -1399,6 +1464,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
               eloOn={view.eloOn}
               tab={activeTab}
               superFinal={superFinal}
+              liveFinal={liveFinal}
               series={series}
               isFinished={isFinished}
               race={hasRace ? <RaceChart data={raceData} players={racePlayers} width={1156} height={640} /> : null}
@@ -1452,24 +1518,27 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 return side ? (
                   <div className="flex items-start gap-4">
                     <div className="min-w-0 flex-1 space-y-3">{table}</div>
-                    <div className="w-[440px] shrink-0">
-                      <LiveTicker
-                        code={code}
-                        variant="tv"
-                        maxItems={30}
-                        // etwa so hoch wie die Tabelle daneben
-                        scrollMaxPx={Math.max(320, 170 + rowsTp.length * 76)}
-                        autoScroll // 📜 nur Round the Pinball
-                        refreshMs={8000}
-                        soundOn={soundOn}
-                      />
-                    </div>
+                    {/* mindestens so hoch wie die Tabelle daneben, bei Platz bis zum unteren Fensterrand */}
+                    <FillHeightTicker minPx={Math.max(320, 170 + rowsTp.length * 76)}>
+                      {(px) => (
+                        <LiveTicker
+                          code={code}
+                          variant="tv"
+                          maxItems={30}
+                          scrollMaxPx={px}
+                          autoScroll={tickerAutoScroll} // 📜 nur Round the Pinball, im Kopf abschaltbar
+                          autoTopMs={15_000} // rechts: oben erst 15 s stehen bleiben
+                          refreshMs={8000}
+                          soundOn={soundOn}
+                        />
+                      )}
+                    </FillHeightTicker>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {table}
                     {/* quer (unten): ca. 4 Meldungen sichtbar, Rest scrollbar */}
-                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={285} refreshMs={8000} soundOn={soundOn} autoScroll />
+                    <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={285} refreshMs={8000} soundOn={soundOn} autoScroll={tickerAutoScroll} />
                   </div>
                 );
               })()
@@ -1802,6 +1871,7 @@ function MatchTvView({
   eloOn,
   tab,
   superFinal,
+  liveFinal,
   series,
   isFinished,
   race,
@@ -1817,6 +1887,8 @@ function MatchTvView({
   eloOn: boolean;
   tab: TvTab;
   superFinal: SuperFinalRank[] | null;
+  /** 🔥 laufendes Superfinale: ersetzt die aktuelle Runde */
+  liveFinal?: LiveFinal | null;
   series: SeriesData | null;
   isFinished: boolean;
   /** 📈 Verlauf-Graph (fertig gerendert) */
@@ -1840,6 +1912,8 @@ function MatchTvView({
           race
         ) : tab === "archive" ? (
           <ArchiveView blocks={mv.archive} rowById={rowById} />
+        ) : tab === "current" && liveFinal ? (
+          <SuperFinalLiveView final={liveFinal} rowById={rowById} />
         ) : !cur ? (
           <div className="rounded-3xl bg-white/[0.04] p-16 text-center text-2xl text-white/50 ring-1 ring-white/10">
             Noch keine Runde gestartet
@@ -2561,6 +2635,82 @@ function PodiumView({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
 type SuperFinalRank = { playerId: string; seed: number; points: number; rank: number };
 
 /** 🔥 Superfinale-Podest (nur wenn gespielt): Platz 1–3 auf dem Podest, Platz 4 darunter */
+type LiveFinal = {
+  target: number;
+  players: { playerId: string; seed: number; startPoints: number; points: number }[];
+};
+
+/** 🔥 Laufendes Superfinale – Tabelle wie im Admin (Seed, Spieler, Startpunkte, Punkte / Ziel) im TV-Stil */
+function SuperFinalLiveView({ final, rowById }: { final: LiveFinal; rowById: Record<string, Row> }) {
+  const played = final.players.reduce((s, p) => s + Math.max(0, p.points - p.startPoints), 0);
+  const best = Math.max(...final.players.map((p) => p.points));
+  return (
+    <>
+      <div className="mb-4 flex items-end justify-between">
+        <div className="bg-gradient-to-r from-amber-300 via-orange-400 to-rose-500 bg-clip-text text-4xl font-black italic tracking-tight text-transparent">
+          🔥 Superfinale
+          <span className="ml-3 align-middle text-xl font-semibold not-italic text-white/40">· Ziel: {final.target} Punkte</span>
+        </div>
+        <div className="rounded-full bg-orange-400/15 px-4 py-1 text-base font-semibold text-orange-300">
+          {played === 0 ? "Gleich geht's los" : `${played} ${played === 1 ? "Finalspiel" : "Finalspiele"} gespielt`} · Finalspiel {played + 1} läuft
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-3xl bg-[radial-gradient(ellipse_at_bottom,rgba(249,115,22,0.22)_0%,rgba(190,18,60,0.10)_50%,rgba(0,0,0,0)_80%)] shadow-2xl ring-1 ring-orange-400/30">
+        <div className="grid grid-cols-[110px_minmax(0,1fr)_170px_300px] items-center gap-4 px-8 pb-3 pt-5 text-sm font-semibold uppercase tracking-widest text-orange-200/60">
+          <span>Seed</span>
+          <span>Spieler</span>
+          <span className="text-right">Startpunkte</span>
+          <span className="text-right">Aktuelle Punkte</span>
+        </div>
+        {final.players.map((p) => {
+          const r = rowById[p.playerId];
+          const lead = p.points === best && p.points > 0;
+          return (
+            <div
+              key={p.playerId}
+              className={`relative grid grid-cols-[110px_minmax(0,1fr)_170px_300px] items-center gap-4 border-t border-white/[0.07] px-8 py-5 ${
+                lead ? "bg-gradient-to-r from-orange-400/15 to-transparent" : ""
+              }`}
+            >
+              {lead ? <span className="absolute inset-y-2 left-0 w-1.5 rounded-r bg-orange-400" /> : null}
+              <span className="font-mono text-3xl font-extrabold text-white/50">#{p.seed}</span>
+              <span className="flex min-w-0 items-center gap-4">
+                {r ? <PlayerAvatar row={r} size="h-14 w-14 text-2xl" /> : null}
+                <span className="truncate text-4xl font-bold">{r?.name ?? "?"}</span>
+              </span>
+              <span className="text-right text-3xl tabular-nums text-white/60">{p.startPoints}</span>
+              <span className="flex items-center justify-end gap-4">
+                <span className="flex gap-1.5">
+                  {Array.from({ length: final.target }, (_, i) => (
+                    <span
+                      key={i}
+                      className={`h-4 w-4 rounded-full ${
+                        i < p.points
+                          ? i < p.startPoints
+                            ? "bg-amber-200/70"
+                            : "bg-orange-400 shadow-[0_0_10px_rgba(251,146,60,0.8)]"
+                          : "bg-white/10"
+                      }`}
+                    />
+                  ))}
+                </span>
+                <span className="text-5xl font-black tabular-nums">
+                  {p.points}
+                  <span className="text-2xl font-semibold text-white/40"> / {final.target}</span>
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 text-center text-base text-white/40">
+        Wer zuerst {final.target} Punkte hat, ist Super Grand Champion
+      </div>
+    </>
+  );
+}
+
 function SuperFinalView({ ranking, rows }: { ranking: SuperFinalRank[]; rows: Row[] }) {
   const rowById: Record<string, Row> = {};
   for (const r of rows) rowById[r.id] = r;
@@ -2892,6 +3042,37 @@ function LeaderboardOnly({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/**
+ * 📜 Ticker rechts neben der Tabelle: Liste so hoch, dass die Karte bis zum unteren Fensterrand reicht
+ * (mindestens minPx). Rechnet bei Größenänderung des Fensters neu.
+ */
+function FillHeightTicker({ minPx, children }: { minPx: number; children: (px: number) => React.ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [px, setPx] = useState(minPx);
+  useEffect(() => {
+    const calc = () => {
+      const el = ref.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      // Kopf der Ticker-Karte + Innenabstand + kleiner Rand unten
+      const free = Math.floor(window.innerHeight - top - 110);
+      setPx(Math.max(minPx, free));
+    };
+    calc();
+    window.addEventListener("resize", calc);
+    const t = window.setTimeout(calc, 500); // nach dem Einblenden noch einmal (Layout steht dann)
+    return () => {
+      window.removeEventListener("resize", calc);
+      window.clearTimeout(t);
+    };
+  }, [minPx]);
+  return (
+    <div ref={ref} className="w-[440px] shrink-0">
+      {children(px)}
     </div>
   );
 }

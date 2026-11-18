@@ -16,6 +16,7 @@ import type { MmData } from "@/lib/myMatch";
 import type { FeedItemInput } from "@/lib/feed";
 import { rotationWaveSummary, summaryText, type RoundSummary } from "@/lib/roundSummary";
 import { SummaryBlock } from "@/components/RoundSplash";
+import { waveShortNews } from "@/lib/shortNews";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 
 const SHOW_MS = 4000;
@@ -48,6 +49,8 @@ export default function RotationTurnSplash({
   const notif = notifSetting(useNotificationSettings(), "rotationSplash", variant === "tv" ? "tv" : "admin");
   const onFeedRef = useRef(onFeed);
   onFeedRef.current = onFeed;
+  const dataRef = useRef<MmData | null>(data ?? null);
+  dataRef.current = data ?? null;
   const prevRef = useRef<RotationProgress | null>(null);
   const pendingStartRef = useRef(false);
   const [splash, setSplash] = useState<Splash | null>(null);
@@ -96,7 +99,8 @@ export default function RotationTurnSplash({
     if (!prev) return;
 
     // Rückblick des gerade fertig gewordenen Durchgangs (+ Ticker)
-    const withSummary = (wave: number) => {
+    // next = Ticker-Meldung "Durchgang N startet" → kommt als neueste ganz oben
+    const withSummary = (wave: number, next?: FeedItemInput) => {
       const s = data ? rotationWaveSummary(data, wave) : null;
       if (s) {
         const item = {
@@ -107,14 +111,33 @@ export default function RotationTurnSplash({
           body: summaryText(s, true) || "Alle Scores des Durchgangs sind da.",
         };
         // 📣 erst nach den anderen Meldungen des Durchgangs (die haben 10 s Tippfehler-Schutz) → Rückblick oben
-        scheduleDoneFeed(() => onFeedRef.current?.([item]));
+        // 📰 Shortnews (alle Scores des Durchgangs) direkt davor – Daten erst beim Eintragen lesen (Korrekturen)
+        scheduleDoneFeed(() => {
+          const d = dataRef.current;
+          const short = d ? waveShortNews(d, wave, total) : null;
+          const items: FeedItemInput[] = short ? [short, item] : [item];
+          if (next) items.push(next);
+          onFeedRef.current?.(items);
+        });
+      } else if (next) {
+        scheduleDoneFeed(() => onFeedRef.current?.([next]));
       }
       return s;
     };
     if (done && !prev.done) {
       setSplash({ kind: "done", total, summary: withSummary(total) });
     } else if (!done && (prev.total !== total || cur > prev.current)) {
-      setSplash({ kind: "turn", current: cur, total, summary: cur > 1 && prev.total === total ? withSummary(cur - 1) : null });
+      // 📣 neuer Durchgang auch in den Ticker
+      const next: FeedItemInput = {
+        key: `rotTurn|${cur}|${total}`,
+        kind: "roundStart",
+        icon: "🔵",
+        title: `Durchgang ${cur} / ${total} startet`,
+        body: "Weiter geht's – viel Spaß! 🍀",
+      };
+      const sameTotal = cur > 1 && prev.total === total;
+      if (!sameTotal) onFeedRef.current?.([next]);
+      setSplash({ kind: "turn", current: cur, total, summary: sameTotal ? withSummary(cur - 1, next) : null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur, total, done]);

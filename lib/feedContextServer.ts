@@ -168,7 +168,9 @@ export async function loadMachineRecords(
     recentTournamentIds,
     tournamentDates: Object.fromEntries(counted.map((o) => [String(o.id), o.created_at ?? null])),
   });
-  const excludedProfiles = personalFor.filter((id) => isExcludedProfile(ex, id));
+  // Meldungen/Badges: nur 🤖 Bots ausnehmen – Testprofile ("nicht in Statistik") bekommen alle Meldungen,
+  // ihre Scores zählen aber weiter nicht für Rekorde (countedMps oben)
+  const excludedProfiles = personalFor.filter((id) => ex.botProfileIds.has(String(id)));
   // profiles = für diese Spieler wurde gerechnet (später hinzugefügte → Seite lädt sofort neu)
   return { enabled: true, ...prior, excludedProfiles, played, profiles: personalFor };
 }
@@ -218,8 +220,8 @@ export async function loadPriorWins(sb: Sb, tournamentId: string): Promise<{ win
     if (!pid) continue;
     if (hc.position(String(w.match_id), String(w.player_id), w.position) === 1) wins[pid] = (wins[pid] ?? 0) + 1;
   }
-  // 🤖/🚫 Bots + Platzhalter: keine Matchsieg-Meilensteine
-  const excluded = profileIds.filter((id) => isExcludedProfile(ex, id));
+  // 🤖 Bots: keine Matchsieg-Meilensteine (Testprofile bekommen sie – Siege zählen aber nicht in der Statistik)
+  const excluded = profileIds.filter((id) => ex.botProfileIds.has(String(id)));
   return { wins, excluded };
 }
 

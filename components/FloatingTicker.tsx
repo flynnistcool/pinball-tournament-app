@@ -148,17 +148,18 @@ function MobileTickerDock({ code, onWindow }: { code: string; onWindow?: () => v
         <div className="fixed inset-0 z-[60] bg-black/30" onClick={() => setOpen(false)} aria-hidden="true" />
       ) : null}
       <div
-        className="fixed inset-x-0 z-[61] transition-[bottom] duration-200"
+        // gleiche Breite + Mitte wie die Menüleiste der Admin-Seite (max. 990 px, Rand wie dort)
+        className="fixed left-1/2 z-[61] w-full max-w-[990px] -translate-x-1/2 px-3 transition-[bottom] duration-200 sm:px-4"
         style={{ bottom: lift, paddingBottom: lift ? 0 : "env(safe-area-inset-bottom, 0px)" }}
       >
         {open ? (
-          <div className="mx-2 mb-1 max-h-[55vh] overflow-y-auto rounded-2xl border bg-white p-2 shadow-lg">
+          <div className="mb-1 max-h-[55vh] overflow-y-auto rounded-2xl border bg-white p-2 shadow-lg">
             <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
           </div>
         ) : null}
         <div
           className={
-            "flex items-center gap-2 border-t px-3 py-2 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] transition-colors duration-700 " +
+            "flex items-center gap-2 rounded-t-2xl border px-3 py-2 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] transition-colors duration-700 " +
             (flash ? "bg-amber-100" : "bg-white")
           }
         >

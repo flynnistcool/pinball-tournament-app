@@ -44,12 +44,12 @@ export async function GET(req: Request) {
   // DYP: Teams → keine Duell-Hinweise
   if (String(t.format ?? "") === "dyp_round_robin") return NextResponse.json({ ok: true, insights: {}, pairs: {} }, { headers: NO_STORE });
 
-  // Spieler dieses Turniers (ohne Bots/Platzhalter)
+  // Spieler dieses Turniers (ohne 🤖 Bots – Testprofile bekommen Duell-Hinweise, zählen aber in keiner Statistik)
   const ex = await loadStatsExclusions(sb);
   const { data: tPlayers, error: pErr } = await sb.from("players").select("id, profile_id").eq("tournament_id", t.id);
   if (pErr) return fail(`Spieler laden fehlgeschlagen: ${pErr.message}`, 500);
   const players = (tPlayers ?? [])
-    .filter((p) => p.profile_id && !ex.excludedProfileIds.has(String(p.profile_id)))
+    .filter((p) => p.profile_id && !ex.botProfileIds.has(String(p.profile_id)))
     .map((p) => ({ playerId: String(p.id), profileId: String(p.profile_id) }));
   if (players.length < 2) return NextResponse.json({ ok: true, insights: {}, pairs: {} }, { headers: NO_STORE });
 

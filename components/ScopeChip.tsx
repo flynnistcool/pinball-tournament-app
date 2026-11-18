@@ -9,6 +9,7 @@ const LOOK: Record<NotifScope, { light: string; dark: string }> = {
   "30tage": { light: "bg-violet-50 text-violet-700 ring-violet-200", dark: "bg-violet-400/15 text-violet-200 ring-violet-300/30" },
   allzeit: { light: "bg-amber-50 text-amber-800 ring-amber-200", dark: "bg-amber-400/15 text-amber-200 ring-amber-300/30" },
   duell: { light: "bg-rose-50 text-rose-700 ring-rose-200", dark: "bg-rose-400/15 text-rose-200 ring-rose-300/30" },
+  short: { light: "bg-neutral-100 text-neutral-600 ring-neutral-200", dark: "bg-white/10 text-white/70 ring-white/20" },
 };
 
 export default function ScopeChip({

@@ -4,13 +4,13 @@
 // Lädt /api/public/player-cards (beim Start + alle 5 Minuten) und blättert automatisch:
 // 4 Karten je Seite, alle 8 Sekunden die nächste Seite.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BestMachine, PlayerCard } from "@/lib/playerCards";
 import { solidColor } from "@/lib/playerColor";
 
 const REFRESH_MS = 5 * 60_000;
 const PAGE_SIZE = 4;
-const PAGE_MS = 8000;
+const PAGE_MS = 10000;
 
 function initials(name: string): string {
   return (
@@ -299,11 +299,15 @@ export default function PlayerCardsTv({ code }: { code: string }) {
   }, [code]);
 
   const pages = cards ? Math.max(1, Math.ceil(cards.length / PAGE_SIZE)) : 1;
+  // Auto-Blättern; nach Wischen / Punkt-Antippen startet die Zeit neu
   useEffect(() => {
     if (pages < 2) return;
-    const t = window.setInterval(() => setPage((p) => (p + 1) % pages), PAGE_MS);
-    return () => window.clearInterval(t);
-  }, [pages]);
+    const t = window.setTimeout(() => setPage((p) => (p + 1) % pages), PAGE_MS);
+    return () => window.clearTimeout(t);
+  }, [pages, page]);
+  const go = (delta: number) => setPage((p) => (((p % pages) + delta) % pages + pages) % pages);
+  // 👆 Wischen (Finger/Maus): links = weiter, rechts = zurück
+  const swipeX = useRef<number | null>(null);
 
   if (!cards) {
     return (
@@ -319,7 +323,22 @@ export default function PlayerCardsTv({ code }: { code: string }) {
   const p = page % pages;
   const visible = cards.slice(p * PAGE_SIZE, p * PAGE_SIZE + PAGE_SIZE);
   return (
-    <div className="flex w-[1500px] flex-col items-center gap-6 py-4">
+    <div
+      className="flex w-[1500px] touch-pan-y select-none flex-col items-center gap-6 py-4"
+      onPointerDown={(e) => {
+        swipeX.current = e.clientX;
+      }}
+      onPointerUp={(e) => {
+        const x0 = swipeX.current;
+        swipeX.current = null;
+        if (x0 == null || pages < 2) return;
+        const dx = e.clientX - x0;
+        if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+      }}
+      onPointerCancel={() => {
+        swipeX.current = null;
+      }}
+    >
       <div key={p} className="flex justify-center gap-8" style={{ animation: "tvFadeIn 0.6s ease both" }}>
         {visible.map((c) => (
           <PlayerTradingCard key={c.playerId} card={c} />
@@ -328,7 +347,15 @@ export default function PlayerCardsTv({ code }: { code: string }) {
       {pages > 1 ? (
         <div className="flex gap-2">
           {Array.from({ length: pages }, (_, i) => (
-            <span key={i} className={`h-2.5 w-2.5 rounded-full ${i === p ? "bg-white" : "bg-white/25"}`} />
+            <button
+              key={i}
+              type="button"
+              aria-label={`Seite ${i + 1}`}
+              onClick={() => setPage(i)}
+              className="flex h-8 w-8 items-center justify-center rounded-full"
+            >
+              <span className={`h-3 w-3 rounded-full ${i === p ? "bg-white" : "bg-white/25"}`} />
+            </button>
           ))}
         </div>
       ) : null}

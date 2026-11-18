@@ -283,16 +283,16 @@ export function RivalryEventTv({
     <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
       <div
         className={
-          "max-w-[70vw] rounded-[2.5rem] bg-gradient-to-br px-16 py-12 text-center text-white shadow-2xl ring-4 ring-white/20 " +
+          "mx-3 max-w-[92vw] rounded-[2.5rem] bg-gradient-to-br px-6 py-6 text-center text-white shadow-2xl ring-4 ring-white/20 sm:max-w-[70vw] sm:px-16 sm:py-12 " +
           KIND_TONE[ev.kind].tv
         }
       >
-        <div className="text-8xl">{t.icon}</div>
+        <div className="text-6xl sm:text-8xl">{t.icon}</div>
         <div className="mt-3">
           <ScopeChip kind={ev.kind} variant="dark" long className="!px-3 !py-1 !text-xl" />
         </div>
-        <div className="mt-3 text-6xl font-black tracking-tight">{t.title}</div>
-        <div className="mt-4 text-3xl font-semibold text-white/90">{t.text}</div>
+        <div className="mt-3 text-3xl font-black tracking-tight sm:text-6xl">{t.title}</div>
+        <div className="mt-4 text-lg font-semibold text-white/90 sm:text-3xl">{t.text}</div>
       </div>
     </div>
   );
@@ -382,16 +382,16 @@ export function RivalryEventPreview({
       <div className="fixed inset-0 z-[130] flex cursor-pointer items-center justify-center bg-black/50" onClick={onClose}>
         <div
           className={
-            "max-w-[70vw] rounded-[2.5rem] bg-gradient-to-br px-16 py-12 text-center text-white shadow-2xl ring-4 ring-white/20 " +
+            "mx-3 max-w-[92vw] rounded-[2.5rem] bg-gradient-to-br px-6 py-6 text-center text-white shadow-2xl ring-4 ring-white/20 sm:max-w-[70vw] sm:px-16 sm:py-12 " +
             KIND_TONE[kind].tv
           }
         >
-          <div className="text-8xl">{t.icon}</div>
+          <div className="text-6xl sm:text-8xl">{t.icon}</div>
           <div className="mt-3">
             <ScopeChip kind={kind} variant="dark" long className="!px-3 !py-1 !text-xl" />
           </div>
-          <div className="mt-3 text-6xl font-black tracking-tight">{t.title}</div>
-          <div className="mt-4 text-3xl font-semibold text-white/90">{t.text}</div>
+          <div className="mt-3 text-3xl font-black tracking-tight sm:text-6xl">{t.title}</div>
+          <div className="mt-4 text-lg font-semibold text-white/90 sm:text-3xl">{t.text}</div>
         </div>
       </div>
     );
