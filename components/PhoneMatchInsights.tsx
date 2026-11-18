@@ -14,7 +14,7 @@ import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } f
 import { liveEntriesFrom, machineKey, personalKey } from "@/lib/recordWatch";
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
 import { levelText } from "@/lib/scoreForm";
-import { topIds, tournamentWinrates } from "@/lib/matchInsights";
+import { bottomIds, topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import StreakFire from "@/components/StreakFire";
 import { useBadgeOn } from "@/components/DisplayDevice";
@@ -147,9 +147,13 @@ export default function PhoneMatchInsights({
     tVals[pid] = twr[pid]?.winrate ?? null;
     mVals[pid] = mwrFor(pid)?.winrate ?? null;
   }
-  const showCompare = !isRotation && !info.done && info.players.length > 1;
+  // wie im Admin: auch bei Round the Pinball (alle am Flipper) höchste Winrate grün + ★ Favorit
+  const showCompare = !info.done && info.players.length > 1;
   const tTop = showCompare ? topIds(tVals) : new Set<string>();
   const mTop = showCompare ? topIds(mVals) : new Set<string>();
+  // niedrigster Wert dezent rot (wie im Admin)
+  const tLow = showCompare ? bottomIds(tVals) : new Set<string>();
+  const mLow = showCompare ? bottomIds(mVals) : new Set<string>();
   // ★ Favorit: gleiche Regel wie Admin/TV (lib/favorite.ts) – echte Winrate-Bestwerte, sonst Elo mit Vorsprung
   let favRes: FavoriteResult | null = null;
   if (showCompare) {
@@ -278,12 +282,12 @@ export default function PhoneMatchInsights({
               <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-500">
                 <span>
                   Turnier-Winrate{" "}
-                  <span className={tTop.has(pid) ? "font-semibold text-emerald-600" : ""}>{pct(t?.winrate)}</span>
+                  <span className={tTop.has(pid) ? "font-semibold text-emerald-600" : tLow.has(pid) ? "font-semibold text-rose-400" : ""}>{pct(t?.winrate)}</span>
                 </span>
                 {machineName ? (
                   <span>
                     Flipper-Winrate{" "}
-                    <span className={mTop.has(pid) ? "font-semibold text-emerald-600" : ""}>{pct(m?.winrate)}</span>
+                    <span className={mTop.has(pid) ? "font-semibold text-emerald-600" : mLow.has(pid) ? "font-semibold text-rose-400" : ""}>{pct(m?.winrate)}</span>
                     {m && m.matchesPlayed > 0 ? ` (${m.matchesPlayed})` : ""}
                   </span>
                 ) : null}

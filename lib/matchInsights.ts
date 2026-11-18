@@ -27,6 +27,17 @@ export function tournamentWinrates(data: MmData): Record<string, WinrateInfo> {
  * Wer hat den höchsten Wert? (für grüne Hervorhebung, wie im Admin: auch wenn nur einer einen Wert hat).
  * Liefert die Menge der Spieler-IDs mit dem Maximum.
  */
+/** niedrigster Wert (für die dezente rote Markierung) – nur wenn es überhaupt Unterschiede gibt
+ *  (alle gleich → niemand ist "hinten"); bei Gleichstand am Ende alle mit dem niedrigsten Wert */
+export function bottomIds(values: Record<string, number | null | undefined>): Set<string> {
+  const nums = Object.entries(values).filter(([, v]) => typeof v === "number" && Number.isFinite(v)) as [string, number][];
+  if (nums.length < 2) return new Set();
+  const max = Math.max(...nums.map(([, v]) => v));
+  const min = Math.min(...nums.map(([, v]) => v));
+  if (min === max) return new Set();
+  return new Set(nums.filter(([, v]) => v === min).map(([k]) => k));
+}
+
 export function topIds(values: Record<string, number | null | undefined>): Set<string> {
   const nums = Object.entries(values).filter(([, v]) => typeof v === "number" && Number.isFinite(v)) as [
     string,

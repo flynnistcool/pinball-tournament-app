@@ -15,9 +15,11 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { fmtScore, posLabel, shortLines, type ShortMatchLine, type ShortWaveLine } from "@/lib/shortNews";
 
 /** Arten, die als Karte aus dem Ticker kommen */
-const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort"]);
+const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm"]);
 /** 📰 Shortnews: kleine Karte unten links, eigene Warteschlange (hält die großen Karten nicht auf) */
-const SMALL_KINDS = new Set(["matchShort", "waveShort"]);
+const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm"]);
+/** 📊 Score-Form im Admin rechts unten (stört dort nicht), sonst links unten */
+const RIGHT_IN_ADMIN = new Set(["scoreForm"]);
 /** große Karte in der Mitte mit Effekten */
 const BIG_KINDS = new Set(["superfinalChampion", "tournamentEnd"]);
 
@@ -194,6 +196,7 @@ export default function FeedPopups({
     <ShortNewsCard
       key={small.id}
       item={small}
+      right={variant === "admin" && RIGHT_IN_ADMIN.has(small.kind)}
       onClose={variant === "admin" ? () => setSmallQueue((q) => q.slice(1)) : undefined}
     />
   ) : null;
@@ -319,18 +322,23 @@ export default function FeedPopups({
 }
 
 /** 📰 kleine Shortnews-Karte unten links (TV / Admin) */
-function ShortNewsCard({ item, onClose }: { item: FeedItem; onClose?: () => void }) {
+function ShortNewsCard({ item, onClose, right = false }: { item: FeedItem; onClose?: () => void; right?: boolean }) {
   const lines = shortLines(item);
   return createPortal(
     <div
-      className={"fixed bottom-[4vh] left-[2vw] z-[99] max-w-[min(30rem,calc(100vw-1rem))] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      className={
+        "fixed z-[99] max-w-[min(30rem,calc(100vw-1rem))] " +
+        (right ? "bottom-14 right-[2vw] " : "bottom-[4vh] left-[2vw] ") +
+        (onClose ? "cursor-pointer" : "pointer-events-none")
+      }
       onClick={onClose}
       role={onClose ? "button" : undefined}
     >
-      <style>{`@keyframes feedShortIn { from { opacity: 0; transform: translateX(-16px) } to { opacity: 1; transform: none } }`}</style>
+      <style>{`@keyframes feedShortIn { from { opacity: 0; transform: translateX(-16px) } to { opacity: 1; transform: none } }
+@keyframes feedShortInR { from { opacity: 0; transform: translateX(16px) } to { opacity: 1; transform: none } }`}</style>
       <div
         className="rounded-2xl bg-neutral-900/90 px-4 py-3 text-white shadow-xl ring-1 ring-white/15 backdrop-blur"
-        style={{ animation: "feedShortIn 0.4s ease-out both" }}
+        style={{ animation: `${right ? "feedShortInR" : "feedShortIn"} 0.4s ease-out both` }}
       >
         <div className="flex items-center gap-2 text-[max(11px,0.8vw)] font-semibold uppercase tracking-wider text-white/60">
           <span>📰 Turnier-Shortnews</span>

@@ -451,6 +451,8 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     devices: {
       phone: PHONE_ME,
       ticker: TICKER,
+      tv: { where: "kleine Karte unten links", seconds: 5, sound: SILENT },
+      admin: { where: "kleine Karte unten rechts", seconds: 4, sound: SILENT, note: "Antippen schließt" },
     },
   },
   {

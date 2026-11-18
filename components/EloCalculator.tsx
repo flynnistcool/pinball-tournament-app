@@ -4,13 +4,14 @@
 // Zwei Spieler wählen (Werte aus dem Profil, änderbar) → Gewinnchance, K-Faktor, Neuling-Schutz und
 // was ein Sieg / Unentschieden / eine Niederlage bringt – mit Rechenweg. Rechnung: lib/eloCalc.ts (wie recalc-elo).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { duel, type DuelSide, type EloPlayer } from "@/lib/eloCalc";
 
 type Prof = { id: string; name: string; rating: number | null; matches_played: number | null; provisional_matches: number | null; is_bot?: boolean | null };
 type Side = { profileId: string; rating: string; matches: string; provisional: string };
 
 const EMPTY: Side = { profileId: "", rating: "1500", matches: "30", provisional: "0" };
+const POS_KEY = "pb_eloCalcPos";
 
 const f1 = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const sign = (n: number) => (n > 0 ? "+" : n < 0 ? "−" : "±") + f1(Math.abs(n));
@@ -29,6 +30,52 @@ export default function EloCalculator() {
   const [profiles, setProfiles] = useState<Prof[] | null>(null);
   const [a, setA] = useState<Side>(EMPTY);
   const [b, setB] = useState<Side>(EMPTY);
+  // ✋ verschiebbar: Position (links/oben in px) – null = Standard (mittig am rechten Rand); merkt sich das Gerät
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  useEffect(() => {
+    try {
+      const v = JSON.parse(window.localStorage.getItem(POS_KEY) ?? "null");
+      if (v && typeof v.x === "number" && typeof v.y === "number") setPos(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const clamp = (x: number, y: number) => {
+    const el = boxRef.current;
+    const w = el?.offsetWidth ?? 400;
+    const h = el?.offsetHeight ?? 300;
+    return {
+      x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8)),
+      y: Math.min(Math.max(8, y), Math.max(8, window.innerHeight - Math.min(h, 120))),
+    };
+  };
+  const onDragStart = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest("button")) return; // ✕ nicht als Griff
+    const r = boxRef.current?.getBoundingClientRect();
+    if (!r) return;
+    dragRef.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+  const onDragMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    setPos(clamp(e.clientX - d.dx, e.clientY - d.dy));
+  };
+  const onDragEnd = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setPos((p) => {
+      try {
+        if (p) window.localStorage.setItem(POS_KEY, JSON.stringify(p));
+      } catch {
+        /* ignore */
+      }
+      return p;
+    });
+  };
 
   // Profile erst beim Öffnen laden (immer frisch)
   useEffect(() => {
@@ -43,6 +90,14 @@ export default function EloCalculator() {
     return () => {
       cancelled = true;
     };
+  }, [open]);
+
+  // gemerkte Position beim Öffnen in den sichtbaren Bereich holen (anderer Bildschirm / kleineres Fenster)
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => setPos((p) => (p ? clamp(p.x, p.y) : p)), 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Esc schließt
@@ -86,11 +141,32 @@ export default function EloCalculator() {
 
       {open ? (
         <div
-          className="fixed right-4 top-1/2 z-[81] max-h-[90vh] w-[400px] max-w-[calc(100vw-2rem)] -translate-y-1/2 overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-4 text-sm text-neutral-800 shadow-2xl"
+          ref={boxRef}
+          className={
+            "fixed z-[81] max-h-[90vh] w-[400px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-4 text-sm text-neutral-800 shadow-2xl " +
+            (pos ? "" : "right-4 top-1/2 -translate-y-1/2")
+          }
+          style={pos ? { left: pos.x, top: pos.y } : undefined}
           role="dialog"
           aria-label="Elo-Rechner"
         >
-          <div className="mb-3 flex items-center justify-between">
+          {/* ✋ Kopfzeile = Griff zum Verschieben (Doppelklick = zurück an den Standardplatz) */}
+          <div
+            className="-mx-4 -mt-4 mb-3 flex cursor-move touch-none select-none items-center justify-between rounded-t-2xl px-4 pb-1 pt-4"
+            onPointerDown={onDragStart}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragEnd}
+            onDoubleClick={() => {
+              setPos(null);
+              try {
+                window.localStorage.removeItem(POS_KEY);
+              } catch {
+                /* ignore */
+              }
+            }}
+            title="Ziehen zum Verschieben · Doppelklick = zurück an den Standardplatz"
+          >
             <div className="text-base font-bold">🧮 Elo-Rechner</div>
             <button type="button" onClick={() => setOpen(false)} className="rounded-lg px-2 text-neutral-500 hover:bg-neutral-100" title="Schließen (Esc)">
               ✕

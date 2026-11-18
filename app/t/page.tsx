@@ -7083,14 +7083,25 @@ async function autoAssignPositionsByExplicitScores(
     return out;
   }, [matchPlayers]);
 
+  // Matches aller AUFGEKLAPPTEN Runden (für die Winrates im Match).
+  // Round the Pinball / Elimination: alle offenen Runden sind gleichzeitig aufgeklappt (eine Runde = ein Flipper)
+  // → nicht nur die zuletzt erzeugte Runde nehmen, sonst fehlt an den anderen Flippern die Flipper-Winrate.
+  const openRoundIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (openRoundId) ids.add(String(openRoundId));
+    for (const r of rounds ?? []) {
+      if (!r?.id) continue;
+      if ((isRotationFormat || isEliminationFormat) && r.status === "open") ids.add(String(r.id));
+      if (isEliminationFormat && openFinishedRoundIds.has(r.id)) ids.add(String(r.id));
+    }
+    return Array.from(ids).sort();
+  }, [openRoundId, rounds, isRotationFormat, isEliminationFormat, openFinishedRoundIds]);
   const openMatches = useMemo(() => {
-    const rid = openRoundId ? String(openRoundId) : "";
-    if (!rid) return [] as Match[];
-    return matchesByRound?.[rid] ?? [];
-  }, [openRoundId, matchesByRound]);
+    return openRoundIds.flatMap((rid) => matchesByRound?.[rid] ?? []) as Match[];
+  }, [openRoundIds, matchesByRound]);
 
   const winrateSignature = useMemo(() => {
-    const rid = openRoundId ? String(openRoundId) : "";
+    const rid = openRoundIds.join(",");
     if (!rid) return "";
 
     const matchSig = (openMatches ?? [])
@@ -7106,7 +7117,7 @@ async function autoAssignPositionsByExplicitScores(
       .join("|");
 
     return `${rid}__${matchSig}__${mpSig}`;
-  }, [openRoundId, openMatches, matchPlayers]);
+  }, [openRoundIds, openMatches, matchPlayers]);
 
   const reloadWinratesLeft = useCallback(
     async (showSpinner: boolean) => {
@@ -8946,6 +8957,9 @@ disabled={
 
         const maxT = tVals.length > 0 ? Math.max(...tVals) : null;
         const maxM = mVals.length > 0 ? Math.max(...mVals) : null;
+        // niedrigster Wert (dezent rot) – nur wenn es Unterschiede gibt
+        const minT = tVals.length > 1 ? Math.min(...tVals) : null;
+        const minM = mVals.length > 1 ? Math.min(...mVals) : null;
 
                 // Runde-Status ist in diesem Block nicht zuverlässig vorhanden.
 // Wir nehmen hier den Match-Status (wie rechts im Winrate-Kasten): Aktiv = nicht finished.
@@ -8959,9 +8973,13 @@ const isRoundActive = matchStatusRaw !== "finished";
           typeof maxM === "number" &&
           mwr.winrate === maxM;
 
-        // ✅ Nur in aktiver Runde grün highlighten. Wenn finished: alles neutral.
-        const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
-        const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : "text-neutral-500";
+        const tIsLow = typeof t === "number" && Number.isFinite(t) && minT != null && maxT != null && minT !== maxT && t === minT;
+        const mIsLow =
+          typeof mwr?.winrate === "number" && Number.isFinite(mwr.winrate) && minM != null && maxM != null && minM !== maxM && mwr.winrate === minM;
+
+        // ✅ Nur in aktiver Runde grün (höchster) bzw. dezent rot (niedrigster) markieren. Wenn finished: alles neutral.
+        const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : isRoundActive && tIsLow ? "text-rose-400 font-semibold" : "text-neutral-500";
+        const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : isRoundActive && mIsLow ? "text-rose-400 font-semibold" : "text-neutral-500";
 
         // ⭐ Favorit: nur in aktiver Runde.
         // Favorit ist der Spieler, der mehr "grüne Werte" hat (Winrate + M-Winrate). Bei Gleichstand: kein Icon.
