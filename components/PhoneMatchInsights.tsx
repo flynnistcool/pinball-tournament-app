@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 import { liveEntriesFrom, machineKey, personalKey } from "@/lib/recordWatch";
-import PlayerMachineHistory from "@/components/PlayerMachineHistory";
+import PlayerMachineHistory, { OpponentBalance } from "@/components/PlayerMachineHistory";
 import { levelText } from "@/lib/scoreForm";
 import { bottomIds, topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
@@ -387,6 +387,20 @@ export default function PhoneMatchInsights({
                   {beaten ? <span className="font-semibold text-emerald-600">🎉 übertroffen</span> : null}
                 </div>
               ) : null}
+              {/* ⚔️ Bilanz aus MEINER Sicht gegen diesen Spieler (bei mir selbst keine):
+                  Allzeit · dieser Flipper · dieser Flipper nur im Format */}
+              {machineName && !isMe && meId && info.players.some((o) => String(o.player_id) === String(meId)) ? (
+                <div className="mt-1.5">
+                  <OpponentBalance
+                    code={code}
+                    playerId={String(meId)}
+                    opponents={[{ id: pid, name: nameOf(pid) }]}
+                    machineName={machineName}
+                    format={format}
+                    title="⚔️ Deine Bilanz gegen"
+                  />
+                </div>
+              ) : null}
               {histOpen[pid] ? (
                 <div className="mt-2 border-t border-neutral-200/70 pt-2">
                   <PlayerMachineHistory
@@ -394,10 +408,6 @@ export default function PhoneMatchInsights({
                     profileId={profileOf(pid)}
                     machineName={machineName}
                     liveEntries={live}
-                    playerId={pid}
-                    opponents={info.players
-                      .filter((o) => String(o.player_id) !== pid)
-                      .map((o) => ({ id: String(o.player_id), name: nameOf(String(o.player_id)) }))}
                     format={format}
                   />
                 </div>

@@ -22,6 +22,7 @@ import ScopeChip from "@/components/ScopeChip";
 import { fmtScore, posLabel, shortLines, type ShortMatchLine, type ShortWaveLine } from "@/lib/shortNews";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { playSoundById } from "@/lib/playSound";
+import { orderTickerByMatch } from "@/lib/tickerOrder";
 
 // ── Eintragen (gebündelt, jede Kennung nur einmal pro Seite) ─────────────────
 const sent = new Set<string>();
@@ -305,7 +306,8 @@ export default function LiveTicker({
     };
   }, [code, refreshMs]);
 
-  const shown = (items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled).slice(0, maxItems);
+  // 📜 Meldungen je Match logisch ordnen (Ergebnis → Sieg → Favoritensturz …), siehe lib/tickerOrder.ts
+  const shown = orderTickerByMatch((items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled)).slice(0, maxItems);
 
   // 📜 TV: scrollbare Liste läuft von selbst – 10 s oben stehen, nach unten springen, kurz warten,
   //    dann langsam wieder nach oben scrollen (älteste → neueste) und oben erneut 10 s stehen.

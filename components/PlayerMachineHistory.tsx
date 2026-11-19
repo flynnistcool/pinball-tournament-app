@@ -194,18 +194,21 @@ function BalanceCell({ b }: { b: ReturnType<typeof balance> | null }) {
 }
 
 /** ⚔️ Bilanz gegen jeden Gegner im Match: Allzeit (alle Matches), an diesem Flipper, an diesem Flipper nur im Format */
-function OpponentBalance({
+export function OpponentBalance({
   code,
   playerId,
   opponents,
   machineName,
   format,
+  title = "⚔️ Bilanz gegen",
 }: {
   code: string;
   playerId: string;
   opponents: readonly { id: string; name: string }[];
   machineName: string;
   format: string | null;
+  /** Überschrift der ersten Spalte */
+  title?: string;
 }) {
   const fmtKey = String(format ?? "").toLowerCase();
   const riv = useRivalryDataShared(code);
@@ -227,7 +230,7 @@ function OpponentBalance({
       <table className="w-full text-[11px] tabular-nums">
         <thead>
           <tr className="border-b border-neutral-100 align-bottom text-neutral-400">
-            <th className="px-2 py-1 text-left font-semibold text-neutral-700">⚔️ Bilanz gegen</th>
+            <th className="px-2 py-1 text-left font-semibold text-neutral-700">{title}</th>
             <th className="px-2 py-1 text-left font-normal">
               Allzeit
               <span className="block text-[10px] leading-tight">alle Matches</span>
