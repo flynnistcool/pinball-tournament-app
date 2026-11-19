@@ -50,6 +50,17 @@ export async function GET(req: Request) {
     data: r.data && typeof r.data === "object" ? r.data : null,
   }));
   await fillShortNewsIcons(sb, t.id, items);
+  // 🧊 ältere Favoritensturz-Meldungen: ungerundete Elo-Werte (227.19365566697212) nur in der Anzeige runden
+  for (const it of items) {
+    if (it.kind !== "upset") continue;
+    const round = (txt: string) => txt.replace(/\d+\.\d{3,}/g, (m) => String(Math.round(Number(m))));
+    it.body = round(it.body);
+    it.title = round(it.title);
+    if (it.data && typeof it.data === "object") {
+      const d = it.data as Record<string, unknown>;
+      for (const k of ["winnerElo", "loserElo"]) if (typeof d[k] === "number") d[k] = Math.round(d[k] as number);
+    }
+  }
   await fillAllzeitMachineIcons(sb, t.id, items);
   return NextResponse.json({ ok: true, items }, { headers: NO_STORE });
 }
@@ -64,7 +75,7 @@ async function fillShortNewsIcons(sb: ReturnType<typeof supabaseAdmin>, tourname
       (it.kind === "matchShort" || it.kind === "waveShort") &&
       Array.isArray(it.data?.lines) &&
       ((it.data!.lines as { machine?: string; machineIcon?: string | null }[]).some((l) => l?.machine && !l?.machineIcon) ||
-        (it.kind === "matchShort" && it.data?.machineIcon === undefined))
+        (it.kind === "matchShort" && !it.data?.machineIcon))
   );
   if (!needs.length) return;
   try {
@@ -73,6 +84,20 @@ async function fillShortNewsIcons(sb: ReturnType<typeof supabaseAdmin>, tourname
     for (const m of machines ?? []) {
       const ic = String((m as any).icon_emoji ?? "").trim();
       if (ic && (m as any).name) iconByMachine.set(String((m as any).name), ic);
+    }
+    // Rückfall: Icon aus den Flippern der Location (gleicher Name), falls am Turnier-Flipper keins hinterlegt ist
+    const missingNames = (machines ?? []).filter((m: any) => m?.name && !iconByMachine.has(String(m.name))).map((m: any) => String(m.name));
+    if (missingNames.length) {
+      const { data: tl } = await sb.from("tournaments").select("location_id").eq("id", tournamentId).maybeSingle();
+      const locId = (tl as { location_id?: string | null } | null)?.location_id;
+      if (locId) {
+        const { data: lm } = await sb.from("location_machines").select("name, icon_emoji").eq("location_id", locId);
+        for (const m of lm ?? []) {
+          const ic = String((m as any).icon_emoji ?? "").trim();
+          const nm = String((m as any).name ?? "");
+          if (ic && nm && !iconByMachine.has(nm)) iconByMachine.set(nm, ic);
+        }
+      }
     }
     for (const it of needs) {
       const lines = (it.data!.lines as { machine?: string; machineIcon?: string | null }[]).map(
@@ -87,8 +112,9 @@ async function fillShortNewsIcons(sb: ReturnType<typeof supabaseAdmin>, tourname
       // Matchplay: Flipper-Icon vor den Titel ("Jaws: X gewinnt")
       const mName = typeof it.data.machine === "string" ? it.data.machine : "";
       const mIcon = mName ? iconByMachine.get(mName) : undefined;
-      if (it.kind === "matchShort" && it.data.machineIcon === undefined && mIcon && it.title.startsWith(mName + ":")) {
-        it.title = `${mIcon} ${it.title}`;
+      if (it.kind === "matchShort" && !it.data.machineIcon && mIcon) {
+        if (!it.title.startsWith(mIcon) && it.title.startsWith(mName + ":")) it.title = `${mIcon} ${it.title}`;
+        it.data = { ...it.data, machineIcon: mIcon }; // für die Anzeige "Flipper-Icon + Name"
       }
     }
   } catch {

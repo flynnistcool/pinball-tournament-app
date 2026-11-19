@@ -34,8 +34,10 @@ import {
   momentMode,
   momentsForMatch,
   momentText,
+  rotationUpsets,
   type MatchMoment,
 } from "@/lib/matchMoments";
+import { getChanceSnapshot } from "@/lib/chanceSnapshots";
 import { liveLeaderboard } from "@/lib/myMatch";
 import { premiereSlots, slotKey } from "@/lib/premiere";
 import { afterPendingDone, AFTER_ROUND_START_MS } from "@/lib/feedOrder";
@@ -564,7 +566,7 @@ function MomentCard({ c, onClose }: { c: MomentShown; onClose?: () => void }) {
       : `${String(m.factor).replace(".", ",")}× so viele Punkte wie ${c.loserName}`;
   const sub =
     m.kind === "upset"
-      ? `${m.winnerElo} gegen ${m.loserElo} Elo${m.machine ? ` · ${m.machine}` : ""}`
+      ? `Siegchance ${Math.round(m.winnerChance * 100)} % gegen ${Math.round(m.loserChance * 100)} %${m.machine ? ` · ${m.machine}` : ""}`
       : m.kind === "revenge"
       ? `${m.prevRound ? `in Runde ${m.prevRound} verloren – jetzt gewonnen` : "letztes Duell verloren – jetzt gewonnen"}${m.machine ? ` · ${m.machine}` : ""}`
       : `${fmt(m.winnerScore)} zu ${fmt(m.loserScore)}${m.machine ? ` · ${m.machine}` : ""}`;
@@ -890,6 +892,24 @@ function RecordCelebrationInner({
         if (!pr) continue; // Rekorde noch nicht geladen → später bewerten
         pending.delete(e.key);
         seen.set(e.key, e.score);
+        // 🧊 Round the Pinball: Favoritensturz je Flipper (★ Favorit + Siegchancen vor dem Flipper eingefroren)
+        if (!finished && mMode === "scores") {
+          const [mId, pId] = e.key.split("|");
+          const here: Record<string, number> = {};
+          for (const x of entries) if (x.key.startsWith(mId + "|")) here[x.key.split("|")[1]] = x.score;
+          for (const u of rotationUpsets(here, pId, getChanceSnapshot(code, mId))) {
+            const mk = `upset|${mId}|${u.winnerId}`;
+            if (celebratedMomentRef.current.has(mk)) continue;
+            celebratedMomentRef.current.add(mk);
+            found.push({
+              kind: "upset",
+              m: { kind: "upset", matchId: mId, winnerId: u.winnerId, loserId: u.loserId, winnerChance: u.winnerChance, loserChance: u.loserChance, machine: e.machineName },
+              winnerName: nameById2(d, u.winnerId),
+              loserName: nameById2(d, u.loserId),
+              key: `${mId}|${u.winnerId}`,
+            } as MomentShown);
+          }
+        }
         if (!enabledRef.current || finished) continue;
         const c = evaluateEntry(e, pr, entries);
         if (c) {
@@ -1049,7 +1069,7 @@ function RecordCelebrationInner({
               });
             }
           }
-          for (const m of momentsForMatch(d as any, id, mMode, eloStart)) {
+          for (const m of momentsForMatch(d as any, id, mMode, eloStart, { snapshot: getChanceSnapshot(code, id) })) {
             const mk = `${m.kind}|${id}`;
             if (celebratedMomentRef.current.has(mk)) continue;
             celebratedMomentRef.current.add(mk);
@@ -1379,7 +1399,7 @@ function sampleShown(kind: (typeof CELEBRATION_KINDS)[number]): Shown {
     case "upset":
       return {
         kind,
-        m: { kind, matchId: "p", winnerId: "a", loserId: "b", winnerElo: 1512, loserElo: 1758, machine: "Godzilla Premium" },
+        m: { kind, matchId: "p", winnerId: "a", loserId: "b", winnerChance: 0.22, loserChance: 0.78, machine: "Godzilla Premium" },
         winnerName: "Levin",
         loserName: "Andre",
         key: "preview",

@@ -85,8 +85,10 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
       return {
         title: "Favoritensturz! 🧊",
         text:
-          d.other != null && d.loserElo != null
-            ? `Du hast Favorit ${d.other} (${d.loserElo} Elo) geschlagen – stark!`
+          d.other != null && d.winnerChance != null
+            ? `Mit nur ${d.winnerChance} % Siegchance hast du Favorit ${d.other} geschlagen – stark!`
+            : d.other != null && d.loserElo != null
+            ? `Du hast Favorit ${d.other} (${Math.round(Number(d.loserElo))} Elo) geschlagen – stark!`
             : x.body,
       };
     case "photo":

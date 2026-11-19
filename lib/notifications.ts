@@ -173,7 +173,8 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "upset",
     icon: "🧊",
     title: "Favoritensturz",
-    when: "Matchsieger hatte zu Turnierbeginn mindestens 200 Elo weniger als ein geschlagener Gegner (nicht bei Round the Pinball und DYP)",
+    when:
+      "Der ★ Favorit verliert gegen einen Spieler mit höchstens 30 % Siegchance (Siegchance vor dem Match: Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper). Round the Pinball: je Flipper, sobald ein Score den Favoriten übertrifft – jeder Außenseiter, der ihn schlägt, bekommt seine Meldung (auch wenn der Favorit erst zuletzt spielt). Nicht bei DYP.",
     devices: {
       phone: { where: "Einblendung oben", seconds: null, sound: SILENT, note: "nur der Sieger · bleibt bis Antippen" },
       ticker: TICKER,
@@ -491,7 +492,14 @@ export const BADGES: readonly NotificationDef[] = [
     id: "badge:favorite",
     icon: "★",
     title: "Favorit-Abzeichen",
-    when: "Favorit im laufenden Match (Siegquoten, sonst Elo mit Vorsprung)",
+    when: "Favorit im laufenden Match: höchste Siegchance (Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper) mit mindestens 10 Prozentpunkten Vorsprung",
+    devices: { tv: BADGE("Matchkarte am Namen"), admin: BADGE("am Namen im Match"), phone: BADGE("Mein Match am Namen") },
+  },
+  {
+    id: "badge:chance",
+    icon: "📈",
+    title: "Siegchance",
+    when: "Siegchance jedes Spielers im laufenden Match (wie beim ★ Favorit berechnet) – höchste grün, niedrigste rot",
     devices: { tv: BADGE("Matchkarte am Namen"), admin: BADGE("am Namen im Match"), phone: BADGE("Mein Match am Namen") },
   },
   {
@@ -618,11 +626,11 @@ export function serverHandlesKind(kind: string, rotation: boolean): boolean {
       "premiere",
       "premiereWin",
       "wins",
-      "upset",
       "photo",
       "blowout",
       "revenge",
       "scoreForm",
+      // "upset" bewusst nicht: braucht die eingefrorenen Siegchancen vom Gerät (lib/chanceSnapshots.ts)
     ].includes(kind)
   )
     return true;

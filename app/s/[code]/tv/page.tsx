@@ -26,7 +26,7 @@ import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
 import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
-import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
+import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData, useRivalryDataShared } from "@/components/RivalryBadge";
 import { RivalryEventTv, useRivalryEvents } from "@/components/RivalryEvents";
 import LiveTicker from "@/components/LiveTicker";
 import RoundSplash from "@/components/RoundSplash";
@@ -40,7 +40,9 @@ import { useMachineRecords } from "@/components/MatchRecordsLine";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import BotEloBadge from "@/components/BotEloBadge";
 import { effectiveExtraball } from "@/lib/botRules";
-import { favoriteTitle, pickFavorite } from "@/lib/favorite";
+import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
+import { saveChanceSnapshot } from "@/lib/chanceSnapshots";
+import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/PlayerQrWall";
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
@@ -100,8 +102,12 @@ type MatchCardPlayer = {
   mCount: number; // Anzahl Matches für die Flipper-Winrate
   tTop: boolean; // höchster Wert im (laufenden) Match -> grün
   mTop: boolean;
-  favorite: boolean; // ★ Favorit im laufenden Match (lib/favorite.ts: Winrates, sonst Elo)
+  favorite: boolean; // ★ Favorit im laufenden Match (lib/favorite.ts: Siegchance)
   favoriteTitle?: string;
+  /** 📈 Siegchance (0..1) im laufenden Match + Farbe + Mouseover */
+  chance?: number | null;
+  chanceTone?: "top" | "low" | "mid";
+  chanceTitle?: string;
 };
 type MachineWr = { winrate: number | null; matchesPlayed: number };
 type MatchCard = {
@@ -602,6 +608,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   }, [code, isMatchFormat]);
 
   // ── Match-Ansicht (Matchplay / Swiss / Round Robin) ───────────────────────
+  // ★ Favorit: direkte Bilanz am Flipper (pairMachine) – geteilte Duell-Daten
+  const rivFavTv = useRivalryDataShared(code, !!data);
   const matchView = useMemo(() => {
     if (!isMatchFormat) return null;
     const players = data?.players ?? [];
@@ -688,22 +696,34 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             return { ...b, tTop, mTop, greens: (tTop ? 1 : 0) + (mTop ? 1 : 0) };
           });
           // ★ Favorit: gleiche Regel wie Admin (lib/favorite.ts)
-          const favRes = finished
-            ? null
-            : pickFavorite(
-                withTop
-                  .filter((b) => b.hasProfile)
-                  .map((b) => {
-                    const pr = profileByIdMv[profileOf[b.x.player_id] ?? ""];
-                    return {
-                      key: String(b.x.player_id),
-                      t: b.tWin,
-                      m: b.mWin,
-                      elo: pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Number(pr.rating) : null,
-                      placeholder: pr?.exclude_from_stats === true,
-                    };
-                  })
-              );
+          // ★ Favorit + 📈 Siegchance (lib/favorite.ts) – gleiche Rechnung wie im Admin
+          const favCands = withTop
+            .filter((b) => b.hasProfile)
+            .map((b) => {
+              const pr = profileByIdMv[profileOf[b.x.player_id] ?? ""];
+              return {
+                key: String(b.x.player_id),
+                pid: String(b.x.player_id),
+                name: players.find((p) => p.id === b.x.player_id)?.name ?? "?",
+                t: b.tWin,
+                m: b.mWin,
+                mCount: b.mCount,
+                elo: pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Number(pr.rating) : null,
+                placeholder: pr?.exclude_from_stats === true,
+              };
+            });
+          const favH2h = h2hFromPairMachine(rivFavTv.pairMachine, machineName);
+          const bd = finished ? null : favoriteBreakdown(favCands, { h2h: favH2h });
+          const favRes = finished ? null : pickFavorite(favCands, { h2h: favH2h });
+          const allChances = (bd?.rows ?? []).map((r) => r.chance);
+          const untouched = list.every((x) => x.position == null && toScore(x.score) == null);
+          if (bd && untouched && bd.rows.length >= 2) {
+            // 🧊 Stand vor dem Match einfrieren (für den Favoritensturz am TV)
+            saveChanceSnapshot(code, String(m.id), {
+              favoriteKey: bd.favoriteKey,
+              chances: Object.fromEntries(bd.rows.map((r) => [String(r.cand.key), r.chance])),
+            });
+          }
 
           return {
             matchId: m.id,
@@ -722,6 +742,15 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
               mTop: b.mTop,
               favorite: !!favRes && favRes.key === String(b.x.player_id),
               favoriteTitle: favRes && favRes.key === String(b.x.player_id) ? favoriteTitle(favRes) : undefined,
+              ...(() => {
+                const row = bd?.rows.find((r) => String(r.cand.key) === String(b.x.player_id));
+                if (!row) return { chance: null };
+                return {
+                  chance: row.chance,
+                  chanceTone: chanceTone(allChances, row.chance),
+                  chanceTitle: chanceShortTitle(row, bd?.favoriteKey === String(b.x.player_id)),
+                };
+              })(),
             })),
           };
         });
@@ -756,7 +785,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       history,
       roundPointsMax,
     };
-  }, [data, isMatchFormat, format, machineWr]);
+  }, [data, isMatchFormat, format, machineWr, rivFavTv, code]);
 
   // ── Superfinale (nur wenn wirklich gespielt + abgeschlossen) ────────────────
   const superFinal = useMemo(() => {
@@ -2173,6 +2202,7 @@ function MatchCardView({
 }) {
   const premiereOn = useBadgeOn("badge:premiere"); // 🏷️ 🎰 Premiere an/aus (Dauerhafte Anzeigen)
   const favOn = useBadgeOn("badge:favorite");
+  const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance
   return (
     <div
       className={`overflow-hidden rounded-3xl ring-1 ${
@@ -2232,6 +2262,9 @@ function MatchCardView({
                     </span>
                   ) : null}
                   <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
+                  {p.chance != null && chanceOn ? (
+                    <ChanceChip chance={p.chance} tone={p.chanceTone ?? "mid"} title={p.chanceTitle} variant="dark" className="text-sm" />
+                  ) : null}
                   {p.favorite && favOn ? (
                     <span
                       className="inline-flex shrink-0 items-center rounded-full bg-amber-400/20 px-2.5 py-0.5 text-sm font-bold text-amber-200 ring-1 ring-amber-300/60 drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]"

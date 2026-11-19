@@ -86,14 +86,21 @@ function ShortNewsBody({ item, tv }: { item: FeedItem; tv: boolean }) {
   const soft = tv ? "text-white/80" : "text-neutral-700";
   const lines = shortLines(item);
   if (item.kind === "matchShort") {
+    const machine = item.data?.machine ? String(item.data.machine) : "";
+    const machineIcon = item.data?.machineIcon ? String(item.data.machineIcon) : "";
     return (
-      <span className={"mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 " + soft}>
-        {(lines as ShortMatchLine[]).map((l, i) => (
-          <span key={i} className="whitespace-nowrap">
-            {posLabel(l.pos)} <b className={strong}>{l.name}</b>
-            {l.score != null ? <span className="tabular-nums"> {fmtScore(l.score)}</span> : null}
-          </span>
-        ))}
+      <span className="mt-0.5 flex flex-col gap-0.5">
+        {/* Flipper steht schon im Titel ("Ergebnis auf 🎱 Elvira"); nur bei alten Meldungen ohne Flipper-Angabe fehlt er */}
+        {!machine && machineIcon ? <span className={strong}>{machineIcon}</span> : null}
+        {/* 🥇 Name   🥈 Name … */}
+        <span className={"flex flex-wrap gap-x-3 gap-y-0.5 " + soft}>
+          {(lines as ShortMatchLine[]).map((l, i) => (
+            <span key={i} className="whitespace-nowrap">
+              {posLabel(l.pos)} <b className={strong}>{l.name}</b>
+              {l.score != null ? <span className="tabular-nums"> {fmtScore(l.score)}</span> : null}
+            </span>
+          ))}
+        </span>
       </span>
     );
   }
@@ -511,7 +518,10 @@ export default function LiveTicker({
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                     <span className={tv ? "text-base font-bold text-white" : "text-xs font-semibold text-neutral-800"}>
-                      {x.title}
+                      {/* 🏁 Match-Ergebnis: "Ergebnis auf 🎱 Elvira" – Plätze stehen darunter */}
+                      {x.kind === "matchShort" && x.data?.machine
+                        ? `Ergebnis auf ${x.data?.machineIcon ? `${String(x.data.machineIcon)} ` : ""}${String(x.data.machine)}`
+                        : x.title}
                     </span>
                     <ScopeChip kind={x.kind} variant={tv ? "dark" : "light"} />
                   </span>

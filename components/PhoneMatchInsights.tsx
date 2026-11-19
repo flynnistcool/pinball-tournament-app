@@ -18,10 +18,11 @@ import { bottomIds, topIds, tournamentWinrates } from "@/lib/matchInsights";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import StreakFire from "@/components/StreakFire";
 import { useBadgeOn } from "@/components/DisplayDevice";
-import RivalryBadge, { rtpRefreshKey, useRivalry } from "@/components/RivalryBadge";
+import RivalryBadge, { rtpRefreshKey, useRivalry, useRivalryDataShared } from "@/components/RivalryBadge";
 import { pairKey, type RivalryInsight } from "@/lib/rivalryInsights";
 import BotEloBadge from "@/components/BotEloBadge";
-import { favoriteTitle, pickFavorite, type FavoriteResult } from "@/lib/favorite";
+import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite, type FavoriteResult } from "@/lib/favorite";
+import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import type { MmData, MyMatchInfo } from "@/lib/myMatch";
 
 const WINRATE_REFRESH_MS = 5 * 60_000;
@@ -154,28 +155,36 @@ export default function PhoneMatchInsights({
   // niedrigster Wert dezent rot (wie im Admin)
   const tLow = showCompare ? bottomIds(tVals) : new Set<string>();
   const mLow = showCompare ? bottomIds(mVals) : new Set<string>();
-  // ★ Favorit: gleiche Regel wie Admin/TV (lib/favorite.ts) – echte Winrate-Bestwerte, sonst Elo mit Vorsprung
+  // ★ Favorit: gleiche Regel wie Admin/TV (lib/favorite.ts) – gemeinsame Gewinnchance aus Elo, Flipper-Winrate,
+  // Turnierform und direkter Bilanz an diesem Flipper
+  const rivFav = useRivalryDataShared(code, showCompare);
   let favRes: FavoriteResult | null = null;
+  let favBd: ReturnType<typeof favoriteBreakdown> | null = null;
   if (showCompare) {
-    favRes = pickFavorite(
-      info.players
+    const favCands = info.players
         .filter((mp) => !!profileOf(String(mp.player_id)))
         .map((mp) => {
           const pid = String(mp.player_id);
           const pr = (data.profiles ?? []).find((x) => String(x.id) === profileOf(pid));
           return {
             key: pid,
+            pid,
+            name: nameOf(pid),
             t: tVals[pid],
             m: mVals[pid],
+            mCount: mwrFor(pid)?.matchesPlayed ?? 0,
             elo: pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Number(pr.rating) : null,
             placeholder: pr?.exclude_from_stats === true,
           };
-        })
-    );
+        });
+    const favH2h = h2hFromPairMachine(rivFav.pairMachine, machineName);
+    favRes = pickFavorite(favCands, { h2h: favH2h });
+    favBd = favoriteBreakdown(favCands, { h2h: favH2h });
   }
   const favorite: string | null = favRes ? favRes.key : null;
   // 🏷️ dauerhafte Anzeigen an/aus (🔔 Meldungen & Sounds)
   const favOn = useBadgeOn("badge:favorite");
+  const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance
   const recordsOn = useBadgeOn("badge:records");
   const premiereOn = useBadgeOn("badge:premiere"); // 🎰
 
@@ -270,6 +279,17 @@ export default function PhoneMatchInsights({
                   </span>
                 ) : null}
                 <StreakFire n={streaks[pid]} mode={sMode} />
+                {(() => {
+                  // 📈 Siegchance (wie Admin/TV)
+                  const row = favBd?.rows.find((r) => String(r.cand.key) === pid);
+                  return row && chanceOn ? (
+                    <ChanceChip
+                      chance={row.chance}
+                      tone={chanceTone(favBd!.rows.map((r) => r.chance), row.chance)}
+                      title={chanceShortTitle(row, favBd!.favoriteKey === pid)}
+                    />
+                  ) : null;
+                })()}
                 {favorite === pid && favOn ? (
                   <span
                     className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"

@@ -1,6 +1,8 @@
 // ⚡ Besondere Match-Momente – reine Logik, keine Datenbank.
 //
-// - 🧊 Favoritensturz: Matchsieger hat mindestens UPSET_MIN_ELO weniger Elo als ein geschlagener Gegner
+// - 🧊 Favoritensturz: der ★ Favorit (Siegchance vor dem Match, lib/favorite.ts) verliert gegen einen Spieler mit
+//   höchstens 30 % Siegchance (lib/chanceSnapshots.ts UPSET_MAX_CHANCE); Round the Pinball: rotationUpsets
+//   (UPSET_MIN_ELO = alte Elo-Regel, nicht mehr verwendet)
 //   (Elo zu Turnierbeginn = linke Zahl im Leaderboard "1412 → 1541" – ändert sich während des Turniers nicht)
 // - 📸 Fotofinish: Sieger-Score höchstens PHOTO_MAX_GAP (2 %) über dem Zweitbesten
 // - 💣 Kantersieg: Sieger-Score mindestens BLOWOUT_FACTOR (3×) so hoch wie der Zweitbeste
@@ -11,7 +13,7 @@
 // Round the Pinball – alle Spieler am Flipper haben einen Score (der Flipper ist durch).
 // Nicht bei DYP (Teams) und Timeplay (Zeiten statt Scores; nur der Favoritensturz zählt dort).
 
-export const UPSET_MIN_ELO = 200;
+export const UPSET_MIN_ELO = 150;
 export const PHOTO_MAX_GAP = 0.02;
 export const BLOWOUT_FACTOR = 3;
 
@@ -23,6 +25,8 @@ export function momentMode(format: string | null | undefined): MomentMode {
   if (f === "rotation") return "scores";
   return "positions";
 }
+
+import { UPSET_MAX_CHANCE, type ChanceSnapshot } from "@/lib/chanceSnapshots";
 
 type MData = {
   tournament?: { format?: string | null } | null;
@@ -67,17 +71,20 @@ export function completedMatchIds(data: MData, mode: MomentMode): string[] {
 }
 
 export type MatchMoment =
-  | { kind: "upset"; matchId: string; winnerId: string; loserId: string; winnerElo: number; loserElo: number; machine: string | null }
+  | { kind: "upset"; matchId: string; winnerId: string; loserId: string; winnerChance: number; loserChance: number; machine: string | null }
   | { kind: "photo"; matchId: string; winnerId: string; loserId: string; winnerScore: number; loserScore: number; gapPct: number; machine: string | null }
   | { kind: "blowout"; matchId: string; winnerId: string; loserId: string; winnerScore: number; loserScore: number; factor: number; machine: string | null }
   | { kind: "revenge"; matchId: string; winnerId: string; loserId: string; prevRound: number | null; machine: string | null };
 
-/** Besondere Momente eines fertigen Matches (Elo je Spieler-ID: Turnierbeginn) */
+/** Besondere Momente eines fertigen Matches.
+ *  🧊 Favoritensturz nur mit eingefrorenen Siegchancen VOR dem Match (lib/chanceSnapshots.ts) –
+ *  ohne Snapshot (z. B. Server-Ticker) gibt es keinen Favoritensturz. eloStart wird nicht mehr genutzt. */
 export function momentsForMatch(
   data: MData,
   matchId: string,
   mode: MomentMode,
-  eloStart: Record<string, number | null | undefined>
+  _eloStart: Record<string, number | null | undefined>,
+  opts: { snapshot?: ChanceSnapshot | null } = {}
 ): MatchMoment[] {
   if (mode === "none") return [];
   const list = byMatch(data).get(matchId) ?? [];
@@ -104,19 +111,14 @@ export function momentsForMatch(
   }
   const winnerId = String(first.player_id);
 
-  // 🧊 Favoritensturz: stärkster geschlagener Gegner (nur Matchplay & Co.; bei Round the Pinball
-  // spielt man nicht direkt gegeneinander)
-  if (mode === "positions") {
-    const we = eloStart[winnerId];
-    if (we != null) {
-      let best: { id: string; elo: number } | null = null;
-      for (const x of ranked.slice(1)) {
-        const e = eloStart[String(x.player_id)];
-        if (e != null && (!best || e > best.elo)) best = { id: String(x.player_id), elo: e };
-      }
-      if (best && best.elo - we >= UPSET_MIN_ELO) {
-        out.push({ kind: "upset", matchId, winnerId, loserId: best.id, winnerElo: we, loserElo: best.elo, machine });
-      }
+  // 🧊 Favoritensturz (Matchplay & Co.): der ★ Favorit (vor dem Match) verliert gegen einen Sieger mit
+  // höchstens UPSET_MAX_CHANCE Siegchance. Round the Pinball: eigene Regel (rotationUpsets).
+  const snap = opts.snapshot;
+  if (mode === "positions" && snap?.favoriteKey) {
+    const fav = String(snap.favoriteKey);
+    const wc = snap.chances[winnerId];
+    if (fav !== winnerId && list.some((x) => String(x.player_id) === fav) && wc != null && wc <= UPSET_MAX_CHANCE) {
+      out.push({ kind: "upset", matchId, winnerId, loserId: fav, winnerChance: wc, loserChance: snap.chances[fav] ?? 0, machine });
     }
   }
 
@@ -194,7 +196,8 @@ const fmtScore = (n: number) => n.toLocaleString("de-DE");
 
 /** Zusatzangaben für die Handy-Karte */
 export function momentData(m: MatchMoment): Record<string, unknown> {
-  if (m.kind === "upset") return { winnerElo: m.winnerElo, loserElo: m.loserElo, machine: m.machine };
+  if (m.kind === "upset")
+    return { winnerChance: Math.round(m.winnerChance * 100), loserChance: Math.round(m.loserChance * 100), machine: m.machine };
   if (m.kind === "photo") return { gapPct: m.gapPct, machine: m.machine };
   if (m.kind === "revenge") return { prevRound: m.prevRound, machine: m.machine };
   return { factor: m.factor, machine: m.machine };
@@ -204,10 +207,38 @@ export function momentData(m: MatchMoment): Record<string, unknown> {
 export function momentText(m: MatchMoment, winnerName: string, loserName: string): string {
   const at = m.machine ? ` an ${m.machine}` : "";
   if (m.kind === "upset")
-    return `${winnerName} (${m.winnerElo}) schlägt Favorit ${loserName} (${m.loserElo})${at} – ${m.loserElo - m.winnerElo} Elo Unterschied!`;
+    return `${winnerName} (Siegchance ${Math.round(m.winnerChance * 100)} %) schlägt Favorit ${loserName} (${Math.round(m.loserChance * 100)} %)${at}!`;
   if (m.kind === "photo")
     return `${winnerName} gewinnt${at} hauchdünn gegen ${loserName} – nur ${String(m.gapPct).replace(".", ",")} % Vorsprung (${fmtScore(m.winnerScore)} zu ${fmtScore(m.loserScore)})`;
   if (m.kind === "revenge")
     return `${winnerName} revanchiert sich${at} bei ${loserName}${m.prevRound ? ` – in Runde ${m.prevRound} hatte ${loserName} noch gewonnen` : ""}`;
   return `${winnerName} zerlegt${at} ${loserName} – ${String(m.factor).replace(".", ",")}× so viele Punkte (${fmtScore(m.winnerScore)} zu ${fmtScore(m.loserScore)})`;
+}
+
+
+/**
+ * 🧊 Favoritensturz bei Round the Pinball (je Flipper), sobald ein Score stabil eingetragen ist:
+ * - Favorit hat schon gespielt → wer ihn danach übertrifft (Siegchance ≤ UPSET_MAX_CHANCE), bekommt die Meldung
+ * - Favorit trägt erst danach ein → JEDER, der ihn übertrifft (Siegchance ≤ UPSET_MAX_CHANCE), bekommt seine Meldung
+ *   (schwächster zuerst)
+ * scores: alle eingetragenen Scores an diesem Flipper (players.id → Score), newPid: wer gerade eingetragen hat.
+ */
+export function rotationUpsets(
+  scores: Record<string, number>,
+  newPid: string,
+  snap: ChanceSnapshot | null | undefined
+): { winnerId: string; loserId: string; winnerChance: number; loserChance: number }[] {
+  if (!snap?.favoriteKey) return [];
+  const fav = String(snap.favoriteKey);
+  const favScore = scores[fav];
+  if (favScore == null) return []; // Favorit hat noch nicht gespielt → (noch) keine Meldung
+  const chance = (pid: string) => snap.chances[pid];
+  const ok = (pid: string) => pid !== fav && scores[pid] != null && scores[pid] > favScore && chance(pid) != null && chance(pid) <= UPSET_MAX_CHANCE;
+  if (newPid !== fav) {
+    return ok(newPid) ? [{ winnerId: newPid, loserId: fav, winnerChance: chance(newPid), loserChance: chance(fav) ?? 0 }] : [];
+  }
+  return Object.keys(scores)
+    .filter(ok)
+    .sort((a, b) => chance(a) - chance(b))
+    .map((pid) => ({ winnerId: pid, loserId: fav, winnerChance: chance(pid), loserChance: chance(fav) ?? 0 }));
 }

@@ -18,13 +18,17 @@ export const roundSpeech = {
     lang === "de"
       ? `Match ${nr} an ${machine}, Reihenfolge: ${players}.`
       : `Match ${nr} on machine ${machine} with the playing order: ${players}.`,
-  favorite: (lang: SpeechLang, reason: "winrate" | "elo", name: string) =>
+  favorite: (lang: SpeechLang, reason: "winrate" | "elo" | "chance", name: string) =>
     lang === "de"
       ? reason === "winrate"
         ? ` Favorit in diesem Match, mit den besten Siegquoten, ist ${name}.`
+        : reason === "chance"
+        ? ` Favorit in diesem Match, mit der besten Gewinnchance, ist ${name}.`
         : ` Favorit in diesem Match, mit der höchsten Elo, ist ${name}.`
       : reason === "winrate"
       ? ` The favorite in this match, with the best win rates, is ${name}.`
+      : reason === "chance"
+      ? ` The favorite in this match, with the best chance to win, is ${name}.`
       : ` The favorite in this match, with the highest Elo, is ${name}.`,
   unknownMachine: (lang: SpeechLang) => (lang === "de" ? "unbekanntem Flipper" : "Unknown machine"),
 };

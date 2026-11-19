@@ -30,7 +30,7 @@ import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
 import MusicPreviewButton from "@/components/MusicPreviewButton";
 import RefreshCountdown, { type RecheckInfo } from "@/components/RefreshCountdown";
-import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData } from "@/components/RivalryBadge";
+import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalry, useRivalryData, useRivalryDataShared } from "@/components/RivalryBadge";
 import { RivalryEventToasts, useRivalryEvents } from "@/components/RivalryEvents";
 import LiveTicker, { postFeedItems } from "@/components/LiveTicker";
 import RoundSplash from "@/components/RoundSplash";
@@ -77,7 +77,9 @@ import { useMyProfileId } from "@/components/useMyProfileId";
 import MyEntryButton from "@/components/MyEntryButton";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
-import { favoriteTitle, pickFavorite } from "@/lib/favorite";
+import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
+import { saveChanceSnapshot } from "@/lib/chanceSnapshots";
+import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import { roleOfUser } from "@/lib/authRoles";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
@@ -91,6 +93,7 @@ import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLin
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
 import ScoreFormWatcher from "@/components/ScoreFormWatcher";
 import EloCalculator from "@/components/EloCalculator";
+import MatchAnalysis from "@/components/MatchAnalysis";
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
@@ -6406,6 +6409,10 @@ function RoundMatchesCard({
     tournament?.status !== "finished" &&
     !["rotation", "timeplay", "dyp_round_robin"].includes(String(tournament?.format ?? ""));
   const rivalryInsights = useRivalry(code, String((rounds ?? []).length), rivalryOn);
+  // ★ Favorit: direkte Bilanz am Flipper (pairMachine) – geteilte Duell-Daten, kein zusätzliches Laden
+  const rivFavData = useRivalryDataShared(code, tournament?.status !== "finished");
+  // 📊 aufgeklappte Match-Analysen (Klick auf den Match-Kopf)
+  const [anaOpen, setAnaOpen] = useState<Record<string, boolean>>({});
   // 📣 Gegner-Hinweise laufender Matches einmal in den Ticker (nur wer ändern darf = Admin; doppelte ignoriert)
   useEffect(() => {
     if (!rivalryOn || locked || !code) return;
@@ -6426,6 +6433,7 @@ function RoundMatchesCard({
   }, [rivalryInsights, matches, matchPlayers, rivalryOn, locked, code]);
   // 🏷️ ★ Favorit-Abzeichen an/aus (🔔 Meldungen & Sounds → Dauerhafte Anzeigen)
   const favBadgeOn = useBadgeOn("badge:favorite");
+  const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance-Schildchen
 
   // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
   const winStreakMode = streakMode(tournament?.format);
@@ -8168,7 +8176,16 @@ const scoredPlayersInMatch = (() => {
 
 
 
-                              <div className="pb-match-head flex flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b bg-[#f8ecdc] px-2 py-1 sm:px-3 sm:py-2">
+                              <div
+                                className="pb-match-head flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b bg-[#f8ecdc] px-2 py-1 sm:px-3 sm:py-2"
+                                title="Klicken: 📊 Match-Analyse (Bilanz aller Paarungen + Favoriten-Berechnung)"
+                                onClick={(e) => {
+                                  // Bedienelemente im Kopf (Flipper-Auswahl, OCR, Knöpfe …) nicht als Klick werten
+                                  if ((e.target as HTMLElement).closest("button, select, input, a, label, textarea, [role=button]")) return;
+                                  const id = String(m.id);
+                                  setAnaOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+                                }}
+                              >
                               
                                 {/* Linke Seite: Maschine + Spiel + Hinweis */}
                                 <div className="flex flex-col gap-1">
@@ -8319,6 +8336,32 @@ disabled={
                                   ) : null;
                                 })() : null}
                               </div>
+
+                              {/* 📊 Match-Analyse (Klick auf den Kopf) */}
+                              {anaOpen[String(m.id)] ? (() => {
+                                const anaMachine = m.machine_id ? machinesInfoById[m.machine_id]?.name ?? null : null;
+                                const anaPlayers = (mps ?? [])
+                                  .map((o: any) => {
+                                    const pid = o?.player_id ? String(o.player_id) : "";
+                                    const pv = playersById?.[pid];
+                                    const prof = pv?.profile_id ? String(pv.profile_id) : "";
+                                    if (!pid || !prof) return null;
+                                    const t = tWinrateByPlayerId?.[prof];
+                                    const mwr = anaMachine && locationId ? mWinrateByKey?.[`${prof}__${anaMachine}__${locationId}`] : null;
+                                    return {
+                                      key: pid,
+                                      pid,
+                                      name: pv?.name ?? "?",
+                                      t: typeof t === "number" && Number.isFinite(t) ? t : null,
+                                      m: typeof mwr?.winrate === "number" && Number.isFinite(mwr.winrate) ? mwr.winrate : null,
+                                      mCount: typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0,
+                                      elo: typeof pv?.elo === "number" ? pv.elo : null,
+                                      placeholder: pv?.isPlaceholder === true,
+                                    };
+                                  })
+                                  .filter(Boolean) as any[];
+                                return <MatchAnalysis code={code} machineName={anaMachine} format={tournament?.format ?? null} players={anaPlayers} />;
+                              })() : null}
 
                                       {/* ================================
                                           OCR pro Match (Foto NICHT speichern)
@@ -8866,40 +8909,68 @@ disabled={
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
     <StreakFire n={winStreaks[String(mp.player_id)]} mode={winStreakMode} />
-    {/* ★ Favorit: wer in diesem Match die meisten "grünen" Winrates hat (gleiche Regel wie früher der Stern) */}
+    {/* 📈 Siegchance + ★ Favorit (lib/favorite.ts): Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper.
+        Solange das Match unberührt ist, werden die Chancen eingefroren (lib/chanceSnapshots.ts → 🧊 Favoritensturz). */}
     {!isTimeplayFormat && String((m as any)?.status ?? "").toLowerCase() !== "finished" && (() => {
       const machineName = machinesInfoById?.[String(m?.machine_id ?? "")]?.name ? String(machinesInfoById[String(m.machine_id)].name) : "";
       const profOf = (raw: any) => {
         const p = raw ? String(raw) : "";
         return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
       };
-      // gemeinsame Regel (lib/favorite.ts): echte Winrate-Bestwerte, sonst höchste Elo mit Vorsprung
       const cands = (mps ?? [])
         .map((o: any) => ({ pid: o?.player_id ? String(o.player_id) : "", prof: profOf(o?.player_id) }))
         .filter((x: any) => x.prof)
         .map((x: any) => {
           const t = tWinrateByPlayerId?.[x.prof];
-          const mw = machineName && locationId ? mWinrateByKey?.[`${x.prof}__${machineName}__${locationId}`]?.winrate : null;
+          const mwr = machineName && locationId ? mWinrateByKey?.[`${x.prof}__${machineName}__${locationId}`] : null;
+          const mw = mwr?.winrate;
           const pv = playersById?.[x.pid];
           return {
-            key: x.prof,
+            key: x.pid,
+            pid: x.pid,
+            name: pv?.name ?? "?",
             t: typeof t === "number" && Number.isFinite(t) ? t : null,
             m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
+            mCount: typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0,
             elo: typeof pv?.elo === "number" ? pv.elo : null,
             placeholder: pv?.isPlaceholder === true,
           };
         });
-      const favRes = pickFavorite(cands);
-      const myProf = profOf(mp?.player_id);
-      const fav = !!favRes && !!myProf && favRes.key === myProf;
-      return fav && favRes && favBadgeOn ? (
-        <span
-          className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
-          title={favoriteTitle(favRes)}
-        >
-          ★ Favorit
-        </span>
-      ) : null;
+      const h2hFav = h2hFromPairMachine(rivFavData.pairMachine, machineName);
+      const bd = favoriteBreakdown(cands, { h2h: h2hFav });
+      // 🧊 unberührtes Match (noch kein Platz/Score) → Stand einfrieren
+      const untouched = (mps ?? []).every(
+        (x: any) => (x?.position == null || Number(x.position) <= 0) && (x?.score == null || x.score === "")
+      );
+      if (untouched && bd.rows.length >= 2 && !winrateLoading) {
+        saveChanceSnapshot(code, String(m.id), {
+          favoriteKey: bd.favoriteKey,
+          chances: Object.fromEntries(bd.rows.map((r) => [String(r.cand.key), r.chance])),
+        });
+      }
+      const myPid = String(mp?.player_id ?? "");
+      const myRow = bd.rows.find((r) => String(r.cand.key) === myPid);
+      const isFav = !!bd.favoriteKey && bd.favoriteKey === myPid;
+      const favRes = isFav ? pickFavorite(cands, { h2h: h2hFav }) : null;
+      return (
+        <>
+          {myRow && chanceOn ? (
+            <ChanceChip
+              chance={myRow.chance}
+              tone={chanceTone(bd.rows.map((r) => r.chance), myRow.chance)}
+              title={chanceShortTitle(myRow, isFav)}
+            />
+          ) : null}
+          {isFav && favRes && favBadgeOn ? (
+            <span
+              className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
+              title={favoriteTitle(favRes)}
+            >
+              ★ Favorit
+            </span>
+          ) : null}
+        </>
+      );
     })()}
     {isActiveAtMachine ? (
       <span className="inline-flex items-center rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-semibold text-white animate-pulse">
@@ -9820,10 +9891,8 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
  const isAdmin = userRole === "admin";
 
   function handleClickCreateTab() {
-  if (hasOpenTournaments) {
-    alert("Bitte erst alle laufenden Turniere beenden.");
-    return;
-  }
+  // 🏦 Seit dem Elo-Buchungsprinzip (supabase_elo_parallel.sql, lib/eloBooking.ts) dürfen mehrere Turniere
+  // gleichzeitig laufen – die frühere Sperre "Bitte erst alle laufenden Turniere beenden" entfällt.
   setTab("create");
 }
 
@@ -13862,17 +13931,22 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
           if (!pl?.profile_id) return null;
           const prof = profForSpeech[pl.profile_id];
           const t = tWinrateByPid[pid];
-          const mw = wrByKey[`${pl.profile_id}__${machineName}`]?.winrate;
+          const mwr = wrByKey[`${pl.profile_id}__${machineName}`];
+          const mw = mwr?.winrate;
           return {
             key: pid,
+            pid,
+            name: pl?.name ?? "?",
             t: typeof t === "number" && Number.isFinite(t) ? t : null,
             m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
+            mCount: mwr?.matchesPlayed ?? 0,
             elo: typeof prof?.rating === "number" ? prof.rating : null,
             placeholder: prof?.exclude_from_stats === true,
           };
         })
         .filter(Boolean) as any[];
-      const favRes = pickFavorite(favCands);
+      // gleiche Regel wie das Abzeichen (inkl. direkter Bilanz am Flipper)
+      const favRes = pickFavorite(favCands, { h2h: h2hFromPairMachine(rivData?.pairMachine, machineName) });
       const favName = favRes ? playersByIdLocal[favRes.key]?.name : null;
 
       if (favRes && favName) {

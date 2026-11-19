@@ -344,7 +344,10 @@ function ShortNewsCard({ item, onClose, right = false }: { item: FeedItem; onClo
           <span>📰 Turnier-Shortnews</span>
         </div>
         <div className="mt-0.5 text-[max(15px,1.2vw)] font-bold leading-snug">
-          {item.icon} {item.title}
+          {item.icon}{" "}
+          {item.kind === "matchShort" && item.data?.machine
+            ? `Ergebnis auf ${item.data?.machineIcon ? `${String(item.data.machineIcon)} ` : ""}${String(item.data.machine)}`
+            : item.title}
         </div>
         {lines.length ? (
           item.kind === "matchShort" ? (
