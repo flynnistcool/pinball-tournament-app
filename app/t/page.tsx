@@ -8360,7 +8360,7 @@ disabled={
                                     };
                                   })
                                   .filter(Boolean) as any[];
-                                return <MatchAnalysis code={code} machineName={anaMachine} format={tournament?.format ?? null} players={anaPlayers} />;
+                                return <MatchAnalysis code={code} matchId={String(m.id)} machineName={anaMachine} format={tournament?.format ?? null} players={anaPlayers} />;
                               })() : null}
 
                                       {/* ================================

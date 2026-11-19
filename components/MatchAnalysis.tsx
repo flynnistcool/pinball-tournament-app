@@ -6,6 +6,7 @@
 // Daten: /api/public/rivalry (geteilt mit den Duell-Badges) + Werte aus der Match-Ansicht.
 
 import { Fragment, useState } from "react";
+import { getChanceSnapshot, UPSET_MAX_CHANCE } from "@/lib/chanceSnapshots";
 import { useRivalryDataShared } from "@/components/RivalryBadge";
 import { formatLabel } from "@/lib/formatLabel";
 import { machineKey } from "@/lib/machineStats";
@@ -47,6 +48,7 @@ function BalCell({ b }: { b: Bal | null }) {
 
 export default function MatchAnalysis({
   code,
+  matchId,
   machineName,
   format,
   players,
@@ -56,10 +58,15 @@ export default function MatchAnalysis({
   format: string | null;
   /** Spieler im Match (key = pid = players.id, name, Elo, Winrates wie beim ★ Favorit) */
   players: FavoriteCandidate[];
+  /** für den eingefrorenen Stand vor dem Match (🧊 Favoritensturz) */
+  matchId?: string | null;
 }) {
   const riv = useRivalryDataShared(code);
   // 🧾 aufgeklappte Rechenwege (Schlüssel "Spieler|Gegner")
   const [steps, setSteps] = useState<Record<string, boolean>>({});
+  // 🧊 Probe: wer würde bei einem Sieg einen Favoritensturz auslösen? (Grenze nur zum Ausprobieren, ändert nichts)
+  const [upsetProbe, setUpsetProbe] = useState(false);
+  const [probeLimit, setProbeLimit] = useState(Math.round(UPSET_MAX_CHANCE * 100));
   const mk = machineKey(machineName);
   const fmtKey = String(format ?? "").toLowerCase();
   const list = players.filter((p) => p.pid);
@@ -146,14 +153,85 @@ export default function MatchAnalysis({
               ? `Favorit: ${rows.find((r) => r.cand.key === favoriteKey)?.cand.name} (${Math.round(lead * 100)} Prozentpunkte Vorsprung)`
               : `kein Favorit – Vorsprung unter ${Math.round(FAVORITE_MIN_LEAD * 100)} Prozentpunkten`}
           </span>
+          <button
+            type="button"
+            onClick={() => setUpsetProbe((v) => !v)}
+            className={
+              "ml-auto rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1 " +
+              (upsetProbe ? "bg-cyan-600 text-white ring-cyan-600" : "bg-white text-cyan-700 ring-cyan-300 hover:bg-cyan-50")
+            }
+            title="Markiert, wer bei einem Sieg gegen den Favoriten die 🧊 Favoritensturz-Meldung bekäme"
+          >
+            🧊 Wer löst einen Favoritensturz aus?
+          </button>
         </div>
+        {upsetProbe ? (() => {
+          // eingefrorener Stand vor dem Match (wie die echte Meldung) – sonst der aktuelle
+          const snap = matchId ? getChanceSnapshot(code, String(matchId)) : null;
+          const favK = snap ? snap.favoriteKey : favoriteKey;
+          const chanceOfP = (k: string) => (snap ? snap.chances[k] : rows.find((r) => r.cand.key === k)?.chance);
+          const limit = probeLimit / 100;
+          const hits = rows.filter((r) => favK && r.cand.key !== favK && (chanceOfP(r.cand.key) ?? 1) <= limit);
+          return (
+            <div className="mb-2 rounded-lg bg-cyan-50 p-2 text-[11px] text-cyan-900 ring-1 ring-cyan-200">
+              <div className="flex flex-wrap items-center gap-2">
+                <span>
+                  Grenze zum Ausprobieren: <b>{probeLimit} %</b>
+                  {probeLimit !== Math.round(UPSET_MAX_CHANCE * 100) ? ` (eingestellt sind ${Math.round(UPSET_MAX_CHANCE * 100)} %)` : " (eingestellt)"}
+                </span>
+                <input
+                  type="range"
+                  min={5}
+                  max={50}
+                  step={5}
+                  value={probeLimit}
+                  onChange={(e) => setProbeLimit(Number(e.target.value))}
+                  className="w-40 accent-cyan-600"
+                />
+              </div>
+              <div className="mt-1">
+                {!favK
+                  ? "Kein ★ Favorit in diesem Match → es gibt keinen Favoritensturz."
+                  : hits.length
+                  ? `Bei einem Sieg gegen ${rows.find((r) => r.cand.key === favK)?.cand.name ?? "den Favoriten"} käme die Meldung für: ${hits
+                      .map((r) => `${r.cand.name} (${pct(chanceOfP(r.cand.key) ?? 0)})`)
+                      .join(", ")}`
+                  : `Niemand hat höchstens ${probeLimit} % Siegchance → bei dieser Grenze käme keine Meldung.`}
+              </div>
+              <div className="mt-0.5 text-[10px] text-cyan-800/70">
+                {snap ? "Grundlage: eingefrorener Stand vor dem Match (wie bei der echten Meldung)." : "Grundlage: aktueller Stand (das Match ist noch unberührt)."} Der
+                Regler ändert nur diese Anzeige, nicht die echte Grenze.
+              </div>
+            </div>
+          );
+        })() : null}
         <div className="space-y-2">
           {rows.map((r) => {
             const isFav = r.cand.key === favoriteKey;
+            // 🧊 Probe-Markierung (siehe Knopf oben)
+            const snapP = upsetProbe && matchId ? getChanceSnapshot(code, String(matchId)) : null;
+            const favP = snapP ? snapP.favoriteKey : favoriteKey;
+            const chP = snapP ? snapP.chances[r.cand.key] : r.chance;
+            const wouldUpset = upsetProbe && !!favP && r.cand.key !== favP && chP != null && chP <= probeLimit / 100;
             return (
-              <div key={r.cand.key} className={"rounded-lg border bg-white p-2 " + (isFav ? "border-amber-300 ring-1 ring-amber-200" : "border-neutral-200")}>
+              <div
+                key={r.cand.key}
+                className={
+                  "rounded-lg border bg-white p-2 " +
+                  (wouldUpset ? "border-cyan-400 ring-2 ring-cyan-300" : isFav ? "border-amber-300 ring-1 ring-amber-200" : "border-neutral-200")
+                }
+              >
                 <div className="flex flex-wrap items-center gap-2">
                   <b className="text-sm text-neutral-800">{r.cand.name}</b>
+                  {wouldUpset ? (
+                    <span className="rounded-full bg-cyan-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                      🧊 Sieg = Favoritensturz ({pct(chP ?? 0)} ≤ {probeLimit} %)
+                    </span>
+                  ) : upsetProbe && favP && r.cand.key !== favP ? (
+                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] text-neutral-500">
+                      keine Meldung ({pct(chP ?? 0)} &gt; {probeLimit} %)
+                    </span>
+                  ) : null}
                   {isFav ? (
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-300">★ Favorit</span>
                   ) : null}
