@@ -127,7 +127,9 @@ async function fillShortNewsIcons(sb: ReturnType<typeof supabaseAdmin>, tourname
  * in Titel und Text setzen. Nur Anzeige – die DB bleibt unverändert; gilt damit auch für ältere Meldungen.
  */
 async function fillAllzeitMachineIcons(sb: ReturnType<typeof supabaseAdmin>, tournamentId: string, items: FeedItem[]) {
-  const targets = items.filter((it) => scopeOf(it.kind) === "allzeit");
+  // + Match-Momente (🧊 Favoritensturz, 📸 Fotofinish, 💣 Kantersieg, 🔄 Revanche: "… an 🦖 Godzilla Premium")
+  const MOMENT_KINDS = new Set(["upset", "photo", "blowout", "revenge"]);
+  const targets = items.filter((it) => scopeOf(it.kind) === "allzeit" || scopeOf(it.kind) === "spieler" || MOMENT_KINDS.has(it.kind));
   if (!targets.length) return;
   try {
     const { data: machines } = await sb.from("machines").select("name, icon_emoji").eq("tournament_id", tournamentId);
@@ -136,6 +138,20 @@ async function fillAllzeitMachineIcons(sb: ReturnType<typeof supabaseAdmin>, tou
       const name = String((m as any).name ?? "").trim();
       const ic = String((m as any).icon_emoji ?? "").trim();
       if (name && ic) iconByName.set(name, ic);
+    }
+    // Rückfall: Icon aus den Flippern der Location (gleicher Name), falls am Turnier-Flipper keins hinterlegt ist
+    const missing = (machines ?? []).some((m: any) => m?.name && !iconByName.has(String(m.name).trim()));
+    if (missing) {
+      const { data: tl } = await sb.from("tournaments").select("location_id").eq("id", tournamentId).maybeSingle();
+      const locId = (tl as { location_id?: string | null } | null)?.location_id;
+      if (locId) {
+        const { data: lm } = await sb.from("location_machines").select("name, icon_emoji").eq("location_id", locId);
+        for (const m of lm ?? []) {
+          const name = String((m as any).name ?? "").trim();
+          const ic = String((m as any).icon_emoji ?? "").trim();
+          if (name && ic && !iconByName.has(name)) iconByName.set(name, ic);
+        }
+      }
     }
     if (!iconByName.size) return;
     // längste Namen zuerst ("Jaws Premium" vor "Jaws"); nur ganze Wörter

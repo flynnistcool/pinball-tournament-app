@@ -5,6 +5,7 @@
 // Wer zuerst eingetragen wird, ist Zufall. Hier werden Meldungen zum SELBEN Match, die kurz hintereinander
 // kamen, in die logische Reihenfolge gebracht: zuerst Ergebnis, dann Sieg, dann Moment.
 // Der Ticker zeigt neueste oben → oben steht der Moment, darunter der Sieg, ganz unten das Ergebnis.
+// "Runde abgeschlossen" rückt über Match-Meldungen, die kurz davor/danach kamen.
 // Andere Meldungen bleiben genau an ihrem Platz.
 
 /** Rang = zeitliche Reihenfolge innerhalb eines Matches (klein = früher) */
@@ -63,6 +64,22 @@ export function orderTickerByMatch<T extends TickerLike>(list: readonly T[]): T[
       slots.forEach((slot, k) => {
         out[slot] = list[items[k]];
       });
+    }
+  }
+  // 🏁 "Runde abgeschlossen" kommt nach den Meldungen zum letzten Match der Runde:
+  // stehen Match-Meldungen kurz davor/danach ÜBER ihr, rückt sie über diese.
+  const timeOf = (x: T) => {
+    const t = Date.parse(x.at);
+    return Number.isFinite(t) ? t : 0;
+  };
+  for (let i = 1; i < out.length; i++) {
+    const done = out[i];
+    if (done.kind !== "roundDone") continue;
+    let j = i;
+    while (j > 0 && out[j - 1].kind in RANK && Math.abs(timeOf(out[j - 1]) - timeOf(done)) <= CLUSTER_MS) j--;
+    if (j < i) {
+      out.splice(i, 1);
+      out.splice(j, 0, done);
     }
   }
   return out;

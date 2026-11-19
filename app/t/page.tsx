@@ -108,6 +108,8 @@ import FlawlessCelebration from "@/components/FlawlessCelebration";
 import { useFeedSync } from "@/components/useFeedSync";
 import FeedPopups from "@/components/FeedPopups";
 import ShortNewsWatcher from "@/components/ShortNewsWatcher";
+import CloseMatchWatcher from "@/components/CloseMatchWatcher";
+import RotationCloseWatcher from "@/components/RotationCloseWatcher";
 import { afterPendingDone, AFTER_ROUND_START_MS } from "@/lib/feedOrder";
 import { rotationAllDone } from "@/lib/flawless";
 import { liveEntriesFrom } from "@/lib/recordWatch";
@@ -5141,7 +5143,7 @@ function CurrentRoundSticky({
             // Match-Status für Mini-Badge
             const statusRaw = String((m as any)?.status ?? "").toLowerCase();
             const isFinished = statusRaw === "finished";
-            const statusLabel = isFinished ? "Finished" : "Aktiv";
+            const statusLabel = isFinished ? "fertig" : "läuft";
             const statusCls = isFinished
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border-blue-200 bg-blue-50 text-blue-700";
@@ -7982,6 +7984,8 @@ const winnersText = (() => {
                             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
                             <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-600" />
                           </span>
+                        ) : r.status === "finished" ? (
+                          <span className="-mx-0.5 leading-none">✓</span>
                         ) : (
                           <span
                             className={
@@ -7994,9 +7998,9 @@ const winnersText = (() => {
                         )}
 
                         {r.status === "open"
-                          ? "Aktiv"
+                          ? "läuft"
                           : r.status === "finished"
-                          ? "Finished"
+                          ? "fertig"
                           : r.status ?? "—"}
                       </span>
 
@@ -8084,6 +8088,9 @@ const n = isDypMatch ? 2 : Math.max(2, mps.length || 4);
                           // WICHTIG: hier merken, ob schon Ergebnisse gesetzt sind
                           {/*const hasResults = mps.some((mp) => mp.position != null);*/}
                           const hasResults = mps.some((mp) => getPos(mp) != null);
+                          // ✅ Match fertig eingetragen = alle Spieler haben einen Platz (nur Aussehen der Karte)
+                          const allPlacedCard = mps.length > 0 && mps.every((mp) => getPos(mp) != null);
+                          const partPlacedCard = hasResults && !allPlacedCard;
 
                           // 🎯 Matchpunkte dieses Matches nach Platz (nur Anzeige, lib/pointsDisplay.ts)
                           const matchScheme = Array.from({ length: n }, (_, i) =>
@@ -8180,7 +8187,12 @@ const scoredPlayersInMatch = (() => {
                           return (
                             <div
                               key={m.id}
-                              className="rounded-2xl border bg-white"
+                              className={
+                                "rounded-2xl border bg-white transition-opacity " +
+                                (allPlacedCard
+                                  ? "[&>*:not(.pb-match-head)]:opacity-[.85] [&:hover>*]:!opacity-100"
+                                  : "")
+                              }
                             >
 
 
@@ -8193,7 +8205,10 @@ const scoredPlayersInMatch = (() => {
 
 
                               <div
-                                className="pb-match-head flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b bg-[#f8ecdc] px-2 py-1 sm:px-3 sm:py-2"
+                                className={
+                                  "pb-match-head flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b px-2 py-1 sm:px-3 sm:py-2 " +
+                                  (allPlacedCard ? "pb-match-done bg-emerald-50" : "pb-match-live bg-blue-50")
+                                }
                                 title="Klicken: 📊 Match-Analyse (Bilanz aller Paarungen + Favoriten-Berechnung)"
                                 onClick={(e) => {
                                   // Bedienelemente im Kopf (Flipper-Auswahl, OCR, Knöpfe …) nicht als Klick werten
@@ -8305,6 +8320,22 @@ disabled={
                                         <span className="font-semibold text-neutral-500 whitespace-nowrap">
                                           Spiel {displayNo}
                                         </span>
+                                        {allPlacedCard ? (
+                                          <span
+                                            className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-300"
+                                            title="Alle Plätze in diesem Match sind gesetzt"
+                                          >
+                                            ✓ fertig
+                                          </span>
+                                        ) : (
+                                          <span
+                                            className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 ring-1 ring-blue-300"
+                                            title={partPlacedCard ? "Match läuft – erste Plätze gesetzt, noch nicht alle" : "Match läuft – noch keine Plätze gesetzt"}
+                                          >
+                                            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                                            läuft
+                                          </span>
+                                        )}
 
                                         {/* Rotation-Timer ist global im rechten Sticky-Bereich */}
 
@@ -9060,7 +9091,7 @@ disabled={
           {Math.round(chanceBar.chance * 100)} %
         </span>
         <span className="text-neutral-400">
-          Siegchance{chanceBar.frozen ? " vor dem Spiel" : ""}
+          Siegchance
           {chanceBar.frozen && chanceBar.wasFav ? " · war ★ Favorit" : ""}
         </span>
       </div>
@@ -14261,6 +14292,14 @@ const tasksById = useMemo(() => {
       {/* 📰 Turnier-Shortnews: Match-Ergebnis in den Ticker (Round the Pinball: je Durchgang in RotationTurnSplash) */}
       {!isRotationFormat && isAdmin ? (
         <ShortNewsWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} />
+      ) : null}
+      {/* ⚖️ Auf Messers Schneide: Siegchancen eines unberührten Matches höchstens 10 Punkte auseinander */}
+      {!isRotationFormat && isAdmin ? (
+        <CloseMatchWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} />
+      ) : null}
+      {/* ⚖️ Round the Pinball: die beiden Favoriten am Flipper eng beieinander – einer legt vor, kontert der andere? */}
+      {isRotationFormat && isAdmin ? (
+        <RotationCloseWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} />
       ) : null}
       {/* 📊 Score-Form: jeder Score im Vergleich zum eigenen Schnitt (alle Formate außer Timeplay/DYP) */}
       {isAdmin ? <ScoreFormWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} /> : null}

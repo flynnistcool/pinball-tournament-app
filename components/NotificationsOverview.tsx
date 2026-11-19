@@ -22,6 +22,7 @@ import { playSoundById } from "@/lib/playSound";
 import { publishNotificationSettings, useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 import NotificationPreview, { hasRealPreview } from "@/components/NotificationPreview";
+import TickerPreview from "@/components/TickerPreview";
 
 const DEVICES: NotifDevice[] = ["tv", "admin", "phone", "ticker"];
 /** Mitteilungen, die woanders eingestellt werden */
@@ -139,6 +140,9 @@ export default function NotificationsOverview() {
         🎵 <b>Eigene Sounds:</b> MP3 nach <code>public/sounds/effekte/</code> legen und <code>npm run musik</code> ausführen –
         dann stehen sie hier unter „Eigene Sounds“ zur Auswahl{OWN_SOUNDS.length ? ` (aktuell ${OWN_SOUNDS.length})` : ""}.
       </div>
+
+      {/* 📜 Ticker-Vorschau: alle Meldungen einmal, wie im Live-Ticker */}
+      <TickerPreview />
 
       {/* 📡 Ticker über Server (Beta) */}
       <label className="flex items-start gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm">

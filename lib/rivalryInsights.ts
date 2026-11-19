@@ -3,7 +3,7 @@
 // Pro Spielerpaar höchstens EIN Hinweis, in dieser Rangfolge:
 //  1) 🔥 laufende Serie: einer hat die letzten ≥ 3 Duelle gegen den anderen gewonnen
 //  2) 😈 Erzfeind-Duell: einer ist der Erzfeind (#1) des anderen – und die Bilanz ist klar (≤ 40 %)
-//  3) ⚖️ Ebenbürtig: ≥ 20 Duelle und Bilanz zwischen 45 % und 55 %
+//  3) ⚖️ Ebenbürtig: ≥ 10 Duelle und Bilanz zwischen 45 % und 55 %
 //  4) 🤝 Jubiläum: das kommende Duell ist das 50., 100., 150. …
 // Grundlage: Duelle wie in lib/rivals.ts (alle Formate außer DYP, ohne Bots/Platzhalter).
 
@@ -12,7 +12,7 @@ import { pickRivals, RIVAL_MIN_DUELS, type RivalStat } from "@/lib/rivals";
 export const INSIGHT_MIN_STREAK = 3;
 /** Erzfeind-Duell nur bei klar schlechter Bilanz (höchstens so viel % gewonnen) */
 export const INSIGHT_NEMESIS_MAX_WINRATE = 40;
-export const INSIGHT_EVEN_MIN_DUELS = 20;
+export const INSIGHT_EVEN_MIN_DUELS = 10;
 export const INSIGHT_EVEN_BAND = 5; // ± Prozentpunkte um 50 %
 export const INSIGHT_JUBILEE_STEP = 50;
 
@@ -298,11 +298,15 @@ export function eventsForFinishedMatch(
       )
         out.push({ id: `${matchId}|newnem|${winner}|${loser}`, kind: "newNemesis", n: 0, score: 180, ...base });
 
-      // 📣 nur Ticker: ⚖️ Ebenbürtig – 20. Duell und Bilanz zwischen 45 und 55 %
-      if (duelsAfter === INSIGHT_EVEN_MIN_DUELS && Math.abs((wWins / duelsAfter) * 100 - 50) <= INSIGHT_EVEN_BAND)
+      // 📣 nur Ticker: ⚖️ Ebenbürtig – ein Paar WIRD ebenbürtig: ab 10 Duellen liegt die Bilanz jetzt zwischen 45 und 55 %,
+      //    vorher noch nicht (oder es waren noch keine 10 Duelle). Wer später aufholt (3:7 → 15:15), bekommt sie auch.
+      const evenAfter = duelsAfter >= INSIGHT_EVEN_MIN_DUELS && Math.abs((wWins / duelsAfter) * 100 - 50) <= INSIGHT_EVEN_BAND;
+      const evenBefore =
+        st.duels >= INSIGHT_EVEN_MIN_DUELS && Math.abs(((wIsX ? st.xWins : st.yWins) / st.duels) * 100 - 50) <= INSIGHT_EVEN_BAND;
+      if (evenAfter && !evenBefore)
         out.push({ id: `${matchId}|even|${winner}|${loser}`, kind: "evenReached", n: duelsAfter, score: 120, ...base });
 
-      // ⚖️ Führungswechsel / Gleichstand in einer ausgeglichenen Rivalität (≥ 20 Duelle):
+      // ⚖️ Führungswechsel / Gleichstand in einer ausgeglichenen Rivalität (≥ 10 Duelle):
       //    der Hintere zieht gleich, oder bei Gleichstand übernimmt jemand die Führung
       const wBefore = wIsX ? st.xWins : st.yWins;
       if (st.duels >= INSIGHT_EVEN_MIN_DUELS && wBefore <= lWins && wWins >= lWins)

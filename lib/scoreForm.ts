@@ -2,7 +2,8 @@
 //
 // Grundlage = Durchschnitt der bisherigen Scores des Spielers auf diesem Flipper an dieser Location
 // (beendete Turniere, gleiches Punkteniveau wie das laufende Turnier – lib/botRules.ts scoreLevel:
-// "normal" = Round the Pinball + ohne Extraball, "hoch" = mit Extraball). Erst ab SCORE_FORM_MIN_GAMES Spielen.
+// "normal" = Round the Pinball + ohne Extraball, "hoch" = mit Extraball). Ab SCORE_FORM_MIN_GAMES Spiel(en);
+// bei genau 1 früheren Spiel heißt es "bisheriger Score" statt "eigener Schnitt".
 // Die Stufen (Abstand zum Schnitt in %) und Sprüche stehen hier zentral – leicht anzupassen.
 
 import type { FeedItemInput } from "@/lib/feed";
@@ -10,7 +11,7 @@ import type { FeedItemInput } from "@/lib/feed";
 export type ScoreTier = "ultra" | "mega" | "stark" | "solide" | "ausbaufaehig" | "streich";
 
 /** erst ab so vielen früheren Spielen gibt es einen Vergleich */
-export const SCORE_FORM_MIN_GAMES = 3;
+export const SCORE_FORM_MIN_GAMES = 1;
 
 /** von oben nach unten: erste Stufe, deren Untergrenze erreicht ist (Untergrenze = Score/Schnitt − 1) */
 export const SCORE_FORM_TIERS: readonly { tier: ScoreTier; min: number; icon: string; label: string; end: "!" | "." }[] = [
@@ -98,14 +99,16 @@ export function scoreForm(score: number, avg: number | null | undefined, n: numb
   const rel = score / avg - 1;
   const t = SCORE_FORM_TIERS.find((x) => rel >= x.min) ?? SCORE_FORM_TIERS[SCORE_FORM_TIERS.length - 1];
   const pct = Math.round(Math.abs(rel) * 100);
+  // nur 1 früheres Spiel: ehrlich "bisheriger Score" statt "Schnitt"
+  const one = n === 1;
   let compare: string;
   if (score >= 2 * avg) {
-    compare = `${(score / avg).toLocaleString("de-DE", { maximumFractionDigits: 1 })}× der eigene Schnitt`;
+    compare = `${(score / avg).toLocaleString("de-DE", { maximumFractionDigits: 1 })}× ${one ? "der bisherige Score" : "der eigene Schnitt"}`;
   } else if (pct < 3) {
-    compare = "fast genau der eigene Schnitt";
+    compare = one ? "fast genau der bisherige Score" : "fast genau der eigene Schnitt";
   } else {
     const diff = Math.abs(score - avg);
-    compare = `${fmt(diff)} ${rel >= 0 ? "über" : "unter"} dem eigenen Schnitt (${rel >= 0 ? "+" : "−"}${pct} %)`;
+    compare = `${fmt(diff)} ${rel >= 0 ? "über" : "unter"} ${one ? "dem bisherigen Score" : "dem eigenen Schnitt"} (${rel >= 0 ? "+" : "−"}${pct} %)`;
   }
   const phrase = pick(SCORE_FORM_PHRASES[t.tier], seed);
   return {

@@ -5,9 +5,11 @@
 // - Eintragen: postFeedItems() – nur vom Admin-Tablet (POST /api/feed/add, Admin-Pflicht)
 // - Welche Arten im Ticker erscheinen: 🔔 Meldungen & Sounds, Spalte "📣 Ticker"
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { FeedItem, FeedItemInput } from "@/lib/feed";
 import { NOTIFICATIONS, SCOPE_INFO, notifSetting, scopeOf } from "@/lib/notifications";
+import { boldNameParts, momentNameParts, namesFromData } from "@/lib/momentNames";
+import { closeChancesOf, type CloseChance } from "@/lib/closeMatch";
 
 // Icons aus den Einstellungen statt des gespeicherten Icons – nur für Arten mit festem Icon
 // (andere Arten wählen ihr Icon je Meldung, z. B. Serien/Momente). Alte 🎯-Icons werden immer ersetzt.
@@ -23,6 +25,14 @@ import { fmtScore, posLabel, shortLines, type ShortMatchLine, type ShortWaveLine
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { playSoundById } from "@/lib/playSound";
 import { orderTickerByMatch } from "@/lib/tickerOrder";
+import { parseUpsetBody } from "@/lib/upsetText";
+
+/** Meldungen, deren Text mit dem Spielernamen beginnt: Name bis zu diesem Wort fett */
+const NAME_FIRST: Record<string, string> = {
+  wins: " feiert den ",
+  premiere: " spielt ",
+  premiereWin: " spielt ",
+};
 
 // ── Eintragen (gebündelt, jede Kennung nur einmal pro Seite) ─────────────────
 const sent = new Set<string>();
@@ -91,7 +101,7 @@ function ShortNewsBody({ item, tv }: { item: FeedItem; tv: boolean }) {
     const machineIcon = item.data?.machineIcon ? String(item.data.machineIcon) : "";
     return (
       <span className="mt-0.5 flex flex-col gap-0.5">
-        {/* Flipper steht schon im Titel ("Ergebnis auf 🎱 Elvira"); nur bei alten Meldungen ohne Flipper-Angabe fehlt er */}
+        {/* Flipper steht schon im Titel ("🎱 Elvira"); nur bei alten Meldungen ohne Flipper-Angabe fehlt er */}
         {!machine && machineIcon ? <span className={strong}>{machineIcon}</span> : null}
         {/* 🥇 Name   🥈 Name … */}
         <span className={"flex flex-wrap gap-x-3 gap-y-0.5 " + soft}>
@@ -102,6 +112,8 @@ function ShortNewsBody({ item, tv }: { item: FeedItem; tv: boolean }) {
             </span>
           ))}
         </span>
+        {/* ⚖️ war vorher auf Messers Schneide */}
+        {typeof item.data?.close === "string" ? <span className={tv ? "text-amber-200" : "text-amber-700"}>{String(item.data.close)}</span> : null}
       </span>
     );
   }
@@ -144,10 +156,13 @@ function RoundDoneBody({ body, tv }: { body: string; tv: boolean }) {
           <span className={soft}>{win[1]}: </span>
           {ws.length
             ? ws.map((w, k) => (
-                <span key={k} className="whitespace-nowrap">
+                // Trenner AUSSERHALB des nicht umbrechenden Teils → zwischen den Siegern darf umgebrochen werden
+                <Fragment key={k}>
                   {k > 0 ? <span className={soft}> · </span> : null}
-                  <b className={strong}>{w[1].trim()}</b> <span className={soft}>({w[2]})</span>
-                </span>
+                  <span className="whitespace-nowrap">
+                    <b className={strong}>{w[1].trim()}</b> <span className={soft}>({w[2]})</span>
+                  </span>
+                </Fragment>
               ))
             : win[2]}
         </>
@@ -207,6 +222,7 @@ export default function LiveTicker({
   scrollMaxPx,
   autoScroll: autoScrollProp = false,
   autoTopMs = AUTO_TOP_MS,
+  previewItems,
 }: {
   code: string;
   /** strip = schmales Laufband (Handy unter der Match-Eintragung) */
@@ -226,6 +242,8 @@ export default function LiveTicker({
   autoScroll?: boolean;
   /** 📜 so lange oben stehen bleiben, bevor wieder gescrollt wird (Standard 10 s) */
   autoTopMs?: number;
+  /** 👀 Vorschau (Admin → Meldungen): feste Beispiel-Einträge statt Laden, alle Arten (auch ausgeschaltete) */
+  previewItems?: FeedItem[];
 }) {
   const ns = useNotificationSettings();
   const nsRef = useRef(ns);
@@ -271,6 +289,10 @@ export default function LiveTicker({
   }
 
   useEffect(() => {
+    if (previewItems) {
+      setItems(previewItems);
+      return;
+    }
     if (!code) return;
     let cancelled = false;
     const load = () =>
@@ -304,10 +326,12 @@ export default function LiveTicker({
       refreshListeners.delete(load);
       window.clearInterval(t);
     };
-  }, [code, refreshMs]);
+  }, [code, refreshMs, previewItems]);
 
   // 📜 Meldungen je Match logisch ordnen (Ergebnis → Sieg → Favoritensturz …), siehe lib/tickerOrder.ts
-  const shown = orderTickerByMatch((items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled)).slice(0, maxItems);
+  const shown = previewItems
+    ? items ?? []
+    : orderTickerByMatch((items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled)).slice(0, maxItems);
 
   // 📜 TV: scrollbare Liste läuft von selbst – 10 s oben stehen, nach unten springen, kurz warten,
   //    dann langsam wieder nach oben scrollen (älteste → neueste) und oben erneut 10 s stehen.
@@ -463,7 +487,7 @@ export default function LiveTicker({
                 ? tv
                   ? " border border-sky-400/50"
                   : " border border-sky-300"
-                : sc === "allzeit"
+                : (sc === "allzeit" || sc === "spieler")
                 ? tv
                   ? " border border-amber-200/45"
                   : " border border-[#e6d3a8]"
@@ -485,10 +509,10 @@ export default function LiveTicker({
                             ? roundEntry
                               ? "bg-gradient-to-r from-sky-400/[0.18] to-sky-400/[0.07]"
                               : "bg-gradient-to-r from-sky-400/15 to-sky-400/[0.05]"
-                            : sc === "allzeit"
+                            : (sc === "allzeit" || sc === "spieler")
                             ? "bg-gradient-to-r from-amber-200/15 to-amber-200/[0.05]"
                             : sc === "duell"
-                            ? "bg-gradient-to-r from-rose-400/15 to-rose-400/[0.05]"
+                            ? "bg-gradient-to-r from-rose-400/20 to-rose-400/[0.06]"
                             : "bg-white/[0.03]")
                         : "px-2 py-1.5 " +
                           (isNew
@@ -497,21 +521,21 @@ export default function LiveTicker({
                             ? roundEntry
                               ? "bg-gradient-to-r from-[#e3f2fc] to-[#f0f8fe]" // Runde generiert/abgeschlossen: etwas kräftiger
                               : "bg-gradient-to-r from-sky-50 to-[#f5fafe]"
-                            : sc === "allzeit"
+                            : (sc === "allzeit" || sc === "spieler")
                             ? "bg-gradient-to-r from-[#f8efdc] to-[#fdf9f1]"
                             : sc === "duell"
-                            ? "bg-gradient-to-r from-rose-50 to-[#fff7f8]"
+                            ? "bg-gradient-to-r from-[#fde6ea] to-[#fff8f9]"
                             : "bg-neutral-50")) + edge)
                 }
                 style={{
                   ...(isNew ? { animation: "tickerIn 0.6s ease-out both" } : {}),
-                  ...(x.kind === "premiereWin" || x.kind === "upset" || x.kind === "superfinalStart" || x.kind === "superfinalChampion"
+                  ...(x.kind === "premiereWin" || x.kind === "wins" || x.kind === "upset" || x.kind === "superfinalStart" || x.kind === "superfinalChampion"
                     ? { position: "relative", overflow: "hidden", isolation: "isolate" }
                     : {}),
                 }}
               >
-                {/* 🎉 Premieren-Sieg: dezentes Konfetti + funkelnde Sternchen rechts im Kästchen */}
-                {x.kind === "premiereWin" ? <TickerConfetti tv={tv} /> : null}
+                {/* 🎉 Premieren-Sieg + Matchsieg-Meilenstein: dezentes Konfetti + funkelnde Sternchen rechts im Kästchen */}
+                {x.kind === "premiereWin" || x.kind === "wins" ? <TickerConfetti tv={tv} /> : null}
                 {/* 🧊 Favoritensturz: Eissplitter + Riss + ⚡ */}
                 {x.kind === "upset" ? <TickerIceCrack tv={tv} /> : null}
                 {/* 🏆 Superfinale gestartet / 👑 Super Grand Champion: gold-sandfarbene Sterne */}
@@ -520,9 +544,9 @@ export default function LiveTicker({
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                     <span className={tv ? "text-base font-bold text-white" : "text-xs font-semibold text-neutral-800"}>
-                      {/* 🏁 Match-Ergebnis: "Ergebnis auf 🎱 Elvira" – Plätze stehen darunter */}
+                      {/* 🏁 Match-Ergebnis: "🎱 Elvira" – Plätze stehen darunter */}
                       {x.kind === "matchShort" && x.data?.machine
-                        ? `Ergebnis auf ${x.data?.machineIcon ? `${String(x.data.machineIcon)} ` : ""}${String(x.data.machine)}`
+                        ? `${x.data?.machineIcon ? `${String(x.data.machineIcon)} ` : ""}${String(x.data.machine)}`
                         : x.title}
                     </span>
                     <ScopeChip kind={x.kind} variant={tv ? "dark" : "light"} />
@@ -567,6 +591,31 @@ export default function LiveTicker({
                           </b>
                           {x.body.slice(x.body.indexOf(" gewinnt "))}
                         </>
+                      ) : NAME_FIRST[x.kind] && x.body.includes(NAME_FIRST[x.kind]) ? (
+                        // Spielername vorne fett ("Janos feiert den 1. Matchsieg", "Andre spielt gleich zum ersten Mal …")
+                        <>
+                          <b className={tv ? "font-bold text-white" : "font-semibold text-neutral-800"}>
+                            {x.body.slice(0, x.body.indexOf(NAME_FIRST[x.kind]))}
+                          </b>
+                          {x.body.slice(x.body.indexOf(NAME_FIRST[x.kind]))}
+                        </>
+                      ) : x.kind === "closeMatch" && closeChancesOf(x.data).length >= 2 ? (
+                        <CloseBody item={x} tv={tv} />
+                      ) : x.kind === "upset" && parseUpsetBody(x.body) ? (
+                        <UpsetBody body={x.body} tv={tv} />
+                      ) : momentNameParts(x.kind, x.body, x.data as any) || boldNameParts(x.body, namesFromData(x.data)) ? (
+                        // 💣 📸 🔄 Match-Momente: Sieger und Verlierer fett; sonst alle Namen aus data (Serie beendet …)
+                        <>
+                          {(momentNameParts(x.kind, x.body, x.data as any) ?? boldNameParts(x.body, namesFromData(x.data)))!.map((p, i) =>
+                            p.bold ? (
+                              <b key={i} className={tv ? "font-bold text-white" : "font-semibold text-neutral-800"}>
+                                {p.text}
+                              </b>
+                            ) : (
+                              <Fragment key={i}>{p.text}</Fragment>
+                            )
+                          )}
+                        </>
                       ) : (
                         x.body
                       )}
@@ -584,6 +633,113 @@ export default function LiveTicker({
       <style>{`@keyframes tickerIn { from { opacity: 0; transform: translateY(-8px) } to { opacity: 1; transform: none } }
 @keyframes tickerTwinkle { 0%, 100% { opacity: 0.15; transform: scale(0.7) } 50% { opacity: 1; transform: scale(1.15) } }`}</style>
     </div>
+  );
+}
+
+/** ⚖️ Auf Messers Schneide: Siegchancen im …-Match · Balken (Namen + %) · "Völlig offen – hier ist alles drin!" */
+const CLOSE_COLORS = {
+  light: ["bg-amber-400", "bg-slate-400", "bg-teal-400", "bg-rose-300"],
+  tv: ["bg-amber-300", "bg-white/45", "bg-teal-300", "bg-rose-300"],
+};
+function CloseBody({ item, tv }: { item: FeedItem; tv: boolean }) {
+  const rows: CloseChance[] = closeChancesOf(item.data);
+  const b = tv ? "font-bold text-white" : "font-semibold text-neutral-800";
+  const soft = tv ? "text-white/70" : "text-neutral-500";
+  const machine = item.data?.machine ? `${item.data?.machineIcon ? `${String(item.data.machineIcon)} ` : ""}${String(item.data.machine)}` : "";
+  const colors = tv ? CLOSE_COLORS.tv : CLOSE_COLORS.light;
+  const two = rows.length === 2;
+  return (
+    <span className="mt-0.5 flex flex-col gap-0.5">
+      <span className={soft}>
+        {typeof item.data?.head === "string" ? item.data.head : machine ? `Siegchancen im ${machine}-Match` : "Siegchancen vor dem Match"}
+      </span>
+      <span className="block max-w-[22rem] py-0.5">
+        {two ? (
+          <span className="flex items-baseline justify-between gap-2 tabular-nums">
+            <span>
+              <b className={b}>{rows[0].name}</b> <span className={tv ? "text-amber-200" : "text-amber-700"}>{rows[0].pct} %</span>
+            </span>
+            <span>
+              <span className={tv ? "text-white/80" : "text-neutral-600"}>{rows[1].pct} %</span> <b className={b}>{rows[1].name}</b>
+            </span>
+          </span>
+        ) : (
+          <span className="flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums">
+            {rows.map((r, i) => (
+              <span key={i} className="inline-flex items-center gap-1 whitespace-nowrap">
+                <span className={"inline-block h-2 w-2 rounded-full " + colors[i % colors.length]} />
+                <b className={b}>{r.name}</b> <span className={soft}>{r.pct} %</span>
+              </span>
+            ))}
+          </span>
+        )}
+        <span className={"mt-0.5 flex h-2 overflow-hidden rounded-full " + (tv ? "bg-white/10" : "bg-neutral-200")}>
+          {rows.map((r, i) => (
+            <span key={i} className={colors[i % colors.length]} style={{ width: `${r.pct}%` }} />
+          ))}
+        </span>
+      </span>
+      {typeof item.data?.line === "string" ? (
+        // 🎱 RtP: "Janos legt 45.000.000 vor – kann Marco kontern?" (Namen fett)
+        <span>
+          {(boldNameParts(item.data.line, namesFromData(item.data)) ?? [{ text: item.data.line, bold: false }]).map((p, i) =>
+            p.bold ? (
+              <b key={i} className={b}>
+                {p.text}
+              </b>
+            ) : (
+              <Fragment key={i}>{p.text}</Fragment>
+            )
+          )}
+        </span>
+      ) : (
+        <span>Völlig offen – hier ist alles drin!</span>
+      )}
+    </span>
+  );
+}
+
+/** 🧊 Favoritensturz, dreizeilig:
+ *  Siegchancen im 🦖 Godzilla Premium-Match
+ *  Janos 23 % vs Marco 77 %
+ *  Der Underdog Janos schlägt den Favoriten Marco – wow!
+ *  Alles aus dem Text gelesen (gilt so auch für ältere Meldungen und die vom Admin-Gerät). */
+function UpsetBody({ body, tv }: { body: string; tv: boolean }) {
+  const u = parseUpsetBody(body);
+  if (!u) return <>{body}</>;
+  const { winner, loser, machine } = u;
+  const wPct = u.winnerPct;
+  const lPct = u.loserPct;
+  const b = tv ? "font-bold text-white" : "font-semibold text-neutral-800";
+  const soft = tv ? "text-white/70" : "text-neutral-500";
+  return (
+    <span className="mt-0.5 flex flex-col gap-0.5">
+      <span className={soft}>{machine ? `Siegchancen im ${machine}-Match` : "Siegchancen vor dem Match"}</span>
+      {/* Siegchancen als Balken: links Underdog (blau), rechts Favorit */}
+      {wPct != null && lPct != null ? (
+        <span className="block max-w-[22rem] py-0.5">
+          <span className="flex items-baseline justify-between gap-2 tabular-nums">
+            <span>
+              <b className={b}>{winner}</b> <span className={tv ? "text-sky-300" : "text-sky-600"}>{wPct} %</span>
+            </span>
+            <span>
+              <span className={tv ? "text-white/80" : "text-neutral-600"}>{lPct} %</span> <b className={b}>{loser}</b>
+            </span>
+          </span>
+          <span className={"mt-0.5 flex h-2 overflow-hidden rounded-full " + (tv ? "bg-white/10" : "bg-neutral-200")}>
+            <span className={tv ? "bg-sky-400" : "bg-sky-500"} style={{ width: `${Number(wPct)}%` }} />
+            <span className={tv ? "bg-white/40" : "bg-neutral-400"} style={{ width: `${Number(lPct)}%` }} />
+          </span>
+        </span>
+      ) : (
+        <span className="tabular-nums">
+          <b className={b}>{winner}</b> <span className={soft}>vs</span> <b className={b}>{loser}</b>
+        </span>
+      )}
+      <span>
+        Der Underdog <b className={b}>{winner}</b> schlägt den Favoriten <b className={b}>{loser}</b> – wow!
+      </span>
+    </span>
   );
 }
 

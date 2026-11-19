@@ -9,15 +9,16 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 // @ts-ignore -- @types/react-dom ist im Projekt nicht installiert (createPortal funktioniert trotzdem)
 import { createPortal } from "react-dom";
 import type { FeedItem } from "@/lib/feed";
-import { notifSetting } from "@/lib/notifications";
+import { SCOPE_INFO, notifSetting, scopeOf } from "@/lib/notifications";
+import { closeChancesOf } from "@/lib/closeMatch";
 import { playSoundById } from "@/lib/playSound";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { fmtScore, posLabel, shortLines, type ShortMatchLine, type ShortWaveLine } from "@/lib/shortNews";
 
 /** Arten, die als Karte aus dem Ticker kommen */
-const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm"]);
+const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm", "closeMatch"]);
 /** 📰 Shortnews: kleine Karte unten links, eigene Warteschlange (hält die großen Karten nicht auf) */
-const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm"]);
+const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm", "closeMatch"]);
 /** 📊 Score-Form im Admin rechts unten (stört dort nicht), sonst links unten */
 const RIGHT_IN_ADMIN = new Set(["scoreForm"]);
 /** große Karte in der Mitte mit Effekten */
@@ -324,6 +325,9 @@ export default function FeedPopups({
 /** 📰 kleine Shortnews-Karte unten links (TV / Admin) */
 function ShortNewsCard({ item, onClose, right = false }: { item: FeedItem; onClose?: () => void; right?: boolean }) {
   const lines = shortLines(item);
+  const sc = scopeOf(item.kind);
+  const close = item.kind === "closeMatch" ? closeChancesOf(item.data) : [];
+  const CLOSE_BAR = ["bg-amber-300", "bg-white/45", "bg-teal-300", "bg-rose-300"];
   return createPortal(
     <div
       className={
@@ -341,15 +345,40 @@ function ShortNewsCard({ item, onClose, right = false }: { item: FeedItem; onClo
         style={{ animation: `${right ? "feedShortInR" : "feedShortIn"} 0.4s ease-out both` }}
       >
         <div className="flex items-center gap-2 text-[max(11px,0.8vw)] font-semibold uppercase tracking-wider text-white/60">
-          <span>📰 Turnier-Shortnews</span>
+          <span>{sc ? `${SCOPE_INFO[sc].icon} ${SCOPE_INFO[sc].label}` : "📰 Ergebnis"}</span>
         </div>
         <div className="mt-0.5 text-[max(15px,1.2vw)] font-bold leading-snug">
           {item.icon}{" "}
           {item.kind === "matchShort" && item.data?.machine
-            ? `Ergebnis auf ${item.data?.machineIcon ? `${String(item.data.machineIcon)} ` : ""}${String(item.data.machine)}`
+            ? `${item.data?.machineIcon ? `${String(item.data.machineIcon)} ` : ""}${String(item.data.machine)}`
             : item.title}
         </div>
-        {lines.length ? (
+        {close.length >= 2 ? (
+          // ⚖️ Auf Messers Schneide: Flipper · Namen + % · Balken · "Völlig offen"
+          <div className="mt-1 text-[max(13px,1vw)] text-white/85">
+            {typeof item.data?.head === "string" ? (
+              <div className="text-white/60">{item.data.head}</div>
+            ) : item.data?.machine ? (
+              <div className="text-white/60">
+                Siegchancen im {item.data?.machineIcon ? `${String(item.data.machineIcon)} ` : ""}
+                {String(item.data.machine)}-Match
+              </div>
+            ) : null}
+            <div className="mt-0.5 flex flex-wrap justify-between gap-x-3 tabular-nums">
+              {close.map((r, i) => (
+                <span key={i} className="whitespace-nowrap">
+                  <b className="text-white">{r.name}</b> <span className={i === 0 ? "text-amber-200" : "text-white/75"}>{r.pct} %</span>
+                </span>
+              ))}
+            </div>
+            <div className="mt-1 flex h-2 overflow-hidden rounded-full bg-white/10">
+              {close.map((r, i) => (
+                <span key={i} className={CLOSE_BAR[i % CLOSE_BAR.length]} style={{ width: `${r.pct}%` }} />
+              ))}
+            </div>
+            <div className="mt-1">{typeof item.data?.line === "string" ? item.data.line : "Völlig offen – hier ist alles drin!"}</div>
+          </div>
+        ) : lines.length ? (
           item.kind === "matchShort" ? (
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[max(13px,1vw)] text-white/85">
               {(lines as ShortMatchLine[]).map((l, i) => (
@@ -358,6 +387,7 @@ function ShortNewsCard({ item, onClose, right = false }: { item: FeedItem; onClo
                   {l.score != null ? <span className="tabular-nums"> {fmtScore(l.score)}</span> : null}
                 </span>
               ))}
+              {typeof item.data?.close === "string" ? <span className="basis-full text-amber-200">{String(item.data.close)}</span> : null}
             </div>
           ) : (
             <div className="mt-1 flex flex-col gap-0.5 text-[max(13px,1vw)] text-white/85">

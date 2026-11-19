@@ -24,6 +24,7 @@ import BotEloBadge from "@/components/BotEloBadge";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite, type FavoriteResult } from "@/lib/favorite";
 import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import { formatLabel } from "@/lib/formatLabel";
+import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
 import type { MmData, MyMatchInfo } from "@/lib/myMatch";
 
 const WINRATE_REFRESH_MS = 5 * 60_000;
@@ -183,6 +184,18 @@ export default function PhoneMatchInsights({
     favBd = favoriteBreakdown(favCands, { h2h: favH2h });
   }
   const favorite: string | null = favRes ? favRes.key : null;
+  // 🧊 Siegchancen einfrieren, solange das Match unberührt ist (wie Admin/TV) → nach dem Spiel "Siegchance" blass
+  const matchId = String(info.match?.id ?? "");
+  const untouched = info.players.every((mp) => mp.position == null && (mp.score == null || String(mp.score) === ""));
+  const snapSig = favBd && untouched ? favBd.rows.map((r) => `${r.cand.key}:${r.chance.toFixed(3)}`).join(",") : "";
+  useEffect(() => {
+    if (!favBd || !snapSig || !matchId || favBd.rows.length < 2) return;
+    saveChanceSnapshot(code, matchId, {
+      favoriteKey: favBd.favoriteKey,
+      chances: Object.fromEntries(favBd.rows.map((r) => [String(r.cand.key), r.chance])),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, matchId, snapSig]);
   // 🏷️ dauerhafte Anzeigen an/aus (🔔 Meldungen & Sounds)
   const favOn = useBadgeOn("badge:favorite");
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance
@@ -274,6 +287,12 @@ export default function PhoneMatchInsights({
                     <span className="shrink-0 text-[11px] font-normal tabular-nums text-neutral-400">Elo {elo}</span>
                   ) : null;
                 })()}
+                {/* 🎰 Premiere direkt hinter der Elo (wie auf TV/Admin) */}
+                {pb && premiereOn && isPremiere(profileOf(pid), machineName, records!.personal, live, info.match.id, records!.played) ? (
+                  <span className="shrink-0 rounded-full border border-pink-200 bg-pink-50 px-1.5 py-px text-[11px] font-semibold text-pink-700">
+                    🎰 Premiere
+                  </span>
+                ) : null}
                 {isMe ? (
                   <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
                     du
@@ -291,21 +310,34 @@ export default function PhoneMatchInsights({
               </div>
               {/* 📈 Siegchance als Balken (wie im Admin) */}
               {(() => {
+                if (!chanceOn) return null;
                 const row = favBd?.rows.find((r) => String(r.cand.key) === pid);
-                if (!row || !chanceOn) return null;
-                const tone = chanceTone(favBd!.rows.map((r) => r.chance), row.chance);
+                // fertig: eingefrorener Stand VOR dem Spiel (nur wenn dieses Handy ihn sich gemerkt hat) → blass
+                const snap = !row && matchId ? getChanceSnapshot(code, matchId) : null;
+                const frozenVal = snap?.chances?.[pid];
+                if (!row && frozenVal == null) return null;
+                const val = row ? row.chance : (frozenVal as number);
+                const tone = row ? chanceTone(favBd!.rows.map((r) => r.chance), row.chance) : chanceTone(Object.values(snap!.chances), val);
+                const wasFav = !row && snap?.favoriteKey === pid;
                 return (
-                  <div className="mt-1 flex items-center gap-2 text-xs tabular-nums" title={chanceShortTitle(row, favBd!.favoriteKey === pid)}>
+                  <div
+                    className={"mt-1 flex items-center gap-2 text-xs tabular-nums " + (row ? "" : "opacity-60")}
+                    title={
+                      row
+                        ? chanceShortTitle(row, favBd!.favoriteKey === pid)
+                        : `Siegchance vor dem Spiel: ${Math.round(val * 100)} %${wasFav ? " – war ★ Favorit" : ""}`
+                    }
+                  >
                     <div className="h-1.5 w-28 overflow-hidden rounded-full bg-neutral-200">
                       <div
                         className={"h-full rounded-full " + (tone === "top" ? "bg-emerald-500" : tone === "low" ? "bg-rose-300" : "bg-neutral-400")}
-                        style={{ width: `${Math.round(row.chance * 100)}%` }}
+                        style={{ width: `${Math.round(val * 100)}%` }}
                       />
                     </div>
                     <span className={tone === "top" ? "font-semibold text-emerald-600" : tone === "low" ? "font-semibold text-rose-500" : "text-neutral-500"}>
-                      {Math.round(row.chance * 100)} %
+                      {Math.round(val * 100)} %
                     </span>
-                    <span className="text-neutral-400">Siegchance</span>
+                    <span className="text-neutral-400">Siegchance{wasFav ? " · war ★ Favorit" : ""}</span>
                   </div>
                 );
               })()}
@@ -362,11 +394,6 @@ export default function PhoneMatchInsights({
               })()}
               {pb ? (
                 <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-xs tabular-nums text-neutral-500">
-                  {premiereOn && isPremiere(profileOf(pid), machineName, records!.personal, live, info.match.id, records!.played) ? (
-                    <span className="rounded-full border border-pink-200 bg-pink-50 px-1.5 py-px font-semibold text-pink-700">
-                      🎰 Premiere
-                    </span>
-                  ) : null}
                   <span title="Persönlicher Highscore an diesem Flipper (diese Location)">💪 Bestwert</span>
                   {pb.before != null ? (
                     <span className="font-semibold text-indigo-600">{fmt.format(pb.before)}</span>

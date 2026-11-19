@@ -73,8 +73,17 @@ type UnbeatenEndShown = {
 };
 /** 🧊 / 📸 / 💣 besonderer Match-Moment */
 type MomentShown = {
-  [K in MatchMoment["kind"]]: { kind: K; m: Extract<MatchMoment, { kind: K }>; winnerName: string; loserName: string; key: string };
+  [K in MatchMoment["kind"]]: { kind: K; m: Extract<MatchMoment, { kind: K }>; winnerName: string; loserName: string; key: string; machineIcon?: string | null };
 }[MatchMoment["kind"]];
+
+/** Flipper-Icon zum Flipper-Namen (aus den Turnierdaten) */
+function machineIconByName(d: unknown, name: string | null | undefined): string | null {
+  if (!name) return null;
+  const list = ((d as { machines?: { name?: string | null; icon_emoji?: string | null }[] } | null)?.machines ?? []);
+  const hit = list.find((x) => String(x?.name ?? "").trim() === String(name).trim());
+  const ic = String(hit?.icon_emoji ?? "").trim();
+  return ic || null;
+}
 /** 👑 neuer Tabellenführer */
 type LeaderShown = { kind: "leader"; playerName: string; playerId: string; points: number; prevName: string | null; key: string };
 /** 🎰 Flipper-Premiere: erster Score eines Spielers auf diesem Flipper (an der Location) */
@@ -159,7 +168,7 @@ function feedItemOf(c: Shown): FeedItemInput {
   if (c.kind === "unbeaten") return { ...base, players: [c.playerId], data: { player: c.playerName, n: c.n, matches: c.matches, mode: c.mode } };
   if (c.kind === "unbeatenEnd")
     return { ...base, players: c.breakerIds, data: { player: c.breakerName, victim: c.victimName, n: c.n, mode: c.mode, machine: c.machine } };
-  if (c.kind === "leader") return { ...base, players: [c.playerId], data: { player: c.playerName, points: c.points } };
+  if (c.kind === "leader") return { ...base, players: [c.playerId], data: { player: c.playerName, points: c.points, ...(c.prevName ? { other: c.prevName } : {}) } };
   if (c.kind === "premiere" || c.kind === "premiereWin")
     return { ...base, players: [c.playerId], data: { player: c.playerName, machine: c.machineName, score: c.score } };
   if (c.kind === "eloMark")
@@ -554,20 +563,60 @@ const MOMENT_TONE = {
   revenge: "from-violet-500 to-purple-800 ring-violet-300/60",
 } as const;
 
+/** 🧊 Favoritensturz-Karte – wie im Ticker: Siegchancen-Balken + "Der Underdog … schlägt den Favoriten …" */
+function UpsetCard({ c, onClose }: { c: Extract<MomentShown, { kind: "upset" }>; onClose?: () => void }) {
+  const m = c.m;
+  const w = Math.round(m.winnerChance * 100);
+  const l = Math.round(m.loserChance * 100);
+  const machine = m.machine ? `${c.machineIcon ? `${c.machineIcon} ` : ""}${m.machine}` : null;
+  return (
+    <div
+      className={"fixed bottom-[4vh] right-[2vw] z-[100] max-w-[calc(100vw-1rem)] " + (onClose ? "cursor-pointer" : "pointer-events-none")}
+      style={{ animation: "recSlide 0.5s ease-out both" }}
+      onClick={onClose}
+      role={onClose ? "button" : undefined}
+    >
+      <div className={"w-[min(36rem,calc(100vw-1rem))] rounded-3xl bg-gradient-to-br px-7 py-5 text-white shadow-2xl ring-4 " + MOMENT_TONE.upset}>
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-white/80">
+          {MOMENT_ICON.upset} {MOMENT_TITLE.upset}
+        </div>
+        <div className="mt-1 text-[max(13px,1.2vw)] font-semibold text-white/80">
+          {machine ? `Siegchancen im ${machine}-Match` : "Siegchancen vor dem Match"}
+        </div>
+        <div className="mt-1.5">
+          <div className="flex items-baseline justify-between gap-3 text-[max(16px,1.6vw)] font-extrabold tabular-nums">
+            <span>
+              {c.winnerName} <span className="text-cyan-200">{w} %</span>
+            </span>
+            <span>
+              <span className="text-white/70">{l} %</span> {c.loserName}
+            </span>
+          </div>
+          <div className="mt-1 flex h-3 overflow-hidden rounded-full bg-white/15">
+            <div className="bg-cyan-300" style={{ width: `${w}%` }} />
+            <div className="bg-white/45" style={{ width: `${l}%` }} />
+          </div>
+        </div>
+        <div className="mt-2 text-[max(17px,1.8vw)] font-extrabold leading-tight">
+          Der Underdog <span className="font-black">{c.winnerName}</span> schlägt den Favoriten{" "}
+          <span className="font-black">{c.loserName}</span> – wow!
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MomentCard({ c, onClose }: { c: MomentShown; onClose?: () => void }) {
+  if (c.kind === "upset") return <UpsetCard c={c} onClose={onClose} />;
   const m = c.m;
   const line =
-    m.kind === "upset"
-      ? `schlägt Favorit ${c.loserName}`
-      : m.kind === "photo"
+    m.kind === "photo"
       ? `gewinnt mit nur ${String(m.gapPct).replace(".", ",")} % Vorsprung`
       : m.kind === "revenge"
       ? `revanchiert sich bei ${c.loserName}`
       : `${String(m.factor).replace(".", ",")}× so viele Punkte wie ${c.loserName}`;
   const sub =
-    m.kind === "upset"
-      ? `Siegchance ${Math.round(m.winnerChance * 100)} % gegen ${Math.round(m.loserChance * 100)} %${m.machine ? ` · ${m.machine}` : ""}`
-      : m.kind === "revenge"
+    m.kind === "revenge"
       ? `${m.prevRound ? `in Runde ${m.prevRound} verloren – jetzt gewonnen` : "letztes Duell verloren – jetzt gewonnen"}${m.machine ? ` · ${m.machine}` : ""}`
       : `${fmt(m.winnerScore)} zu ${fmt(m.loserScore)}${m.machine ? ` · ${m.machine}` : ""}`;
   return (
@@ -907,6 +956,7 @@ function RecordCelebrationInner({
               winnerName: nameById2(d, u.winnerId),
               loserName: nameById2(d, u.loserId),
               key: `${mId}|${u.winnerId}`,
+              machineIcon: machineIconByName(d, e.machineName),
             } as MomentShown);
           }
         }
@@ -1079,6 +1129,7 @@ function RecordCelebrationInner({
               winnerName: nm.get(m.winnerId) ?? "?",
               loserName: nm.get(m.loserId) ?? "?",
               key: id,
+              machineIcon: machineIconByName(d, m.machine),
             } as MomentShown);
           }
         }

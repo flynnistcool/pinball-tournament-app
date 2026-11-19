@@ -3,7 +3,7 @@
 // 📊 Score-Form (Turnier-Shortnews): sobald ein Score 10 s lang nicht mehr korrigiert wurde →
 // Ticker-Eintrag "Flo · 🦈 Jaws: 3.094.985 – 40.000 unter dem eigenen Schnitt (−1 %) – 😌 Solide. …".
 // Vergleich mit dem eigenen Schnitt auf diesem Flipper an dieser Location (gleiches Punkteniveau,
-// mind. 3 frühere Spiele – lib/scoreForm.ts). Neuer Highscore/Rekord → keine eigene Meldung, der Satz
+// ab 1 früheren Spiel – lib/scoreForm.ts). Neuer Highscore/Rekord → keine eigene Meldung, der Satz
 // hängt dann an der Highscore-Meldung (components/RecordCelebration.tsx).
 // Nur die Admin-Seite trägt ein (onFeed). Beim ersten Laden schon vorhandene Scores lösen nichts aus.
 

@@ -282,7 +282,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "leadChange",
     icon: "⚖️",
     title: "Führungswechsel / Gleichstand",
-    when: "Rivalität mit mind. 20 Duellen: der Hintere zieht gleich, oder aus dem Gleichstand übernimmt jemand die Führung",
+    when: "Rivalität mit mind. 10 Duellen: der Hintere zieht gleich, oder aus dem Gleichstand übernimmt jemand die Führung",
     devices: {
       ticker: TICKER,
       tv: { where: "Vollbild Mitte", seconds: 7, sound: { kind: "rivalry", label: "Wippe", event: "leadChange" } },
@@ -317,8 +317,8 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
   {
     id: "evenReached",
     icon: "⚖️",
-    title: "Ebenbürtig (20 Duelle)",
-    when: "Zwei Spieler erreichen ihr 20. Duell mit ausgeglichener Bilanz (45–55 %)",
+    title: "Ebenbürtig (ab 10 Duellen)",
+    when: "Zwei Spieler werden ebenbürtig: ab 10 Duellen liegt die Bilanz jetzt zwischen 45 und 55 % (vorher nicht)",
     devices: {
       phone: PHONE_ME,
       ticker: TICKER,
@@ -422,6 +422,18 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     },
   },
   {
+    id: "closeMatch",
+    icon: "⚖️",
+    title: "Auf Messers Schneide",
+    when: "Match der laufenden Runde noch unberührt, Siegchancen höchstens 10 Prozentpunkte auseinander (z. B. 46 % vs 54 %) – einmal pro Match; das Ergebnis danach bekommt den Zusatz „… setzt sich durch“. Round the Pinball: die beiden Favoriten am Flipper höchstens 10 Punkte auseinander – wenn einer vorlegt und vorn liegt („kann X kontern?“), danach „kontert!“ / „hält stand“",
+    devices: {
+      phone: PHONE_ME,
+      ticker: TICKER,
+      tv: { where: "kleine Karte unten links", seconds: 7, sound: SILENT },
+      admin: { where: "kleine Karte unten links", seconds: 5, sound: SILENT, note: "Antippen schließt" },
+    },
+  },
+  {
     id: "matchShort",
     icon: "🏁",
     title: "Shortnews: Match-Ergebnis",
@@ -448,7 +460,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     icon: "📊",
     title: "Shortnews: Score im Vergleich zum eigenen Schnitt",
     when:
-      "Nach jedem Score (10 s Tippfehler-Schutz): Vergleich mit dem eigenen Schnitt auf diesem Flipper an dieser Location (gleiches Punkteniveau, ab 3 früheren Spielen) – 🚀 Ultra · 🔥 Mega · 💪 Stark · 😌 Solide · 😬 Ausbaufähig · 🙈 Streichergebnis. Bei neuem Highscore hängt der Satz an der Highscore-Meldung. Nicht bei Timeplay/DYP.",
+      "Nach jedem Score (10 s Tippfehler-Schutz): Vergleich mit dem eigenen Schnitt auf diesem Flipper an dieser Location (gleiches Punkteniveau, ab 1 früheren Spiel – bei nur einem: „bisheriger Score“) – 🚀 Ultra · 🔥 Mega · 💪 Stark · 😌 Solide · 😬 Ausbaufähig · 🙈 Streichergebnis. Bei neuem Highscore hängt der Satz an der Highscore-Meldung. Nicht bei Timeplay/DYP.",
     devices: {
       phone: PHONE_ME,
       ticker: TICKER,
@@ -657,7 +669,7 @@ export function notifSetting(
 // ─────────────────────────────────────────────────────────────────────────────
 // 🏷️ Bereich einer Mitteilung – worauf bezieht sie sich? (Plakette in Ticker, Einblendung, Einstellungen)
 
-export type NotifScope = "turnier" | "30tage" | "allzeit" | "duell" | "short";
+export type NotifScope = "turnier" | "30tage" | "allzeit" | "duell" | "short" | "spieler";
 
 export const SCOPE_INFO: Record<NotifScope, { icon: string; label: string; long: string }> = {
   turnier: { icon: "🏟️", label: "Turnier", long: "in diesem Turnier" },
@@ -665,27 +677,29 @@ export const SCOPE_INFO: Record<NotifScope, { icon: string; label: string; long:
   allzeit: { icon: "♾️", label: "Allzeit", long: "über alle Turniere" },
   // Duelle zählen über alle Turniere → eine Allzeit-Variante (eigene Farbe, damit man sie erkennt)
   duell: { icon: "♾️", label: "Allzeit · Duell", long: "Duell-Bilanz über alle Turniere" },
-  short: { icon: "📰", label: "Turnier-Shortnews", long: "kurzes Ergebnis aus diesem Turnier" },
+  // Spieler-Meldung: dreht sich um einen Spieler (Serie beendet …)
+  spieler: { icon: "👤", label: "Spieler", long: "über einen Spieler in diesem Turnier" },
+  short: { icon: "📰", label: "Ergebnis", long: "kurzes Ergebnis aus diesem Turnier (Shortnews)" },
 };
 
 const SCOPE_OF: Record<string, NotifScope> = {
-  record: "allzeit",
+  record: "spieler",
   month: "30tage",
-  personal: "allzeit",
-  wins: "allzeit",
-  streak: "turnier",
-  streakEnd: "turnier",
-  unbeaten: "turnier",
-  unbeatenEnd: "turnier",
-  flawless: "turnier",
-  leader: "turnier",
-  upset: "turnier",
-  photo: "turnier",
-  blowout: "turnier",
-  revenge: "turnier",
-  premiere: "allzeit",
-  premiereWin: "allzeit",
-  eloMark: "allzeit",
+  personal: "spieler",
+  wins: "spieler",
+  streak: "spieler",
+  streakEnd: "spieler",
+  unbeaten: "spieler",
+  unbeatenEnd: "spieler",
+  flawless: "spieler",
+  leader: "spieler",
+  upset: "spieler",
+  photo: "spieler",
+  blowout: "spieler",
+  revenge: "spieler",
+  premiere: "spieler",
+  premiereWin: "spieler",
+  eloMark: "spieler",
   rotationSplash: "turnier",
   roundStart: "turnier",
   superfinalStart: "turnier",
@@ -702,9 +716,10 @@ const SCOPE_OF: Record<string, NotifScope> = {
   evenReached: "duell",
   jubilee: "duell",
   rivalryInsight: "duell",
+  closeMatch: "spieler",
   matchShort: "short",
   waveShort: "short",
-  scoreForm: "short",
+  scoreForm: "spieler",
 };
 
 export function scopeOf(kind: string): NotifScope | null {

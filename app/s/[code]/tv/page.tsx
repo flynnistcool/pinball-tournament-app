@@ -37,12 +37,14 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { bestInsightForMatch, type RivalryInsight } from "@/lib/rivalryInsights";
 import { computeStreaks, streakMode, type StreakMode } from "@/lib/winStreaks";
 import { useMachineRecords } from "@/components/MatchRecordsLine";
-import { liveEntriesFrom } from "@/lib/recordWatch";
+import { liveEntriesFrom, machineKey, personalKey } from "@/lib/recordWatch";
+import { bottomIds, topIds } from "@/lib/matchInsights";
+import { levelText } from "@/lib/scoreForm";
 import BotEloBadge from "@/components/BotEloBadge";
 import { effectiveExtraball } from "@/lib/botRules";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
 import { formatLabel as formatLabelLib } from "@/lib/formatLabel";
-import { saveChanceSnapshot } from "@/lib/chanceSnapshots";
+import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
 import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/PlayerQrWall";
 import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
@@ -59,7 +61,7 @@ type PbLookup = (
   playerId: string,
   machineName: string,
   matchId?: string
-) => { before: number | null; today: number | null; premiere: boolean } | null;
+) => { before: number | null; today: number | null; premiere: boolean; avg: number | null; avgTitle: string } | null;
 
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
@@ -103,19 +105,35 @@ type MatchCardPlayer = {
   mCount: number; // Anzahl Matches für die Flipper-Winrate
   tTop: boolean; // höchster Wert im (laufenden) Match -> grün
   mTop: boolean;
+  // wie im Admin: Siege in drei Zeilen (Turnier · Flipper · Flipper nur im Format), niedrigster Wert rot
+  tWins: number;
+  tPlayed: number;
+  mWins: number;
+  fWin: number | null; // Flipper-Winrate nur im Format des Turniers in %
+  fWins: number;
+  fCount: number;
+  tLow: boolean;
+  mLow: boolean;
+  fTop: boolean;
+  fLow: boolean;
   favorite: boolean; // ★ Favorit im laufenden Match (lib/favorite.ts: Siegchance)
   favoriteTitle?: string;
   /** 📈 Siegchance (0..1) im laufenden Match + Farbe + Mouseover */
   chance?: number | null;
   chanceTone?: "top" | "low" | "mid";
   chanceTitle?: string;
+  /** Siegchance ist der eingefrorene Stand VOR dem Spiel (fertiges Match) → blasser, "vor dem Spiel" */
+  chanceFrozen?: boolean;
+  chanceWasFav?: boolean;
 };
-type MachineWr = { winrate: number | null; matchesPlayed: number };
+type MachineWr = { winrate: number | null; matchesPlayed: number; wins: number; matchesFormat: number; winsFormat: number };
 type MatchCard = {
   matchId: string;
   machineName: string;
   machineIcon: string | null;
   finished: boolean;
+  /** Formatname ohne Icon (für "Siege <Flipper> <Format>") */
+  formatName: string;
   players: MatchCardPlayer[];
 };
 type RoundBlock = {
@@ -156,6 +174,7 @@ const TRANSITION_CSS = `
 @keyframes tvVtOut { to { opacity: 0; transform: scale(1.015); } }
 @keyframes tvVtIn { from { opacity: 0; transform: scale(0.985); } }
 @keyframes tvFadeIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes tvLivePing { 0% { transform: scale(1); opacity: 0.75; } 75%, 100% { transform: scale(2.2); opacity: 0; } }
 .tv-recfade { animation: tvFadeIn 0.5s ease both; }
 `;
 
@@ -593,6 +612,9 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
           map[`${r.profileId}__${r.machineName}`] = {
             winrate: typeof r.winrate === "number" ? r.winrate : null,
             matchesPlayed: Number(r.matchesPlayed) || 0,
+            wins: Number(r.wins) || 0,
+            matchesFormat: Number(r.matchesFormat) || 0,
+            winsFormat: Number(r.winsFormat) || 0,
           };
         }
         setMachineWr(map);
@@ -685,8 +707,20 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
               tWin: prof ? tWinOf(x.player_id) : null,
               mWin: wr?.winrate ?? null,
               mCount: wr?.matchesPlayed ?? 0,
+              tWins: wins[x.player_id] ?? 0,
+              tPlayed: played[x.player_id] ?? 0,
+              mWins: wr?.wins ?? 0,
+              fWin: wr && wr.matchesFormat ? Math.round((wr.winsFormat / wr.matchesFormat) * 1000) / 10 : null,
+              fWins: wr?.winsFormat ?? 0,
+              fCount: wr?.matchesFormat ?? 0,
             };
           });
+          // niedrigster Wert dezent rot, Format-Quote grün/rot (wie im Admin; nur im laufenden Match)
+          const valsOf = (k: "tWin" | "mWin" | "fWin") => Object.fromEntries(base.map((b) => [String(b.x.player_id), b[k]]));
+          const tLowS = finished ? new Set<string>() : bottomIds(valsOf("tWin"));
+          const mLowS = finished ? new Set<string>() : bottomIds(valsOf("mWin"));
+          const fTopS = finished ? new Set<string>() : topIds(valsOf("fWin"));
+          const fLowS = finished ? new Set<string>() : bottomIds(valsOf("fWin"));
           const tVals = base.map((b) => b.tWin).filter((v): v is number => v != null);
           const mVals = base.map((b) => b.mWin).filter((v): v is number => v != null);
           const maxT = tVals.length ? Math.max(...tVals) : null;
@@ -731,6 +765,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             machineName: machineName || "Flipper",
             machineIcon: (machine?.icon_emoji ?? "").trim() || null,
             finished,
+            formatName: formatLabelLib(format).split(" ").slice(1).join(" ") || format,
             players: withTop.map((b) => ({
               id: b.x.player_id,
               position: b.x.position,
@@ -741,11 +776,34 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
               mCount: b.mCount,
               tTop: b.tTop,
               mTop: b.mTop,
+              tWins: b.tWins,
+              tPlayed: b.tPlayed,
+              mWins: b.mWins,
+              fWin: b.fWin,
+              fWins: b.fWins,
+              fCount: b.fCount,
+              tLow: tLowS.has(String(b.x.player_id)),
+              mLow: mLowS.has(String(b.x.player_id)),
+              fTop: fTopS.has(String(b.x.player_id)),
+              fLow: fLowS.has(String(b.x.player_id)),
               favorite: !!favRes && favRes.key === String(b.x.player_id),
               favoriteTitle: favRes && favRes.key === String(b.x.player_id) ? favoriteTitle(favRes) : undefined,
               ...(() => {
                 const row = bd?.rows.find((r) => String(r.cand.key) === String(b.x.player_id));
-                if (!row) return { chance: null };
+                if (!row) {
+                  // fertig: eingefrorener Stand VOR dem Spiel (wie im Admin; nur wenn dieses Gerät ihn hat)
+                  const snap = finished ? getChanceSnapshot(code, String(m.id)) : null;
+                  const mine = snap?.chances?.[String(b.x.player_id)];
+                  if (!snap || mine == null) return { chance: null };
+                  const wasFav = snap.favoriteKey === String(b.x.player_id);
+                  return {
+                    chance: mine,
+                    chanceTone: chanceTone(Object.values(snap.chances), mine),
+                    chanceTitle: `Siegchance vor dem Spiel: ${Math.round(mine * 100)} %${wasFav ? " – war ★ Favorit" : ""} (eingefrorener Stand, bevor das erste Ergebnis eingetragen wurde)`,
+                    chanceFrozen: true,
+                    chanceWasFav: wasFav,
+                  };
+                }
                 return {
                   chance: row.chance,
                   chanceTone: chanceTone(allChances, row.chance),
@@ -917,7 +975,11 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     const prof = profileByPlayer.get(String(playerId));
     const r = personalForMachine(prof, machineName, machineRecords.personal, liveRecordEntries);
     const premiere = isPremiere(prof, machineName, machineRecords.personal, liveRecordEntries, matchId, machineRecords.played); // 🎰
-    return r.before != null || r.today != null || premiere ? { ...r, premiere } : null;
+    // Ø wie im Admin (gleiche Basis wie der Highscore)
+    const a = prof && machineName ? machineRecords.personalAvg?.[personalKey(prof, machineKey(machineName))] : null;
+    const avg = a && a.n > 0 ? a.avg : null;
+    const avgTitle = a && a.n > 0 ? `Ø aus ${a.n} ${a.n === 1 ? "Spiel" : "Spielen"} (${levelText(machineRecords.avgLevel)})` : "";
+    return r.before != null || r.today != null || premiere || avg != null ? { ...r, premiere, avg, avgTitle } : null;
   };
 
   // 📱 QR-Codes der Spieler: nur wenn dieser Browser als Admin angemeldet ist (Admin-Schnittstelle)
@@ -1142,6 +1204,25 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       return !on;
     });
   };
+  // 🧪 Match-Ansicht: Live-Ticker NEBEN dem Leaderboard statt darunter (Vergleich, je Gerät gemerkt; Standard: darunter)
+  const [matchTickerSide, setMatchTickerSide] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("pb_tvMatchTickerSide") === "1") setMatchTickerSide(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleMatchTickerSide = () => {
+    setMatchTickerSide((on) => {
+      try {
+        window.localStorage.setItem("pb_tvMatchTickerSide", on ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !on;
+    });
+  };
   const chooseTickerPos = (v: "auto" | "right" | "below") => {
     setTickerPos(v);
     try {
@@ -1311,6 +1392,17 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                     offsetMs={data?.server_now && updatedAt ? data.server_now - updatedAt.getTime() : 0}
                     speechLang={data?.speech_lang === "de" ? "de" : "en"}
                   />
+                ) : null}
+                {/* 🧪 Match-Ansicht: Ticker unter / neben dem Leaderboard (merkt sich dieses Gerät) */}
+                {isMatchFormat && matchView ? (
+                  <button
+                    type="button"
+                    onClick={toggleMatchTickerSide}
+                    className="mr-1 rounded-full bg-white/5 px-2.5 py-0.5 text-xs font-semibold text-white/60 ring-1 ring-white/15 transition hover:bg-white/10"
+                    title="Live-Ticker unter oder neben dem Leaderboard"
+                  >
+                    {matchTickerSide ? "▥ Ticker daneben" : "▤ Ticker unten"}
+                  </button>
                 ) : null}
                 {/* Stand der Daten (läuft die Uhrzeit nicht weiter → TV hängt) – platzsparend in derselben Zeile */}
                 <span className="mr-1 text-xs tabular-nums text-white/40">
@@ -1514,7 +1606,10 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             // Match-Formate: rechte Spalte (Leaderboard + Fortschritt) bleibt immer stehen
             <MatchTvView
               rivalry={rivalryOn ? rivalry : null}
-              ticker={<LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={430} refreshMs={8000} soundOn={soundOn} />}
+              ticker={
+                <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={matchTickerSide ? 860 : 430} refreshMs={8000} soundOn={soundOn} />
+              }
+              tickerSide={matchTickerSide}
               recLookup={recLookup}
               pbLookup={pbLookup}
               mv={matchView}
@@ -1525,7 +1620,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
               liveFinal={liveFinal}
               series={series}
               isFinished={isFinished}
-              race={hasRace ? <RaceChart data={raceData} players={racePlayers} width={1156} height={640} /> : null}
+              race={hasRace ? <RaceChart data={raceData} players={racePlayers} width={matchTickerSide ? 780 : 1156} height={640} /> : null}
             />
           ) : activeTab === "podium" ? (
             <div className="w-[1500px]">
@@ -1932,7 +2027,10 @@ function MatchTvView({
   series,
   isFinished,
   race,
+  tickerSide = false,
 }: {
+  /** 🧪 Live-Ticker neben dem Leaderboard (eigene Spalte) statt darunter */
+  tickerSide?: boolean;
   /** ⚔️ Gegner-Duell-Hinweise (null = aus) */
   rivalry?: Record<string, RivalryInsight> | null;
   /** 📣 Live-Ticker (rechte Spalte unter dem Rundenfortschritt) */
@@ -1954,9 +2052,33 @@ function MatchTvView({
   const rowById: Record<string, Row> = {};
   for (const r of rows) rowById[r.id] = r;
   const cur = mv.current;
+  // 📊 Schalter je Gerät: Siege-Zeilen (Turnier · Flipper · Flipper im Format) ein-/ausblenden
+  // Standard: aus (nur wer einschaltet, sieht die Zeilen)
+  const [showWins, setShowWins] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("pb_tvWinsLines") === "1") setShowWins(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleWins = () => {
+    setShowWins((on) => {
+      try {
+        window.localStorage.setItem("pb_tvWinsLines", on ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !on;
+    });
+  };
 
   return (
-    <div className="grid w-[1640px] grid-cols-[minmax(0,1fr)_460px] gap-6">
+    <div
+      className={`grid w-[1640px] gap-6 ${
+        tickerSide ? "grid-cols-[minmax(0,1fr)_400px_400px]" : "grid-cols-[minmax(0,1fr)_460px]"
+      }`}
+    >
       {/* LINKS: Siegerehrung / Superfinale / Archiv / aktuelle Runde */}
       <div className="min-w-0">
         {tab === "podium" ? (
@@ -1989,18 +2111,32 @@ function MatchTvView({
                   </span>
                 ) : null}
               </div>
-              <div
-                className={`rounded-full px-4 py-1 text-base font-semibold ${
-                  cur.finished ? "bg-emerald-400/15 text-emerald-300" : "bg-sky-400/15 text-sky-300"
-                }`}
-              >
-                {cur.finished
-                  ? "✓ Runde abgeschlossen – nächste Runde folgt"
-                  : `${cur.matches.filter((m) => m.finished).length} / ${cur.matches.length} Matches fertig`}
+              <div className="flex items-center gap-2">
+                {/* 📊 Siege-Zeilen an/aus (merkt sich dieses Gerät) */}
+                <button
+                  type="button"
+                  onClick={toggleWins}
+                  className={`rounded-full px-4 py-1 text-base font-semibold ring-1 transition ${
+                    showWins ? "bg-white/10 text-white/80 ring-white/20" : "bg-transparent text-white/40 ring-white/10"
+                  }`}
+                  title="Siege im Turnier / am Flipper / am Flipper im Format ein- oder ausblenden"
+                >
+                  📊 Siege {showWins ? "an" : "aus"}
+                </button>
+                <div
+                  className={`rounded-full px-4 py-1 text-base font-semibold ${
+                    cur.finished ? "bg-emerald-400/15 text-emerald-300" : "bg-sky-400/15 text-sky-300"
+                  }`}
+                >
+                  {cur.finished
+                    ? "✓ Runde abgeschlossen – nächste Runde folgt"
+                    : `${cur.matches.filter((m) => m.finished).length} / ${cur.matches.length} Matches fertig`}
+                </div>
               </div>
             </div>
 
-            <div className={`grid gap-4 ${cur.matches.length <= 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+            {/* 1–4 Matches: 2 Spalten (breitere Karten, nichts abgeschnitten); ab 5: 3 Spalten (sonst 3 Zeilen → kleiner gezoomt) */}
+            <div className={`grid gap-4 ${cur.matches.length <= 4 ? "grid-cols-2" : "grid-cols-3"}`}>
               {cur.matches.map((m) => (
                 <MatchCardView
                   key={m.matchId}
@@ -2009,6 +2145,7 @@ function MatchTvView({
                   rowById={rowById}
                   rec={recLookup(m.machineName)}
                   pb={(playerId) => pbLookup(playerId, m.machineName, m.matchId)}
+                  showWins={showWins}
                 />
               ))}
             </div>
@@ -2044,7 +2181,7 @@ function MatchTvView({
             return (
               <div
                 key={r.id}
-                className={`relative flex items-center gap-3 border-t border-white/[0.07] px-4 py-2 ${
+                className={`relative flex items-center gap-3 border-t border-white/[0.07] px-4 py-1 ${
                   p ? `bg-gradient-to-r ${p.row} to-transparent` : ""
                 }`}
               >
@@ -2074,8 +2211,11 @@ function MatchTvView({
           })}
         </div>
 
-        {ticker ? <div>{ticker}</div> : null}
+        {ticker && !tickerSide ? <div>{ticker}</div> : null}
       </div>
+
+      {/* 🧪 Layout "Ticker daneben": eigene Spalte rechts */}
+      {ticker && tickerSide ? <div className="min-w-0">{ticker}</div> : null}
     </div>
   );
 }
@@ -2194,20 +2334,25 @@ function MatchCardView({
   rowById,
   rec,
   pb,
+  showWins = true,
 }: {
   m: MatchCard;
   rivalry?: RivalryInsight | null;
   rowById: Record<string, Row>;
   rec: ReturnType<RecLookup>;
   pb: (playerId: string) => ReturnType<PbLookup>;
+  /** Siege-Zeilen (Turnier · Flipper · Flipper im Format) zeigen */
+  showWins?: boolean;
 }) {
   const premiereOn = useBadgeOn("badge:premiere"); // 🏷️ 🎰 Premiere an/aus (Dauerhafte Anzeigen)
   const favOn = useBadgeOn("badge:favorite");
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance
   return (
     <div
-      className={`overflow-hidden rounded-3xl ring-1 ${
-        m.finished ? "bg-white/[0.04] ring-white/10" : "bg-indigo-500/[0.08] ring-indigo-300/30"
+      className={`overflow-hidden rounded-3xl ${
+        m.finished
+          ? "bg-white/[0.03] ring-1 ring-white/10"
+          : "bg-indigo-500/[0.10] ring-2 ring-sky-400/50 shadow-[0_0_24px_rgba(56,189,248,0.18)]"
       }`}
     >
       {/* Kopf: Flipper */}
@@ -2216,13 +2361,20 @@ function MatchCardView({
           {m.machineIcon ?? <span className="text-base font-bold text-white/80">{initials(m.machineName)}</span>}
         </span>
         <div className="min-w-0 flex-1 truncate text-xl font-bold">{m.machineName}</div>
-        <span
-          className={`shrink-0 rounded-full px-3 py-0.5 text-xs font-semibold uppercase tracking-wider ${
-            m.finished ? "bg-emerald-400/15 text-emerald-300" : "bg-sky-400/15 text-sky-300"
-          }`}
-        >
-          {m.finished ? "fertig" : "läuft"}
-        </span>
+        {/* läuft: kräftig mit langsam pulsierendem Punkt · fertig: dezent mit Haken */}
+        {m.finished ? (
+          <span className="shrink-0 rounded-full bg-white/[0.06] px-3 py-0.5 text-xs font-semibold uppercase tracking-wider text-white/45 ring-1 ring-white/10">
+            ✓ fertig
+          </span>
+        ) : (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sky-400/20 px-3 py-0.5 text-xs font-bold uppercase tracking-wider text-sky-200 ring-1 ring-sky-300/50">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-sky-300 opacity-75" style={{ animation: "tvLivePing 2s ease-out infinite" }} />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-300" />
+            </span>
+            läuft
+          </span>
+        )}
       </div>
       <CardRecords rec={rec} />
       {rivalry ? (
@@ -2253,8 +2405,9 @@ function MatchCardView({
             >
               <PlayerAvatar row={r} size="h-9 w-9 text-lg" />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-lg font-bold">{r.name}</span>
+                {/* flex-wrap: wird es eng, rutschen Siegchance/Favorit in die nächste Zeile – der Name bleibt immer sichtbar */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="min-w-0 max-w-full truncate text-lg font-bold">{r.name}</span>
                   {r.isBot ? (
                     <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} className="text-sm" />
                   ) : (r.eloNow ?? r.eloStart) != null ? (
@@ -2263,9 +2416,6 @@ function MatchCardView({
                     </span>
                   ) : null}
                   <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
-                  {p.chance != null && chanceOn ? (
-                    <ChanceChip chance={p.chance} tone={p.chanceTone ?? "mid"} title={p.chanceTitle} variant="dark" className="text-sm" />
-                  ) : null}
                   {p.favorite && favOn ? (
                     <span
                       className="inline-flex shrink-0 items-center rounded-full bg-amber-400/20 px-2.5 py-0.5 text-sm font-bold text-amber-200 ring-1 ring-amber-300/60 drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]"
@@ -2274,39 +2424,101 @@ function MatchCardView({
                       ★ Favorit
                     </span>
                   ) : null}
-                </div>
-                {/* Gewinnchancen wie im Admin: Turnier-Winrate + Flipper-Winrate (Bestwerte grün) */}
-                {p.tWin != null || p.mWin != null ? (
-                  <div className="flex flex-wrap gap-x-3 text-[13px] tabular-nums text-white/45">
-                    <span>
-                      Turnier{" "}
-                      <span className={p.tTop ? "font-bold text-emerald-300" : "text-white/70"}>{pctFmt(p.tWin)}</span>
+                  {/* 🎰 Premiere in der Namenszeile (in der Bestwert-Zeile hat es die Zeile verschoben) */}
+                  {myPb?.premiere && premiereOn ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-pink-500/25 px-2.5 py-0.5 text-sm font-semibold text-pink-200 ring-1 ring-pink-300/40">
+                      🎰 Premiere
                     </span>
-                    <span>
-                      Flipper{" "}
-                      <span className={p.mTop ? "font-bold text-emerald-300" : "text-white/70"}>{pctFmt(p.mWin)}</span>
-                      {p.mCount > 0 ? <span className="text-white/35"> ({p.mCount})</span> : null}
+                  ) : null}
+                </div>
+                {/* 📈 Siegchance als Balken (wie im Admin) */}
+                {p.chance != null && chanceOn ? (
+                  <div className={"mt-1 flex items-center gap-2 text-sm tabular-nums " + (p.chanceFrozen ? "opacity-60" : "")} title={p.chanceTitle}>
+                    <div className="h-2 w-36 shrink-0 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className={
+                          "h-full rounded-full " +
+                          (p.chanceTone === "top" ? "bg-emerald-400" : p.chanceTone === "low" ? "bg-rose-400" : "bg-white/40")
+                        }
+                        style={{ width: `${Math.round(p.chance * 100)}%` }}
+                      />
+                    </div>
+                    <span
+                      className={
+                        "shrink-0 whitespace-nowrap " +
+                        (p.chanceTone === "top"
+                          ? "font-bold text-emerald-300"
+                          : p.chanceTone === "low"
+                          ? "font-bold text-rose-300"
+                          : "font-semibold text-white/70")
+                      }
+                    >
+                      {Math.round(p.chance * 100)} %
+                    </span>
+                    <span className="text-white/40">
+                      Siegchance
+                      {p.chanceFrozen && p.chanceWasFav ? " · war ★ Favorit" : ""}
                     </span>
                   </div>
                 ) : null}
-                {/* 💪 persönlicher Highscore auf diesem Flipper (+ heute) */}
+                {/* Siege in drei Zeilen (Zahlen zuerst, wie im Admin): Turnier · dieser Flipper · dieser Flipper nur im Format */}
+                {showWins && (p.tWin != null || p.mWin != null) ? (
+                  <div className="mt-0.5 flex flex-col text-[13px] leading-snug tabular-nums text-white/45">
+                    {(() => {
+                      const cls = (top: boolean, low: boolean) =>
+                        top ? "font-bold text-emerald-300" : low ? "font-bold text-rose-300" : "font-semibold text-white/75";
+                      const line = (pctTxt: string, pctCls: string, cnt: string, label: string, title: string) => (
+                        <div className="whitespace-nowrap" title={title}>
+                          <span className={"inline-block w-16 text-right " + pctCls}>{pctTxt}</span>
+                          <span className="inline-block w-14 pl-2">{cnt}</span>
+                          <span>{label}</span>
+                        </div>
+                      );
+                      return (
+                        <>
+                          {line(
+                            pctFmt(p.tWin),
+                            cls(p.tTop, p.tLow),
+                            p.tPlayed > 0 ? `${p.tWins}/${p.tPlayed}` : "",
+                            "Siege im Turnier",
+                            "Siegquote in diesem Turnier (Siege/Spiele)"
+                          )}
+                          {line(
+                            p.mCount > 0 ? pctFmt(p.mWin) : "—",
+                            cls(p.mTop, p.mLow),
+                            p.mCount > 0 ? `${p.mWins}/${p.mCount}` : "",
+                            `Siege ${m.machineName}`,
+                            "an diesem Flipper an dieser Location, alle Formate (Siege/Spiele)"
+                          )}
+                          {p.fCount > 0
+                            ? line(
+                                pctFmt(p.fWin),
+                                cls(p.fTop, p.fLow),
+                                `${p.fWins}/${p.fCount}`,
+                                `Siege ${m.machineName} ${m.formatName}`,
+                                `an diesem Flipper an dieser Location, nur ${m.formatName} (Siege/Spiele)`
+                              )
+                            : null}
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : null}
+                {/* 💪 Bestwert + Ø auf diesem Flipper (wie im Admin) */}
                 {myPb ? (
                   <div className="flex flex-wrap items-center gap-x-1.5 text-[13px] tabular-nums text-white/45">
-                    {myPb.premiere && premiereOn ? (
-                      <span className="rounded-full bg-pink-500/25 px-2 py-px font-semibold text-pink-200 ring-1 ring-pink-300/40">
-                        🎰 Premiere
-                      </span>
-                    ) : null}
                     <span title="Persönlicher Highscore an diesem Flipper (diese Location)">💪 Bestwert</span>
                     {myPb.before != null ? (
                       <span className="font-semibold text-indigo-200">{scoreFmt.format(myPb.before)}</span>
-                    ) : null}
-                    {myPb.today != null ? (
-                      <span className={pbBeaten ? "font-bold text-emerald-300" : "text-white/70"}>
-                        · heute {scoreFmt.format(myPb.today)}
-                        {pbBeaten ? " 🎉" : ""}
+                    ) : (
+                      <span className="text-white/30">noch keiner</span>
+                    )}
+                    {myPb.avg != null ? (
+                      <span title={myPb.avgTitle}>
+                        · Ø <span className="font-semibold text-white/75">{scoreFmt.format(myPb.avg)}</span>
                       </span>
                     ) : null}
+                    {pbBeaten ? <span className="font-bold text-emerald-300">🎉 übertroffen</span> : null}
                   </div>
                 ) : null}
               </div>

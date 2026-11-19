@@ -12,9 +12,11 @@ import type { FeedItem } from "@/lib/feed";
 import { notifSetting } from "@/lib/notifications";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
+import { parseUpsetBody } from "@/lib/upsetText";
+import { closeChancesOf } from "@/lib/closeMatch";
 
 const FOR_ALL = new Set(["record", "month", "flawless"]);
-const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark"]);
+const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark", "closeMatch"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -37,6 +39,7 @@ const TONE: Record<string, string> = {
   premiereWin: "border-amber-200 bg-gradient-to-r from-fuchsia-50 to-amber-50 text-amber-900",
   eloMark: "border-emerald-200 bg-emerald-50 text-emerald-900",
   scoreForm: "border-indigo-200 bg-indigo-50 text-indigo-900",
+  closeMatch: "border-amber-200 bg-amber-50 text-amber-900",
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
@@ -141,6 +144,16 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
         title: d.score != null ? `Dein Score an ${machine}: ${fmt(d.score)}` : x.title,
         text: typeof d.line === "string" ? d.line : x.body,
       };
+    case "closeMatch": {
+      // ⚖️ Auf Messers Schneide (Du-Form; Balken + Zeilen siehe CloseCard)
+      const m = d.machine != null ? ` an ${d.machineIcon ? `${String(d.machineIcon)} ` : ""}${machine}` : "";
+      if (typeof d.countered === "boolean" && me) {
+        return d.countered
+          ? { title: "Gekontert! ⚖️", text: `Du konterst${m}: ${fmt(d.winnerScore)} gegen ${fmt(d.loserScore)} von ${String(d.other ?? "?")}!` }
+          : { title: "Gehalten! ⚖️", text: `Du hältst stand${m}: ${fmt(d.winnerScore)} – ${String(d.other ?? "?")} bleibt bei ${fmt(d.loserScore)}.` };
+      }
+      return { title: me ? "Auf Messers Schneide! ⚖️" : x.title, text: x.body };
+    }
     case "streakEnd":
       return {
         title: "Serie beendet! 🧯",
@@ -210,6 +223,12 @@ export default function PhoneFeedCards({
   if (!x || paused) return null;
   const me = (x.players ?? []).includes(String(meId));
   const t = cardText(x, me);
+  // 🧊 Favoritensturz mit Balken (nur für den Sieger selbst und nur, wenn der Text lesbar ist)
+  const up = x.kind === "upset" && me ? parseUpsetBody(x.body) : null;
+  const upset = up && up.winnerPct != null && up.loserPct != null ? up : null;
+  // ⚖️ Auf Messers Schneide mit Balken (nur Beteiligte, nur neue Meldungen mit Spieler-Kennungen)
+  const closeRows = x.kind === "closeMatch" && me ? closeChancesOf(x.data) : [];
+  const closeMine = closeRows.length >= 2 && closeRows.some((r) => r.id === String(meId)) ? closeRows : null;
   const close = () => setQueue((q) => q.slice(1));
   return (
     <div className="fixed inset-x-3 top-[calc(env(safe-area-inset-top,0px)+12px)] z-[70]">
@@ -219,17 +238,92 @@ export default function PhoneFeedCards({
         className={"flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left shadow-xl " + (TONE[x.kind] ?? TONE.personal)}
       >
         <span className="text-4xl leading-none">{x.icon}</span>
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-1.5">
             <span className="text-base font-black">{t.title}</span>
             <ScopeChip kind={x.kind} />
           </span>
-          <span className="block text-sm">{t.text}</span>
+          {upset ? (
+            // 🧊 wie Ticker/Einblendung: Siegchancen-Balken, Du-Form
+            <span className="mt-0.5 block text-sm">
+              <span className="block opacity-75">
+                {upset.machine ? `Siegchancen im ${upset.machine}-Match` : "Siegchancen vor dem Match"}
+              </span>
+              <span className="mt-1 flex items-baseline justify-between gap-2 tabular-nums">
+                <span>
+                  <b>Du</b> <span className="font-semibold text-sky-600">{upset.winnerPct} %</span>
+                </span>
+                <span>
+                  <span className="text-neutral-600">{upset.loserPct} %</span> <b>{upset.loser}</b>
+                </span>
+              </span>
+              <span className="mt-0.5 flex h-2.5 overflow-hidden rounded-full bg-neutral-200">
+                <span className="bg-sky-500" style={{ width: `${upset.winnerPct}%` }} />
+                <span className="bg-neutral-400" style={{ width: `${upset.loserPct}%` }} />
+              </span>
+              <span className="mt-1 block">
+                Du schlägst den Favoriten <b>{upset.loser}</b> – wow!
+              </span>
+            </span>
+          ) : closeMine ? (
+            <CloseCard x={x} rows={closeMine} meId={String(meId)} />
+          ) : (
+            <span className="block text-sm">{t.text}</span>
+          )}
           <span className="mt-0.5 block text-[10px] opacity-60">
             Antippen zum Schließen{queue.length > 1 ? ` · noch ${queue.length - 1} weitere` : ""}
           </span>
         </span>
       </button>
     </div>
+  );
+}
+
+/** ⚖️ Auf Messers Schneide am Handy: Siegchancen-Balken, ich als "Du" zuerst */
+function CloseCard({ x, rows, meId }: { x: FeedItem; rows: { name: string; pct: number; id?: string }[]; meId: string }) {
+  const d = (x.data ?? {}) as Record<string, unknown>;
+  const machine = d.machine != null ? `${d.machineIcon ? `${String(d.machineIcon)} ` : ""}${String(d.machine)}` : "";
+  const mine = rows.find((r) => r.id === meId)!;
+  const others = rows.filter((r) => r.id !== meId);
+  const ordered = [mine, ...others];
+  const COLORS = ["bg-amber-500", "bg-neutral-400", "bg-teal-400", "bg-rose-300"];
+  const rtp = d.rtp === true;
+  const other = others[0]?.name ?? "?";
+  const line = rtp
+    ? String(d.firstId ?? "") === meId
+      ? <>Du legst <b>{fmt(d.score)}</b> vor – <b>{other}</b> ist gleich stark. Hält dein Score?</>
+      : <><b>{String(d.player ?? other)}</b> legt <b>{fmt(d.score)}</b> vor – kannst <b>du</b> kontern?</>
+    : <>Völlig offen – zeig, was du kannst! 💪</>;
+  return (
+    <span className="mt-0.5 block text-sm">
+      <span className="block opacity-75">
+        {rtp ? (machine ? `Siegchancen der Favoriten an ${machine}` : "Siegchancen der Favoriten") : machine ? `Siegchancen im ${machine}-Match` : "Siegchancen vor dem Match"}
+      </span>
+      {ordered.length === 2 ? (
+        <span className="mt-1 flex items-baseline justify-between gap-2 tabular-nums">
+          <span>
+            <b>Du</b> <span className="font-semibold text-amber-700">{mine.pct} %</span>
+          </span>
+          <span>
+            <span className="text-neutral-600">{others[0].pct} %</span> <b>{others[0].name}</b>
+          </span>
+        </span>
+      ) : (
+        <span className="mt-1 flex flex-wrap gap-x-3 tabular-nums">
+          {ordered.map((r, i) => (
+            <span key={i} className="inline-flex items-center gap-1 whitespace-nowrap">
+              <span className={"inline-block h-2 w-2 rounded-full " + COLORS[i % COLORS.length]} />
+              <b>{r === mine ? "Du" : r.name}</b> <span className="text-neutral-600">{r.pct} %</span>
+            </span>
+          ))}
+        </span>
+      )}
+      <span className="mt-0.5 flex h-2.5 overflow-hidden rounded-full bg-neutral-200">
+        {ordered.map((r, i) => (
+          <span key={i} className={COLORS[i % COLORS.length]} style={{ width: `${r.pct}%` }} />
+        ))}
+      </span>
+      <span className="mt-1 block">{line}</span>
+    </span>
   );
 }

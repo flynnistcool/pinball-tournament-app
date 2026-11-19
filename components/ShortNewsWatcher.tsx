@@ -9,6 +9,8 @@ import { useEffect, useRef } from "react";
 import type { FeedItemInput } from "@/lib/feed";
 import type { MmData } from "@/lib/myMatch";
 import { finishedMatchSigs, matchShortNews } from "@/lib/shortNews";
+import { getChanceSnapshot } from "@/lib/chanceSnapshots";
+import { closeResultText, isCloseSnapshot } from "@/lib/closeMatch";
 
 const STABLE_MS = 10_000;
 const TICK_MS = 2_000;
@@ -63,7 +65,16 @@ export default function ShortNewsWatcher({
         pend.delete(id);
         seen.add(id);
         const item = matchShortNews(d, id);
-        if (item) ready.push(item);
+        if (item) {
+          // ⚖️ war das Match vorher auf Messers Schneide? → Zusatz "X setzt sich durch"
+          const snap = getChanceSnapshot(code, id);
+          if (isCloseSnapshot(snap)) {
+            const lines = Array.isArray(item.data?.lines) ? (item.data!.lines as { pos: number; name: string }[]) : [];
+            const winners = lines.filter((l) => l.pos === 1).map((l) => l.name);
+            if (winners.length) item.data = { ...(item.data ?? {}), close: closeResultText(winners) };
+          }
+          ready.push(item);
+        }
       }
       if (ready.length && onFeedRef.current) onFeedRef.current(ready);
     };

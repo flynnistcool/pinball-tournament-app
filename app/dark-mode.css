@@ -93,6 +93,8 @@ html.pb-dark .hover\:bg-neutral-700:hover { background-color: #555b88; }
 
 /* Kopfzeile eines Matches (Flipper, Spiel-Nr., OCR) */
 html.pb-dark .pb-match-head { background-color: #352a1f; }
+html.pb-dark .pb-match-head.pb-match-done { background-color: #1d3a2c; }
+html.pb-dark .pb-match-head.pb-match-live { background-color: #1e2a44; }
 html.pb-dark .pb-match-head .text-indigo-600 { color: #a5b4fc; }
 html.pb-dark .pb-match-head .border-\[\#e8cfae\] { border-color: #4f3d2a; }
 html.pb-dark .pb-personal .text-indigo-600 { color: #a5b4fc; }

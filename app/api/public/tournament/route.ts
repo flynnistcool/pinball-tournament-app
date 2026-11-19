@@ -33,6 +33,27 @@ export async function GET(req: Request) {
   if (mErr) return NextResponse.json({ error: `Machines load failed: ${mErr.message}` }, { status: 500 });
   if (rErr) return NextResponse.json({ error: `Rounds load failed: ${rErr.message}` }, { status: 500 });
 
+  // 🎨 Flipper-Icon fehlt am Turnier-Flipper → Icon der Location (gleicher Name) nehmen. Nur Anzeige, DB bleibt.
+  if (t.location_id && (machines ?? []).some((m: any) => !String(m?.icon_emoji ?? "").trim())) {
+    try {
+      const { data: lm } = await sb.from("location_machines").select("name, icon_emoji").eq("location_id", t.location_id);
+      const iconByName = new Map<string, string>();
+      for (const x of lm ?? []) {
+        const nm = String((x as any).name ?? "").trim();
+        const ic = String((x as any).icon_emoji ?? "").trim();
+        if (nm && ic) iconByName.set(nm, ic);
+      }
+      for (const m of (machines ?? []) as any[]) {
+        if (!String(m?.icon_emoji ?? "").trim()) {
+          const ic = iconByName.get(String(m?.name ?? "").trim());
+          if (ic) m.icon_emoji = ic;
+        }
+      }
+    } catch {
+      // Icons sind nur Schmuck
+    }
+  }
+
   const roundIds = (rounds ?? []).map((r: any) => r.id);
 
   // Load matches for those rounds
