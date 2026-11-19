@@ -220,7 +220,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
   },
   {
     id: "premiere",
-    icon: "🎰",
+    icon: "🌟",
     title: "Flipper-Premiere",
     when: "Ankündigung: jemand spielt gleich zum ersten Mal an einem Flipper (Location: alle Turniere dort, egal welches Format) – sobald die Runde erzeugt ist bzw. bei Round the Pinball sein Durchgang beginnt",
     devices: {
@@ -425,7 +425,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "closeMatch",
     icon: "⚖️",
     title: "Auf Messers Schneide",
-    when: "Match der laufenden Runde noch unberührt, Siegchancen höchstens 10 Prozentpunkte auseinander (z. B. 46 % vs 54 %) – einmal pro Match; das Ergebnis danach bekommt den Zusatz „… setzt sich durch“. Round the Pinball: die beiden Favoriten am Flipper höchstens 10 Punkte auseinander – wenn einer vorlegt und vorn liegt („kann X kontern?“), danach „kontert!“ / „hält stand“",
+    when: "Match der laufenden Runde noch unberührt, Siegchancen höchstens 10 Prozentpunkte auseinander (z. B. 46 % vs 54 %) – einmal pro Match; nach dem Ergebnis eigene Meldung „… setzt sich durch“ (entschieden). Round the Pinball: die beiden Favoriten am Flipper höchstens 10 Punkte auseinander – wenn einer vorlegt und vorn liegt („kann X kontern?“), danach „kontert!“ / „hält stand“",
     devices: {
       phone: PHONE_ME,
       ticker: TICKER,

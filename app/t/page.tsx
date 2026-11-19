@@ -5874,9 +5874,9 @@ const getExpectedPlayersForEliminationRound = useCallback(
   const { counts: matchGroupCountsAll, occ: pairingOccAll } = useMemo(() => {
     const counts = new Map<string, number>();
     // 🎨 je Paarung: Rundennummer + läuft noch? (für die Farbpunkte nach Hauptrunde)
-    const occ = new Map<string, { no: number; running: boolean }[]>();
+    const occ = new Map<string, { no: number; running: boolean; mid: string; done: boolean }[]>();
     const roundById = new Map((rounds ?? []).map((r: any) => [String(r?.id ?? ""), r]));
-    let curOcc: { no: number; running: boolean } | null = null;
+    let curOcc: { no: number; running: boolean; mid: string; done: boolean } | null = null;
     const bump = (key: string) => {
       counts.set(key, (counts.get(key) ?? 0) + 1);
       if (curOcc) occ.set(key, [...(occ.get(key) ?? []), curOcc]);
@@ -5895,7 +5895,9 @@ const getExpectedPlayersForEliminationRound = useCallback(
       {
         const rr: any = roundById.get(String((mm as any)?.round_id ?? ""));
         const no = Number(rr?.number ?? 0);
-        curOcc = no > 0 ? { no, running: String(rr?.status ?? "").toLowerCase() !== "finished" } : null;
+        // ✅ Match fertig eingetragen = alle Spieler haben einen Platz (wie das Badge "✓ fertig" am Match)
+        const done = (mps ?? []).every((x: any) => Number(x?.position ?? 0) > 0);
+        curOcc = no > 0 ? { no, running: String(rr?.status ?? "").toLowerCase() !== "finished", mid, done } : null;
       }
 
       // Ghost rausfiltern (falls vorhanden)
@@ -6313,18 +6315,49 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
           const per = Number(roundsPerCycle || 0);
           const colorOf = (no: number) => (per > 0 ? COLORS[Math.floor((no - 1) / per) % COLORS.length] : "#a3a3a3");
           const live = occs.find((o) => o.running);
+          // 🔵 läuft noch → antippen springt zum Match; ✓ fertig → nicht mehr klickbar
+          const jump = live && !live.done ? () => document.getElementById(`match-${live.mid}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) : null;
           return (
             <div
               key={row.key}
-              className="-mx-1.5 flex items-center justify-between gap-3 rounded-lg px-1.5 py-0.5"
+              className={"-mx-1.5 flex items-center justify-between gap-3 rounded-lg px-1.5 py-0.5" + (jump ? " cursor-pointer hover:brightness-95" : "")}
               style={live ? { backgroundColor: colorOf(live.no) + "22", boxShadow: `inset 3px 0 0 ${colorOf(live.no)}` } : undefined}
-              title={live ? `spielt gerade (Runde ${live.no})` : undefined}
+              title={live ? (live.done ? `fertig (Runde ${live.no})` : `spielt gerade (Runde ${live.no}) – antippen springt zum Match`) : undefined}
+              role={jump ? "button" : undefined}
+              tabIndex={jump ? 0 : undefined}
+              onClick={jump ?? undefined}
+              onKeyDown={
+                jump
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        jump();
+                      }
+                    }
+                  : undefined
+              }
             >
-              <div className="min-w-0 truncate text-[11px] text-gray-800">
-                {row.label}
-                {live ? <span className="ml-1 text-[10px] font-semibold text-neutral-500">· spielt gerade</span> : null}
-              </div>
+              <div className="min-w-0 truncate text-[11px] text-gray-800">{row.label}</div>
               <div className="flex shrink-0 items-center gap-1.5">
+                {/* Status-Badge rechtsbündig vor den Punkten */}
+                <span className="inline-flex">
+                {live ? (
+                  live.done ? (
+                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-1.5 py-px align-middle text-[9px] font-semibold leading-tight text-emerald-700 ring-1 ring-emerald-300">
+                      ✓ fertig
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-1.5 py-px align-middle text-[9px] font-semibold leading-tight text-blue-700 ring-1 ring-blue-300">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-600" />
+                      </span>
+                      läuft
+                    </span>
+                  )
+                ) : null}
+                </span>
+
                 {/* 🎨 ein Punkt je Spiel: Farbe der Hauptrunde, laufendes Spiel hell/gestreift */}
                 <span className="flex items-center gap-0.5">
                   {occs.map((o, i) => (
@@ -8187,8 +8220,9 @@ const scoredPlayersInMatch = (() => {
                           return (
                             <div
                               key={m.id}
+                              id={`match-${m.id}`}
                               className={
-                                "rounded-2xl border bg-white transition-opacity " +
+                                "scroll-mt-4 rounded-2xl border bg-white transition-opacity " +
                                 (allPlacedCard
                                   ? "[&>*:not(.pb-match-head)]:opacity-[.85] [&:hover>*]:!opacity-100"
                                   : "")
@@ -8939,7 +8973,10 @@ disabled={
                 const untouched = (mps ?? []).every(
                   (x: any) => (x?.position == null || Number(x.position) <= 0) && (x?.score == null || x.score === "")
                 );
-                if (untouched && bd.rows.length >= 2 && !winrateLoading) {
+                // 🧊 erst einfrieren, wenn ALLE Bausteine geladen sind – sonst wird z. B. ohne Elo 50/50 eingefroren
+                //    (Elo kommt aus den Profilen, Duell-Bilanz am Flipper aus /api/public/rivalry – beides lädt nach)
+                const eloReady = cands.every((c: any) => c.elo != null || !playersById?.[c.pid]?.profile_id);
+                if (untouched && bd.rows.length >= 2 && !winrateLoading && eloReady && rivFavData.loaded) {
                   saveChanceSnapshot(code, String(m.id), {
                     favoriteKey: bd.favoriteKey,
                     chances: Object.fromEntries(bd.rows.map((r) => [String(r.cand.key), r.chance])),
@@ -12790,7 +12827,8 @@ async function reloadAll() {
           postFeedItems(
             code,
             evs.map((ev) => {
-              const t = eventText(ev, (pid) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?");
+              const nameOfRiv = (pid: string) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?";
+              const t = eventText(ev, nameOfRiv);
               return {
                 key: ev.id,
                 kind: ev.kind,
@@ -12798,7 +12836,8 @@ async function reloadAll() {
                 title: t.title.replace(/!$/, ""), // ohne "Nach dem Match:" – kurz und klar
                 body: t.text,
                 players: [ev.winner, ev.loser],
-                data: { ...ev },
+                // player/other = Namen (Ticker macht sie fett)
+                data: { ...ev, player: nameOfRiv(ev.winner), other: nameOfRiv(ev.loser) },
               };
             })
           )
@@ -13904,9 +13943,14 @@ if (rotEndTimeoutRef.current != null) {
   const rotDialogPlayers = (data?.players ?? []).filter((p: any) => p?.active).length;
   const rotDialogMachines = (data?.machines ?? []).filter((m: any) => m?.active).length;
 
+  // 🔒 Doppeltipp-Sperre: bleibt zu, bis die neue Runde GELADEN ist (nicht nur bis der Server antwortet) –
+  //    sonst ist der Knopf kurz wieder frei, während die Seite die neue Runde noch nicht kennt → zweite Runde.
+  const createRoundLockRef = useRef(false);
+
   // opts kommt nur vom Rotation-Fenster; beim Klick auf den Knopf ist das erste Argument das Klick-Ereignis
   async function createRound(opts?: any) {
     if (locked) return;
+    if (createRoundLockRef.current) return;
     const rotationMachineCount: number | null =
       typeof opts?.rotationMachineCount === "number" ? opts.rotationMachineCount : null;
 
@@ -13941,7 +13985,12 @@ if (rotEndTimeoutRef.current != null) {
     }
 
     setBusy(true);
+    createRoundLockRef.current = true;
     setNotice(null);
+    const unlockCreate = () => {
+      createRoundLockRef.current = false;
+      setBusy(false);
+    };
 
     const speechRoundEnabled = Boolean(speechRoundEnabledUi);
 
@@ -13950,7 +13999,9 @@ if (rotEndTimeoutRef.current != null) {
       roundUnlockSpeechOnce();
     }
 
-    const res = await fetch("/api/rounds/create", {
+    let res: Response;
+    try {
+    res = await fetch("/api/rounds/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -13964,16 +14015,29 @@ if (rotEndTimeoutRef.current != null) {
         taskDifficulties: isTimeplayFormat ? taskDifficulties : undefined,
       }),
     });
+    } catch {
+      unlockCreate();
+      return setNotice("Netzwerkfehler – Runde wurde nicht erzeugt. Bitte erneut versuchen.");
+    }
 
-    const j = await res.json();
-    setBusy(false);
-    if (!res.ok) return setNotice(j.error ?? "Fehler");
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      unlockCreate();
+      // Server sperrt, wenn noch eine Runde läuft → Daten neu laden, damit die Seite sie zeigt
+      if (res.status === 409) void reloadAll();
+      return setNotice(j.error ?? "Fehler");
+    }
     if (j.warnings?.length) setNotice(j.warnings.join(" "));
 
       // ✅ Nach dem Erzeugen wollen wir direkt zu den Matches springen.
     // Wir setzen nur ein Flag; das tatsächliche Scrollen passiert in einem useEffect
     // NACH reloadAll(), wenn die neuen Runden/Matches schon im DOM sind.
-const next = await reloadAll();
+let next: any = null;
+try {
+  next = await reloadAll();
+} finally {
+  unlockCreate(); // erst jetzt wieder frei – die neue Runde ist geladen
+}
 setScrollToMatchesNext(true);
 // 🎰 Round the Pinball: Start-Meldung "Runden generiert – los geht's mit dem 1. Durchgang"
 if (isRotationFormat) setRotStartSignal(Date.now());
@@ -14282,7 +14346,7 @@ const tasksById = useMemo(() => {
       ) : null}
       {/* 🏆 Highscore-Jubel wie am TV – hier ohne Ton, Antippen schließt */}
       {/* 📣 Live-Ticker als schwebendes, verschiebbares Fenster (zum Ausprobieren; alter Ticker rechts bleibt) */}
-      <FloatingTicker code={code} />
+      <FloatingTicker code={code} canHide={isAdmin} />
       {/* 🪧 Karten für Ticker-Meldungen ohne eigene Einblendung (z. B. Finalspiel im Superfinale) */}
       <FeedPopups code={code} variant="admin" />
       {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}

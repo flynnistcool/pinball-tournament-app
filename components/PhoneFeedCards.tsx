@@ -111,7 +111,7 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
       };
     case "premiere":
       return {
-        title: "Flipper-Premiere! 🎰",
+        title: "Flipper-Premiere! 🌟",
         text: d.machine != null ? `Dein erstes Spiel an ${machine} – viel Glück! 🍀` : x.body,
       };
     case "premiereWin":
@@ -151,6 +151,9 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
         return d.countered
           ? { title: "Gekontert! ⚖️", text: `Du konterst${m}: ${fmt(d.winnerScore)} gegen ${fmt(d.loserScore)} von ${String(d.other ?? "?")}!` }
           : { title: "Gehalten! ⚖️", text: `Du hältst stand${m}: ${fmt(d.winnerScore)} – ${String(d.other ?? "?")} bleibt bei ${fmt(d.loserScore)}.` };
+      }
+      if (d.decided === true && me) {
+        return { title: "Du setzt dich durch! ⚖️", text: `Auf Messers Schneide${m} – du gewinnst gegen ${String(d.other ?? "?")}. Stark!` };
       }
       return { title: me ? "Auf Messers Schneide! ⚖️" : x.title, text: x.body };
     }
@@ -205,7 +208,22 @@ export default function PhoneFeedCards({
               return notifSetting(nsRef.current, x.kind, "phone").enabled;
             });
           list.forEach((x) => seen.add(x.id));
-          if (fresh.length) setQueue((q) => [...q, ...fresh]);
+          // ⚖️ "Auf Messers Schneide" (Ankündigung) ist überholt, sobald das Match ein Ergebnis hat → nicht mehr zeigen
+          // (Matchplay: Ergebnis-Meldung; Round the Pinball: "kontert/hält stand" = closeMatch|<mid>|result)
+          const doneMids = new Set(
+            list
+              .filter((x) => x.kind === "matchShort" || (x.kind === "closeMatch" && String(x.key).endsWith("|result")))
+              .map((x) => String(x.key).split("|")[1])
+          );
+          const stale = (x: FeedItem) => {
+            if (x.kind !== "closeMatch") return false;
+            const parts = String(x.key).split("|");
+            return parts.length === 2 && doneMids.has(parts[1]); // closeMatch|<mid> = Ankündigung (RtP-Folge: |result)
+          };
+          setQueue((q) => {
+            const next = [...q, ...fresh].filter((x) => !stale(x));
+            return next.length === q.length && next.every((x, i) => x === q[i]) ? q : next;
+          });
         })
         .catch(() => {});
     load();
@@ -231,7 +249,7 @@ export default function PhoneFeedCards({
   const closeMine = closeRows.length >= 2 && closeRows.some((r) => r.id === String(meId)) ? closeRows : null;
   const close = () => setQueue((q) => q.slice(1));
   return (
-    <div className="fixed inset-x-3 top-[calc(env(safe-area-inset-top,0px)+12px)] z-[70]">
+    <div className="fixed inset-x-3 top-[calc(env(safe-area-inset-top,0px)+12px)] z-[70] mx-auto max-w-md">
       <button
         type="button"
         onClick={close}

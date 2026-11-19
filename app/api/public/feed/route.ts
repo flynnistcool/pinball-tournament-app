@@ -21,16 +21,17 @@ export async function GET(req: Request) {
   if (tErr) return NextResponse.json({ ok: false, error: tErr.message }, { status: 500, headers: NO_STORE });
   if (!t) return NextResponse.json({ ok: false, error: "Turnier nicht gefunden" }, { status: 404, headers: NO_STORE });
 
-  const query = (cols: string) =>
-    sb
-      .from("tournament_feed")
-      .select(cols)
-      .eq("tournament_id", t.id)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(FEED_MAX_ITEMS);
+  const query = (cols: string, skipHidden = false) => {
+    let q = sb.from("tournament_feed").select(cols).eq("tournament_id", t.id);
+    // 🙈 im Admin ausgeblendete Meldungen (data.hidden = true, /api/feed/hide) weglassen
+    if (skipHidden) q = q.or("data->>hidden.is.null,data->>hidden.neq.true");
+    return q.order("created_at", { ascending: false }).order("id", { ascending: false }).limit(FEED_MAX_ITEMS);
+  };
   // mit beteiligten Spielern + Zusatzangaben (supabase_tournament_feed_v2.sql); sonst ohne
-  let { data, error } = await query("id, event_key, kind, icon, title, body, created_at, player_ids, data");
+  const FULL = "id, event_key, kind, icon, title, body, created_at, player_ids, data";
+  let { data, error } = await query(FULL, true);
+  // Absicherung: Filter nicht verstanden → ohne Filter laden (ausgeblendete fallen unten trotzdem raus)
+  if (error && !/player_ids|column/i.test(error.message)) ({ data, error } = await query(FULL));
   if (error && /player_ids|data/i.test(error.message)) {
     ({ data, error } = await query("id, event_key, kind, icon, title, body, created_at"));
   }
@@ -38,7 +39,9 @@ export async function GET(req: Request) {
     // Tabelle noch nicht angelegt → leerer Ticker statt Fehler
     return NextResponse.json({ ok: true, items: [], tableMissing: true }, { headers: NO_STORE });
   }
-  const items: FeedItem[] = (data ?? []).map((r: any) => ({
+  const items: FeedItem[] = (data ?? [])
+    .filter((r: any) => !(r?.data && typeof r.data === "object" && r.data.hidden === true))
+    .map((r: any) => ({
     id: Number(r.id),
     key: String(r.event_key),
     kind: String(r.kind),

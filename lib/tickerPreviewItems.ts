@@ -55,7 +55,7 @@ export function tickerPreviewSamples(): Sample[] {
     { key: "p|personal", kind: "personal", icon: "💪", title: "Persönlicher Highscore", body: "Marco an Elvira – 98.450.000", data: { player: "Marco" } },
     { key: "p|wins", kind: "wins", icon: "🎉", title: "25. Matchsieg", body: "Marco feiert den 25. Matchsieg", data: { player: "Marco", n: 25 } },
     { key: "p|eloMark", kind: "eloMark", icon: "📈", title: "Elo-Meilenstein", body: "Andre knackt die 1600 – jetzt 1604 Elo", data: { player: "Andre" } },
-    { key: "p|premiere", kind: "premiere", icon: "🎰", title: "Flipper-Premiere", body: "Andre spielt gleich zum ersten Mal 🧙🏻 Elvira!", data: { player: "Andre" } },
+    { key: "p|premiere", kind: "premiere", icon: "🌟", title: "Flipper-Premiere", body: "Andre spielt gleich zum ersten Mal 🧙🏻 Elvira!", data: { player: "Andre" } },
     { key: "p|premiereWin", kind: "premiereWin", icon: "🌟", title: "Premieren-Sieg", body: "Mario spielt zum ersten Mal 🎰 Royal Flash und gewinnt sofort!", data: { player: "Mario" } },
     { key: "p|streak", kind: "streak", icon: "🔥", title: "On fire!", body: "Janos: 3 Siege in Folge im Turnier", data: { player: "Janos" } },
     { key: "p|streakEnd", kind: "streakEnd", icon: "🧯", title: "Serie beendet", body: "Andre beendet die Siegesserie von Marco (3 Siege in Folge)", data: { player: "Andre", victim: "Marco" } },
@@ -91,6 +91,14 @@ export function tickerPreviewSamples(): Sample[] {
           { name: "Christian", pct: 54 },
         ],
       },
+    },
+    {
+      key: "p|closeDecided",
+      kind: "closeMatch",
+      icon: "⚖️",
+      title: "Auf Messers Schneide – entschieden!",
+      body: "Christian setzt sich an 🦍 King Kong LE gegen Gerald durch (Siegchancen vorher Christian 54 % vs Gerald 46 %)",
+      data: { machine: "King Kong LE", machineIcon: "🦍", decided: true, player: "Christian", other: "Gerald", winnerNames: ["Christian"], loserNames: ["Gerald"] },
     },
     {
       key: "p|closeRtp",
@@ -165,22 +173,6 @@ export function tickerPreviewSamples(): Sample[] {
           { pos: 1, name: "Mario", score: null },
           { pos: 2, name: "Janos", score: null },
         ],
-      },
-    },
-    {
-      key: "p|matchShortClose",
-      kind: "matchShort",
-      icon: "🏁",
-      title: "Ergebnis auf 🦍 King Kong LE",
-      body: "1. Christian · 2. Gerald",
-      data: {
-        machine: "King Kong LE",
-        machineIcon: "🦍",
-        lines: [
-          { pos: 1, name: "Christian", score: 117_000_000 },
-          { pos: 2, name: "Gerald", score: 98_500_000 },
-        ],
-        close: "⚖️ Auf Messers Schneide – Christian setzt sich durch",
       },
     },
     {

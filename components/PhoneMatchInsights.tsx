@@ -189,13 +189,13 @@ export default function PhoneMatchInsights({
   const untouched = info.players.every((mp) => mp.position == null && (mp.score == null || String(mp.score) === ""));
   const snapSig = favBd && untouched ? favBd.rows.map((r) => `${r.cand.key}:${r.chance.toFixed(3)}`).join(",") : "";
   useEffect(() => {
-    if (!favBd || !snapSig || !matchId || favBd.rows.length < 2) return;
+    if (!favBd || !snapSig || !matchId || favBd.rows.length < 2 || !rivFav.loaded) return; // erst mit Duell-Bilanz
     saveChanceSnapshot(code, matchId, {
       favoriteKey: favBd.favoriteKey,
       chances: Object.fromEntries(favBd.rows.map((r) => [String(r.cand.key), r.chance])),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, matchId, snapSig]);
+  }, [code, matchId, snapSig, rivFav.loaded]);
   // 🏷️ dauerhafte Anzeigen an/aus (🔔 Meldungen & Sounds)
   const favOn = useBadgeOn("badge:favorite");
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance

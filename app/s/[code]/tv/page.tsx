@@ -752,8 +752,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
           const favRes = finished ? null : pickFavorite(favCands, { h2h: favH2h });
           const allChances = (bd?.rows ?? []).map((r) => r.chance);
           const untouched = list.every((x) => x.position == null && toScore(x.score) == null);
-          if (bd && untouched && bd.rows.length >= 2) {
-            // 🧊 Stand vor dem Match einfrieren (für den Favoritensturz am TV)
+          if (bd && untouched && bd.rows.length >= 2 && rivFavTv.loaded) {
+            // 🧊 Stand vor dem Match einfrieren (für den Favoritensturz am TV) – erst wenn die Duell-Bilanz geladen ist
             saveChanceSnapshot(code, String(m.id), {
               favoriteKey: bd.favoriteKey,
               chances: Object.fromEntries(bd.rows.map((r) => [String(r.cand.key), r.chance])),

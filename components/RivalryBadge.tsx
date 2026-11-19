@@ -10,7 +10,13 @@ import { useBadgeOn } from "@/components/DisplayDevice";
 
 type Insights = Record<string, RivalryInsight>;
 /** pairMachine: Paar ("x|y") → Flipper (machineKey) → Duell-Stand an diesem Flipper an der Location des Turniers */
-export type RivalryData = { insights: Insights; pairs: Record<string, PairState>; pairMachine: Record<string, Record<string, PairMachineStat>> };
+export type RivalryData = {
+  insights: Insights;
+  pairs: Record<string, PairState>;
+  pairMachine: Record<string, Record<string, PairMachineStat>>;
+  /** true, sobald einmal geladen (auch wenn leer/fehlgeschlagen) – z. B. für das Einfrieren der Siegchancen */
+  loaded?: boolean;
+};
 const EMPTY: RivalryData = { insights: {}, pairs: {}, pairMachine: {} };
 
 const store = new Map<string, { key: string; data: RivalryData | null; promise: Promise<RivalryData> | null }>();
@@ -23,8 +29,10 @@ function load(code: string, refreshKey: string): Promise<RivalryData> {
   }
   const promise = fetch(`/api/public/rivalry?code=${encodeURIComponent(code)}&ts=${Date.now()}`, { cache: "no-store" })
     .then((r) => r.json())
-    .then((j): RivalryData => (j?.ok ? { insights: j.insights ?? {}, pairs: j.pairs ?? {}, pairMachine: j.pairMachine ?? {} } : EMPTY))
-    .catch(() => EMPTY)
+    .then((j): RivalryData =>
+      j?.ok ? { insights: j.insights ?? {}, pairs: j.pairs ?? {}, pairMachine: j.pairMachine ?? {}, loaded: true } : { ...EMPTY, loaded: true }
+    )
+    .catch(() => ({ ...EMPTY, loaded: true }))
     .then((data) => {
       const now = store.get(code);
       if (now && now.key === refreshKey) now.data = data;

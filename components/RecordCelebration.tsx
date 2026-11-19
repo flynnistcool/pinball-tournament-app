@@ -255,7 +255,7 @@ function feedItemText(c: Shown): FeedItemInput {
       return {
         key: `premiere|${c.key}`,
         kind: "premiere",
-        icon: "🎰",
+        icon: "🌟",
         title: "Flipper-Premiere",
         body:
           c.score != null
@@ -647,7 +647,7 @@ function PremiereCard({ c, onClose }: { c: PremiereShown; onClose?: () => void }
       role={onClose ? "button" : undefined}
     >
       <div className="rounded-3xl bg-gradient-to-br from-pink-500 to-rose-700 px-7 py-5 text-white shadow-2xl ring-4 ring-pink-300/60">
-        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-pink-100">🎰 Flipper-Premiere</div>
+        <div className="text-[max(14px,1.5vw)] font-bold uppercase tracking-wider text-pink-100">🌟 Flipper-Premiere</div>
         <div className="mt-1 text-[max(22px,2.4vw)] font-black leading-tight">{c.playerName}</div>
         <div className="text-[max(17px,1.8vw)] font-extrabold">gleich zum ersten Mal an {c.machineName}</div>
         {c.score != null ? (

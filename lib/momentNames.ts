@@ -79,6 +79,11 @@ export function namesFromData(data?: Record<string, unknown> | null): string[] {
     const v = data?.[k];
     if (typeof v === "string" && v.trim() && !out.includes(v.trim())) out.push(v.trim());
   }
+  // mehrere Sieger/Verlierer (⚖️ "Janos und Gerd setzen sich durch")
+  for (const k of ["winnerNames", "loserNames"]) {
+    const arr = data?.[k];
+    if (Array.isArray(arr)) for (const v of arr) if (typeof v === "string" && v.trim() && !out.includes(v.trim())) out.push(v.trim());
+  }
   return out;
 }
 

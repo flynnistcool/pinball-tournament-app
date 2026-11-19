@@ -5,7 +5,8 @@
 // Wer zuerst eingetragen wird, ist Zufall. Hier werden Meldungen zum SELBEN Match, die kurz hintereinander
 // kamen, in die logische Reihenfolge gebracht: zuerst Ergebnis, dann Sieg, dann Moment.
 // Der Ticker zeigt neueste oben → oben steht der Moment, darunter der Sieg, ganz unten das Ergebnis.
-// "Runde abgeschlossen" rückt über Match-Meldungen, die kurz davor/danach kamen.
+// Serien/Tabellenführung (hängen am Spieler) rücken über die Match-Meldungen, "Runde abgeschlossen" über alles davon
+// (jeweils nur, wenn sie höchstens 60 s auseinander liegen).
 // Andere Meldungen bleiben genau an ihrem Platz.
 
 /** Rang = zeitliche Reihenfolge innerhalb eines Matches (klein = früher) */
@@ -17,7 +18,12 @@ const RANK: Record<string, number> = {
   photo: 2,
   blowout: 2,
   revenge: 2,
+  // ⚖️ Auf Messers Schneide – entschieden (closeMatch|<id>|result; die Ankündigung vor dem Match liegt zeitlich weit davor)
+  closeMatch: 2,
 };
+
+/** Folgen eines Ergebnisses, die am Spieler hängen (ohne Match-Kennung) – stehen über den Match-Meldungen */
+const AFTER_MATCH = ["streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader"];
 
 /** Meldungen desselben Matches gelten als zusammengehörig, wenn sie höchstens so weit auseinander liegen */
 const CLUSTER_MS = 60_000;
@@ -66,21 +72,27 @@ export function orderTickerByMatch<T extends TickerLike>(list: readonly T[]): T[
       });
     }
   }
-  // 🏁 "Runde abgeschlossen" kommt nach den Meldungen zum letzten Match der Runde:
-  // stehen Match-Meldungen kurz davor/danach ÜBER ihr, rückt sie über diese.
   const timeOf = (x: T) => {
     const t = Date.parse(x.at);
     return Number.isFinite(t) ? t : 0;
   };
-  for (let i = 1; i < out.length; i++) {
-    const done = out[i];
-    if (done.kind !== "roundDone") continue;
-    let j = i;
-    while (j > 0 && out[j - 1].kind in RANK && Math.abs(timeOf(out[j - 1]) - timeOf(done)) <= CLUSTER_MS) j--;
-    if (j < i) {
-      out.splice(i, 1);
-      out.splice(j, 0, done);
+  /** Meldung an Platz i über die direkt darüberstehenden Meldungen der Arten `past` schieben (≤ CLUSTER_MS) */
+  const liftOver = (kind: string, past: (k: string) => boolean) => {
+    for (let i = 1; i < out.length; i++) {
+      const x = out[i];
+      if (x.kind !== kind) continue;
+      let j = i;
+      while (j > 0 && past(out[j - 1].kind) && Math.abs(timeOf(out[j - 1]) - timeOf(x)) <= CLUSTER_MS) j--;
+      if (j < i) {
+        out.splice(i, 1);
+        out.splice(j, 0, x);
+      }
     }
-  }
+  };
+  // 🔥 Folgen eines Ergebnisses (Serie, Tabellenführung …) hängen am Spieler, nicht am Match:
+  // sie kommen nach den Meldungen zum Match → über diese rücken
+  for (const k of AFTER_MATCH) liftOver(k, (o) => o in RANK);
+  // 🏁 "Runde abgeschlossen" kommt nach allem zum letzten Match der Runde
+  liftOver("roundDone", (o) => o in RANK || AFTER_MATCH.includes(o));
   return out;
 }

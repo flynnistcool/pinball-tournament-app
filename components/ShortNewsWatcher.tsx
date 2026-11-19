@@ -10,7 +10,7 @@ import type { FeedItemInput } from "@/lib/feed";
 import type { MmData } from "@/lib/myMatch";
 import { finishedMatchSigs, matchShortNews } from "@/lib/shortNews";
 import { getChanceSnapshot } from "@/lib/chanceSnapshots";
-import { closeResultText, isCloseSnapshot } from "@/lib/closeMatch";
+import { closeDecidedFeedItem, isCloseSnapshot } from "@/lib/closeMatch";
 
 const STABLE_MS = 10_000;
 const TICK_MS = 2_000;
@@ -66,14 +66,27 @@ export default function ShortNewsWatcher({
         seen.add(id);
         const item = matchShortNews(d, id);
         if (item) {
-          // ⚖️ war das Match vorher auf Messers Schneide? → Zusatz "X setzt sich durch"
-          const snap = getChanceSnapshot(code, id);
-          if (isCloseSnapshot(snap)) {
-            const lines = Array.isArray(item.data?.lines) ? (item.data!.lines as { pos: number; name: string }[]) : [];
-            const winners = lines.filter((l) => l.pos === 1).map((l) => l.name);
-            if (winners.length) item.data = { ...(item.data ?? {}), close: closeResultText(winners) };
-          }
           ready.push(item);
+          // ⚖️ war das Match vorher auf Messers Schneide? → eigene Meldung "… setzt sich durch" (nach dem Ergebnis)
+          const snap = getChanceSnapshot(code, id);
+          if (snap && isCloseSnapshot(snap)) {
+            const nameOf = new Map(d.players.map((p) => [String(p.id), String(p.name ?? "?")]));
+            const mps = d.match_players.filter((x) => String(x.match_id) === id);
+            const win = mps.filter((x) => Number(x.position) === 1).map((x) => ({ id: String(x.player_id), name: nameOf.get(String(x.player_id)) ?? "?" }));
+            const lose = mps.filter((x) => Number(x.position) > 1).map((x) => ({ id: String(x.player_id), name: nameOf.get(String(x.player_id)) ?? "?" }));
+            const mm = d.matches.find((x) => String(x.id) === id);
+            const mach = (d.machines ?? []).find((x) => String(x.id) === String(mm?.machine_id ?? ""));
+            const dec = closeDecidedFeedItem({
+              matchId: id,
+              machine: mach?.name ? String(mach.name) : null,
+              machineIcon: String((mach as { icon_emoji?: string | null } | undefined)?.icon_emoji ?? "").trim() || null,
+              winners: win,
+              losers: lose,
+              snap,
+            });
+            if (dec) ready.push(dec);
+          }
+
         }
       }
       if (ready.length && onFeedRef.current) onFeedRef.current(ready);

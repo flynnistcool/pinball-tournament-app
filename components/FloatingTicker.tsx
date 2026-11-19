@@ -50,7 +50,7 @@ function useNarrow(): boolean | null {
   return narrow;
 }
 
-function MobileTickerDock({ code, onWindow }: { code: string; onWindow?: () => void }) {
+function MobileTickerDock({ code, onWindow, canHide = false }: { code: string; onWindow?: () => void; canHide?: boolean }) {
   const ns = useNotificationSettings();
   const [latest, setLatest] = useState<FeedItem | null>(null);
   const [flash, setFlash] = useState(false);
@@ -159,7 +159,7 @@ function MobileTickerDock({ code, onWindow }: { code: string; onWindow?: () => v
           <div className="mb-1 max-h-[55vh] overflow-y-auto rounded-2xl border bg-white p-2 shadow-lg">
             {/* 🧪 Test: Meldungen etwas größer (≈ halbe Schriftstufe) */}
             <div style={{ zoom: TICKER_ZOOM }}>
-              <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+              <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} canHide={canHide} />
             </div>
           </div>
         ) : null}
@@ -213,7 +213,7 @@ function MobileTickerDock({ code, onWindow }: { code: string; onWindow?: () => v
 // 🔀 breite Bildschirme (iPad quer, PC): Fenster ODER Leiste unten – Wahl merkt sich das Gerät
 const MODE_KEY = "pb_tickerMode";
 
-export default function FloatingTicker({ code }: { code: string }) {
+export default function FloatingTicker({ code, canHide = false }: { code: string; /** 🙈 Admin darf Meldungen ausblenden */ canHide?: boolean }) {
   const narrow = useNarrow();
   const [mode, setMode] = useState<"window" | "dock">("window");
   useEffect(() => {
@@ -232,15 +232,15 @@ export default function FloatingTicker({ code }: { code: string }) {
     }
   };
   if (narrow == null) return null;
-  if (narrow) return <MobileTickerDock code={code} />;
+  if (narrow) return <MobileTickerDock code={code} canHide={canHide} />;
   return mode === "dock" ? (
-    <MobileTickerDock code={code} onWindow={() => choose("window")} />
+    <MobileTickerDock code={code} onWindow={() => choose("window")} canHide={canHide} />
   ) : (
-    <FloatingTickerWindow code={code} onDock={() => choose("dock")} />
+    <FloatingTickerWindow code={code} onDock={() => choose("dock")} canHide={canHide} />
   );
 }
 
-function FloatingTickerWindow({ code, onDock }: { code: string; onDock?: () => void }) {
+function FloatingTickerWindow({ code, onDock, canHide = false }: { code: string; onDock?: () => void; canHide?: boolean }) {
   const [box, setBox] = useState<Box | null>(null);
   const boxRef = useRef<Box | null>(null);
   boxRef.current = box;
@@ -434,7 +434,7 @@ function FloatingTickerWindow({ code, onDock }: { code: string; onDock?: () => v
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {/* 🧪 Test: Meldungen etwas größer (≈ halbe Schriftstufe) */}
             <div style={{ zoom: TICKER_ZOOM }}>
-              <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} />
+              <LiveTicker code={code} variant="admin" maxItems={40} title={false} className="!border-0 !p-0" soundOn={false} canHide={canHide} />
             </div>
         </div>
       ) : null}

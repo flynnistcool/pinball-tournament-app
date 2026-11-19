@@ -460,6 +460,31 @@ export async function POST(req: Request) {
   const format: "matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation" =
     requestedFormat ?? tournamentFormat;
 
+  // 🔒 Keine zweite Runde, solange noch eine offen ist (Doppeltipp, veraltete Seite, zwei Geräte).
+  //    Ausnahmen: Round the Pinball (erzeugt alle Runden auf einmal, eigene Sperre) und Elimination (eigene Logik).
+  //    Vorschau (previewOnly) legt nichts an → nicht sperren.
+  if (!previewOnly && format !== "rotation" && format !== "elimination") {
+    const { data: openRounds, error: orErr } = await sb
+      .from("rounds")
+      .select("id, number")
+      .eq("tournament_id", t.id)
+      .eq("status", "open")
+      .limit(1);
+    if (orErr) {
+      return NextResponse.json({ ok: false, error: `Runden prüfen fehlgeschlagen: ${orErr.message}` }, { status: 500 });
+    }
+    if (openRounds && openRounds.length) {
+      const no = (openRounds[0] as { number?: number | null }).number;
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Es läuft noch eine Runde${no ? ` (Runde ${no})` : ""} – bitte erst alle Plätze eintragen, dann die nächste Runde erzeugen.`,
+        },
+        { status: 409 }
+      );
+    }
+  }
+
   // 🚫 DYP: nie Elo (Spaßturniere – würde die Flipper-Elo verfälschen)
   const useElo = useEloRequested && eloAllowedInFormat(tournamentFormat) && eloAllowedInFormat(format);
 

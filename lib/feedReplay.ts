@@ -439,7 +439,7 @@ function premiereItems(data: MmData, ctx: FeedContext, out: FeedCandidate[], aft
       item: {
         key: `premiere|${x.matchId}|${x.playerId}`,
         kind: "premiere",
-        icon: "🎰",
+        icon: "🌟",
         title: "Flipper-Premiere",
         body: `${nm.get(x.playerId) ?? "?"} spielt gleich zum ersten Mal ${x.machineName}!`,
         players: [x.playerId],

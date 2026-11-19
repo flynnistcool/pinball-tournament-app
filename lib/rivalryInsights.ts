@@ -443,6 +443,7 @@ export function insightFeedItem(
     title: INSIGHT_TITLE[ins.kind],
     body: machine ? `${text} – gleich wieder an ${machine}` : text,
     players: [ins.a, ins.b],
-    data: { ...ins },
+    // player/other = Namen (Ticker macht sie fett)
+    data: { ...ins, player: nameOf(ins.a), other: nameOf(ins.b) },
   };
 }

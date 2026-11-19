@@ -66,7 +66,45 @@ export function closeMatchFeedItem(opts: {
   };
 }
 
-/** Zusatz für die Ergebnis-Meldung, wenn das Match vorher eng war */
+/** ⚖️ eigene Meldung nach dem Match: "Janos setzt sich an 💥 AIQ LE gegen Christian durch" (Siegchancen vorher) */
+export function closeDecidedFeedItem(opts: {
+  matchId: string;
+  machine: string | null;
+  machineIcon: string | null;
+  winners: { id: string; name: string }[];
+  losers: { id: string; name: string }[];
+  snap: ChanceSnapshot;
+}): FeedItemInput | null {
+  const { matchId, machine, machineIcon, winners, losers, snap } = opts;
+  if (!winners.length || !losers.length) return null;
+  const ids = [...winners, ...losers].map((p) => p.id);
+  const pcts = roundedPcts(ids.map((id) => snap.chances[id] ?? 0));
+  const pctOf = new Map(ids.map((id, i) => [id, pcts[i]]));
+  const join = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} und ${xs[xs.length - 1]}`);
+  const w = join(winners.map((p) => p.name));
+  const l = join(losers.map((p) => p.name));
+  const m = machine ? ` an ${machineIcon ? `${machineIcon} ` : ""}${machine}` : "";
+  const chances = [...winners, ...losers].map((p) => `${p.name} ${pctOf.get(p.id)} %`).join(" vs ");
+  return {
+    key: `closeMatch|${matchId}|result`,
+    kind: "closeMatch",
+    icon: "⚖️",
+    title: `${CLOSE_TITLE} – entschieden!`,
+    body: `${w} ${winners.length > 1 ? "setzen" : "setzt"} sich${m} gegen ${l} durch (Siegchancen vorher ${chances})`,
+    players: winners.map((p) => p.id),
+    data: {
+      machine,
+      machineIcon,
+      decided: true,
+      player: w,
+      other: l,
+      winnerNames: winners.map((p) => p.name),
+      loserNames: losers.map((p) => p.name),
+    },
+  };
+}
+
+/** Zusatz für die Ergebnis-Meldung, wenn das Match vorher eng war (alt – wird nicht mehr angehängt) */
 export function closeResultText(winners: readonly string[]): string {
   const w = winners.join(" & ");
   return `⚖️ ${CLOSE_TITLE} – ${w} ${winners.length > 1 ? "setzen sich durch" : "setzt sich durch"}`;

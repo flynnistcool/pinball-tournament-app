@@ -13,7 +13,7 @@ import { closeChancesOf, type CloseChance } from "@/lib/closeMatch";
 
 // Icons aus den Einstellungen statt des gespeicherten Icons – nur für Arten mit festem Icon
 // (andere Arten wählen ihr Icon je Meldung, z. B. Serien/Momente). Alte 🎯-Icons werden immer ersetzt.
-const FIXED_ICON_KINDS = new Set(["superfinalGame"]);
+const FIXED_ICON_KINDS = new Set(["superfinalGame", "premiere"]); // premiere: ältere Meldungen hatten 🎰 → jetzt 🌟 wie der Premieren-Sieg
 const REGISTRY_ICON: Record<string, string> = Object.fromEntries(NOTIFICATIONS.map((n) => [n.id, n.icon]));
 function tickerIcon(x: { kind: string; icon: string }): string {
   const reg = REGISTRY_ICON[x.kind];
@@ -223,6 +223,7 @@ export default function LiveTicker({
   autoScroll: autoScrollProp = false,
   autoTopMs = AUTO_TOP_MS,
   previewItems,
+  canHide = false,
 }: {
   code: string;
   /** strip = schmales Laufband (Handy unter der Match-Eintragung) */
@@ -244,6 +245,8 @@ export default function LiveTicker({
   autoTopMs?: number;
   /** 👀 Vorschau (Admin → Meldungen): feste Beispiel-Einträge statt Laden, alle Arten (auch ausgeschaltete) */
   previewItems?: FeedItem[];
+  /** 🙈 Admin: Meldungen ausblenden können (🗑️ je Meldung, /api/feed/hide) */
+  canHide?: boolean;
 }) {
   const ns = useNotificationSettings();
   const nsRef = useRef(ns);
@@ -270,6 +273,31 @@ export default function LiveTicker({
     });
   };
   const [items, setItems] = useState<FeedItem[] | null>(null);
+  // 🙈 Ausblenden: welche Meldung fragt gerade nach, welche sind hier schon weg (bis der Server sie nicht mehr liefert)
+  const [hideAsk, setHideAsk] = useState<number | null>(null);
+  const [hideBusy, setHideBusy] = useState(false);
+  const [hiddenLocal, setHiddenLocal] = useState<Set<number>>(new Set());
+  const [hideErr, setHideErr] = useState<string | null>(null);
+  const hideItem = async (id: number) => {
+    setHideBusy(true);
+    setHideErr(null);
+    try {
+      const r = await fetch("/api/feed/hide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) throw new Error(j?.error ?? "Ausblenden fehlgeschlagen");
+      setHiddenLocal((s0) => new Set(s0).add(id));
+      setHideAsk(null);
+      refreshTickers();
+    } catch (e) {
+      setHideErr(e instanceof Error ? e.message : "Ausblenden fehlgeschlagen");
+    } finally {
+      setHideBusy(false);
+    }
+  };
   const [missing, setMissing] = useState(false);
   const seenRef = useRef<Set<number> | null>(null);
   const [fresh, setFresh] = useState<Set<number>>(new Set());
@@ -331,7 +359,7 @@ export default function LiveTicker({
   // 📜 Meldungen je Match logisch ordnen (Ergebnis → Sieg → Favoritensturz …), siehe lib/tickerOrder.ts
   const shown = previewItems
     ? items ?? []
-    : orderTickerByMatch((items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled)).slice(0, maxItems);
+    : orderTickerByMatch((items ?? []).filter((x) => notifSetting(ns, x.kind, "ticker").enabled && !hiddenLocal.has(x.id))).slice(0, maxItems);
 
   // 📜 TV: scrollbare Liste läuft von selbst – 10 s oben stehen, nach unten springen, kurz warten,
   //    dann langsam wieder nach oben scrollen (älteste → neueste) und oben erneut 10 s stehen.
@@ -621,9 +649,45 @@ export default function LiveTicker({
                       )}
                     </span>
                   )}
+                  {/* 🙈 Nachfrage: wirklich entfernen? */}
+                  {canHide && hideAsk === x.id ? (
+                    <span className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-lg bg-white/80 px-2 py-1 text-[11px] text-neutral-700 ring-1 ring-rose-200">
+                      <span>Meldung überall entfernen?</span>
+                      <button
+                        type="button"
+                        disabled={hideBusy}
+                        onClick={() => void hideItem(x.id)}
+                        className="rounded-full bg-rose-600 px-2 py-0.5 font-semibold text-white disabled:opacity-50"
+                      >
+                        {hideBusy ? "…" : "Ja, entfernen"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHideAsk(null)}
+                        className="rounded-full bg-neutral-100 px-2 py-0.5 font-semibold text-neutral-700"
+                      >
+                        Abbrechen
+                      </button>
+                      {hideErr ? <span className="basis-full text-rose-600">{hideErr}</span> : null}
+                    </span>
+                  ) : null}
                 </span>
-                <span className={tv ? "shrink-0 text-sm tabular-nums text-white/40" : "shrink-0 text-[10px] tabular-nums text-neutral-400"}>
-                  {timeFmt(x.at)}
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  <span className={tv ? "text-sm tabular-nums text-white/40" : "text-[10px] tabular-nums text-neutral-400"}>{timeFmt(x.at)}</span>
+                  {canHide && !previewItems ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHideErr(null);
+                        setHideAsk((a) => (a === x.id ? null : x.id));
+                      }}
+                      className="rounded px-1 text-[10px] leading-none opacity-0 grayscale hover:opacity-100 hover:grayscale-0 focus:opacity-100 focus:grayscale-0"
+                      title="Meldung aus dem Ticker entfernen (überall: Admin, TV, Handy)"
+                      aria-label="Meldung entfernen"
+                    >
+                      🗑️
+                    </button>
+                  ) : null}
                 </span>
               </li>
             );
