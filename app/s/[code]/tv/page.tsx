@@ -41,6 +41,7 @@ import { liveEntriesFrom } from "@/lib/recordWatch";
 import BotEloBadge from "@/components/BotEloBadge";
 import { effectiveExtraball } from "@/lib/botRules";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
+import { formatLabel as formatLabelLib } from "@/lib/formatLabel";
 import { saveChanceSnapshot } from "@/lib/chanceSnapshots";
 import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/PlayerQrWall";
@@ -712,7 +713,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
                 placeholder: pr?.exclude_from_stats === true,
               };
             });
-          const favH2h = h2hFromPairMachine(rivFavTv.pairMachine, machineName);
+          const favH2h = h2hFromPairMachine(rivFavTv.pairMachine, machineName, format, formatLabelLib(format));
           const bd = finished ? null : favoriteBreakdown(favCands, { h2h: favH2h });
           const favRes = finished ? null : pickFavorite(favCands, { h2h: favH2h });
           const allChances = (bd?.rows ?? []).map((r) => r.chance);
@@ -2296,7 +2297,7 @@ function MatchCardView({
                         🎰 Premiere
                       </span>
                     ) : null}
-                    <span>💪 Pers. Highscore</span>
+                    <span title="Persönlicher Highscore an diesem Flipper (diese Location)">💪 Bestwert</span>
                     {myPb.before != null ? (
                       <span className="font-semibold text-indigo-200">{scoreFmt.format(myPb.before)}</span>
                     ) : null}

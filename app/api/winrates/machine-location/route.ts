@@ -28,6 +28,8 @@ export async function POST(req: Request) {
     ? body.machineNames.map((x: any) => String(x ?? "").trim()).filter(Boolean)
     : [];
   const locationId = String(body.locationId ?? "");
+  // optional: Format des laufenden Turniers → zusätzlich Spiele/Siege nur in diesem Format (matchesFormat / winsFormat)
+  const format = String(body.format ?? "").trim().toLowerCase();
 
   if (!locationId || profileIds.length === 0 || machineNames.length === 0) {
     return noStoreJson({ rows: [] });
@@ -38,7 +40,7 @@ export async function POST(req: Request) {
   // Find all tournaments at this location (avoid deep nested filters)
   const { data: tourneys, error: tErr } = await sb
     .from("tournaments")
-    .select("id")
+    .select("id, format")
     .eq("location_id", locationId);
 
   if (tErr) {
@@ -46,6 +48,9 @@ export async function POST(req: Request) {
   }
 
   const tournamentIds = (tourneys ?? []).map((t: any) => String(t.id)).filter(Boolean);
+  const formatIds = new Set(
+    format ? (tourneys ?? []).filter((t: any) => String(t.format ?? "").toLowerCase() === format).map((t: any) => String(t.id)) : []
+  );
   if (tournamentIds.length === 0) {
     return noStoreJson({ rows: [] });
   }
@@ -86,7 +91,15 @@ export async function POST(req: Request) {
 
   const acc: Record<
     string,
-    { profileId: string; machineName: string; locationId: string; matchesPlayed: number; wins: number }
+    {
+      profileId: string;
+      machineName: string;
+      locationId: string;
+      matchesPlayed: number;
+      wins: number;
+      matchesFormat: number;
+      winsFormat: number;
+    }
   > = {};
 
   // 🛡️ Statistik-Schutz: Siege nur gegen Menschen (Bots/Platzhalter selbst ohne Winrate)
@@ -103,9 +116,15 @@ export async function POST(req: Request) {
     if (!profileId || !machineName) continue;
 
     const key = `${profileId}__${machineName}__${locationId}`;
-    if (!acc[key]) acc[key] = { profileId, machineName, locationId, matchesPlayed: 0, wins: 0 };
+    if (!acc[key]) acc[key] = { profileId, machineName, locationId, matchesPlayed: 0, wins: 0, matchesFormat: 0, winsFormat: 0 };
     acc[key].matchesPlayed += 1;
     if (Number(row.position) === 1) acc[key].wins += 1;
+    // nur im Format des laufenden Turniers
+    const tid = String(row?.matches?.rounds?.tournament_id ?? "");
+    if (format && formatIds.has(tid)) {
+      acc[key].matchesFormat += 1;
+      if (Number(row.position) === 1) acc[key].winsFormat += 1;
+    }
   }
 
   const rows = Object.values(acc).map((r) => ({

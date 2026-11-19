@@ -210,7 +210,7 @@ function PersonalBestLineInner({
           🎰 Premiere
         </span>
       ) : null}
-      <span>💪 Pers. Highscore</span>
+      <span title="Persönlicher Highscore an diesem Flipper (diese Location)">💪 Bestwert</span>
       {/* leer = noch nie an dieser Location auf dem Flipper gespielt */}
       {before != null ? (
         <span

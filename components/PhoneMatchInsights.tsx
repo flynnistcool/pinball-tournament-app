@@ -23,6 +23,7 @@ import { pairKey, type RivalryInsight } from "@/lib/rivalryInsights";
 import BotEloBadge from "@/components/BotEloBadge";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite, type FavoriteResult } from "@/lib/favorite";
 import ChanceChip, { chanceTone } from "@/components/ChanceChip";
+import { formatLabel } from "@/lib/formatLabel";
 import type { MmData, MyMatchInfo } from "@/lib/myMatch";
 
 const WINRATE_REFRESH_MS = 5 * 60_000;
@@ -177,7 +178,7 @@ export default function PhoneMatchInsights({
             placeholder: pr?.exclude_from_stats === true,
           };
         });
-    const favH2h = h2hFromPairMachine(rivFav.pairMachine, machineName);
+    const favH2h = h2hFromPairMachine(rivFav.pairMachine, machineName, format, formatLabel(format));
     favRes = pickFavorite(favCands, { h2h: favH2h });
     favBd = favoriteBreakdown(favCands, { h2h: favH2h });
   }
@@ -279,17 +280,6 @@ export default function PhoneMatchInsights({
                   </span>
                 ) : null}
                 <StreakFire n={streaks[pid]} mode={sMode} />
-                {(() => {
-                  // 📈 Siegchance (wie Admin/TV)
-                  const row = favBd?.rows.find((r) => String(r.cand.key) === pid);
-                  return row && chanceOn ? (
-                    <ChanceChip
-                      chance={row.chance}
-                      tone={chanceTone(favBd!.rows.map((r) => r.chance), row.chance)}
-                      title={chanceShortTitle(row, favBd!.favoriteKey === pid)}
-                    />
-                  ) : null;
-                })()}
                 {favorite === pid && favOn ? (
                   <span
                     className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
@@ -299,19 +289,77 @@ export default function PhoneMatchInsights({
                   </span>
                 ) : null}
               </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-500">
-                <span>
-                  Turnier-Winrate{" "}
-                  <span className={tTop.has(pid) ? "font-semibold text-emerald-600" : tLow.has(pid) ? "font-semibold text-rose-400" : ""}>{pct(t?.winrate)}</span>
-                </span>
-                {machineName ? (
-                  <span>
-                    Flipper-Winrate{" "}
-                    <span className={mTop.has(pid) ? "font-semibold text-emerald-600" : mLow.has(pid) ? "font-semibold text-rose-400" : ""}>{pct(m?.winrate)}</span>
-                    {m && m.matchesPlayed > 0 ? ` (${m.matchesPlayed})` : ""}
-                  </span>
-                ) : null}
-              </div>
+              {/* 📈 Siegchance als Balken (wie im Admin) */}
+              {(() => {
+                const row = favBd?.rows.find((r) => String(r.cand.key) === pid);
+                if (!row || !chanceOn) return null;
+                const tone = chanceTone(favBd!.rows.map((r) => r.chance), row.chance);
+                return (
+                  <div className="mt-1 flex items-center gap-2 text-xs tabular-nums" title={chanceShortTitle(row, favBd!.favoriteKey === pid)}>
+                    <div className="h-1.5 w-28 overflow-hidden rounded-full bg-neutral-200">
+                      <div
+                        className={"h-full rounded-full " + (tone === "top" ? "bg-emerald-500" : tone === "low" ? "bg-rose-300" : "bg-neutral-400")}
+                        style={{ width: `${Math.round(row.chance * 100)}%` }}
+                      />
+                    </div>
+                    <span className={tone === "top" ? "font-semibold text-emerald-600" : tone === "low" ? "font-semibold text-rose-500" : "text-neutral-500"}>
+                      {Math.round(row.chance * 100)} %
+                    </span>
+                    <span className="text-neutral-400">Siegchance</span>
+                  </div>
+                );
+              })()}
+              {/* Siege in drei Zeilen (Zahlen zuerst, wie im Admin): Turnier · dieser Flipper · dieser Flipper nur im Format */}
+              {(() => {
+                const fmtName = formatLabel(format).split(" ").slice(1).join(" ") || format;
+                const cls = (top: boolean, low: boolean) => (top ? "font-semibold text-emerald-600" : low ? "font-semibold text-rose-500" : "font-semibold text-neutral-700");
+                // Format-Quote je Spieler (für grün/rot)
+                const fq = (x: string) => {
+                  const r = mwrFor(x) as (MwrRow & { matchesFormat?: number; winsFormat?: number }) | null;
+                  return r && r.matchesFormat ? ((r.winsFormat ?? 0) / r.matchesFormat) * 100 : null;
+                };
+                const fVals: Record<string, number | null> = {};
+                for (const mp2 of info.players) fVals[String(mp2.player_id)] = fq(String(mp2.player_id));
+                const fTop = showCompare ? topIds(fVals) : new Set<string>();
+                const fLow = showCompare ? bottomIds(fVals) : new Set<string>();
+                const mf = m as (MwrRow & { matchesFormat?: number; winsFormat?: number }) | null;
+                const line = (pctTxt: string, pctCls: string, cnt: string, label: string, title: string) => (
+                  <div className="whitespace-nowrap" title={title}>
+                    <span className={"inline-block w-14 text-right " + pctCls}>{pctTxt}</span>
+                    <span className="inline-block w-12 pl-1.5">{cnt}</span>
+                    <span>{label}</span>
+                  </div>
+                );
+                return (
+                  <div className="mt-0.5 flex flex-col text-xs leading-snug tabular-nums text-neutral-500">
+                    {line(
+                      pct(t?.winrate),
+                      cls(tTop.has(pid), tLow.has(pid)),
+                      t && t.played > 0 ? `${t.wins}/${t.played}` : "",
+                      "Siege im Turnier",
+                      "Siegquote in diesem Turnier (Siege/Spiele)"
+                    )}
+                    {machineName
+                      ? line(
+                          m && m.matchesPlayed > 0 ? pct(m.winrate) : "—",
+                          cls(mTop.has(pid), mLow.has(pid)),
+                          m && m.matchesPlayed > 0 ? `${m.wins}/${m.matchesPlayed}` : "",
+                          `Siege ${machineName}`,
+                          "an diesem Flipper an dieser Location, alle Formate (Siege/Spiele)"
+                        )
+                      : null}
+                    {machineName && mf && mf.matchesFormat
+                      ? line(
+                          pct(((mf.winsFormat ?? 0) / mf.matchesFormat) * 100),
+                          cls(fTop.has(pid), fLow.has(pid)),
+                          `${mf.winsFormat ?? 0}/${mf.matchesFormat}`,
+                          `Siege ${machineName} ${fmtName}`,
+                          `an diesem Flipper an dieser Location, nur ${fmtName} (Siege/Spiele)`
+                        )
+                      : null}
+                  </div>
+                );
+              })()}
               {pb ? (
                 <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-xs tabular-nums text-neutral-500">
                   {premiereOn && isPremiere(profileOf(pid), machineName, records!.personal, live, info.match.id, records!.played) ? (
@@ -319,7 +367,7 @@ export default function PhoneMatchInsights({
                       🎰 Premiere
                     </span>
                   ) : null}
-                  <span>💪 Pers. Highscore</span>
+                  <span title="Persönlicher Highscore an diesem Flipper (diese Location)">💪 Bestwert</span>
                   {pb.before != null ? (
                     <span className="font-semibold text-indigo-600">{fmt.format(pb.before)}</span>
                   ) : (

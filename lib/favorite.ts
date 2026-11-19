@@ -44,7 +44,12 @@ export type FavoriteCandidate = {
 };
 
 /** direkte Bilanz an diesem Flipper aus Sicht von a: Siege a, Siege b, Duelle */
-export type H2hLookup = (aPid: string, bPid: string) => { aWins: number; bWins: number; duels: number } | null;
+export type H2hLookup = (
+  aPid: string,
+  bPid: string
+) => { aWins: number; bWins: number; duels: number; fmt?: { aWins: number; bWins: number; duels: number; label?: string } | null } | null;
+/** Format-Bilanz: ab so vielen Duellen im Format zählt sie zur Hälfte (n / (n + K)) */
+const FMT_K = 10;
 
 export type FavoriteResult = {
   key: string;
@@ -77,7 +82,25 @@ function tournamentForm(c: FavoriteCandidate): number {
   return FORM_W * eloOf(clip(c.t / 100, 0.25, 0.75));
 }
 
-type DuelCalc = { chance: number; base: number; eloDiff: number; mPart: number; tPart: number; h2h: { w: number; l: number; n: number; weight: number; chance: number } | null };
+type DuelCalc = {
+  chance: number;
+  base: number;
+  eloDiff: number;
+  mPart: number;
+  tPart: number;
+  h2h: {
+    w: number;
+    l: number;
+    n: number;
+    weight: number;
+    /** Bilanz (geglättet, inkl. Format-Anpassung) */
+    chance: number;
+    /** nur alle Formate (geglättet) */
+    chanceAll: number;
+    /** Bilanz im Format des Turniers (falls vorhanden) */
+    fmt: { w: number; l: number; n: number; chance: number; share: number; label?: string } | null;
+  } | null;
+};
 
 function duelCalc(a: FavoriteCandidate, b: FavoriteCandidate, h2h?: H2hLookup): DuelCalc {
   const eloDiff = a.elo != null && b.elo != null ? a.elo - b.elo : 0;
@@ -90,10 +113,21 @@ function duelCalc(a: FavoriteCandidate, b: FavoriteCandidate, h2h?: H2hLookup): 
   if (r && r.duels > 0) {
     const n = r.aWins + r.bWins;
     if (n > 0) {
-      const p = (r.aWins + 1) / (n + 2); // geglättet: 0:0 = 50 %
+      const pAll = (r.aWins + 1) / (n + 2); // geglättet: 0:0 = 50 %
+      // Format-Bilanz (z. B. nur Round the Pinball) gleicht an – je mehr Duelle im Format, desto stärker
+      let p = pAll;
+      let fmt: NonNullable<DuelCalc["h2h"]>["fmt"] = null;
+      const f = r.fmt;
+      const nf = f ? f.aWins + f.bWins : 0;
+      if (f && nf > 0) {
+        const pF = (f.aWins + 1) / (nf + 2);
+        const share = nf / (nf + FMT_K);
+        p = (1 - share) * pAll + share * pF;
+        fmt = { w: f.aWins, l: f.bWins, n: nf, chance: pF, share, label: f.label };
+      }
       const weight = Math.min(H2H_MAX, n / (n + H2H_K));
       diff = (1 - weight) * base + weight * eloOf(clip(p, 0.05, 0.95));
-      h = { w: r.aWins, l: r.bWins, n, weight, chance: p };
+      h = { w: r.aWins, l: r.bWins, n, weight, chance: p, chanceAll: pAll, fmt };
     }
   }
   return { chance: chanceOf(diff), base, eloDiff, mPart, tPart, h2h: h };
@@ -147,7 +181,9 @@ export function duelExplainLines(row: FavoriteRow): string[] {
     out.push(`  · Turnierform ${ta} gegen ${tb} → ${d.tPart >= 0 ? "+" : "−"}${Math.abs(Math.round(d.tPart))} Elo-Punkte`);
     out.push(
       d.h2h
-        ? `  · direkte Bilanz an diesem Flipper ${d.h2h.w} : ${d.h2h.l} (${pct(d.h2h.chance)}) – zählt zu ${Math.round(d.h2h.weight * 100)} %`
+        ? `  · direkte Bilanz an diesem Flipper ${d.h2h.w} : ${d.h2h.l}${
+            d.h2h.fmt ? `, davon ${d.h2h.fmt.label ?? "im Format"} ${d.h2h.fmt.w} : ${d.h2h.fmt.l} (zählt ${Math.round(d.h2h.fmt.share * 100)} %)` : ""
+          } → ${pct(d.h2h.chance)} – zählt zu ${Math.round(d.h2h.weight * 100)} %`
         : `  · direkte Bilanz an diesem Flipper: noch keine`
     );
   }
@@ -179,16 +215,24 @@ export function favoriteTitle(r: FavoriteResult): string {
 /** Bilanz-Abfrage aus den Duell-Daten (/api/public/rivalry → pairMachine) für einen Flipper */
 export function h2hFromPairMachine(
   pairMachine: Record<string, Record<string, { xWins: number; yWins: number; duels: number }>> | null | undefined,
-  machineName: string | null | undefined
+  machineName: string | null | undefined,
+  /** Format des laufenden Turniers → zusätzlich die Bilanz nur in diesem Format (Feinjustierung) */
+  format?: string | null,
+  /** Anzeigename des Formats für Erklärungen (z. B. "🎰 Round the Pinball") */
+  formatName?: string | null
 ): H2hLookup | undefined {
   if (!pairMachine || !machineName) return undefined;
   const mk = machineKey(machineName);
+  const fk = format ? `${mk}@${String(format).toLowerCase()}` : null;
   return (a, b) => {
     const [x, y] = a < b ? [a, b] : [b, a];
     const byM = pairMachine[`${x}|${y}`];
     const s = byM ? byM[mk] : undefined;
     if (!s) return null;
-    return a === x ? { aWins: s.xWins, bWins: s.yWins, duels: s.duels } : { aWins: s.yWins, bWins: s.xWins, duels: s.duels };
+    const f = fk && byM ? byM[fk] : undefined;
+    const side = (v: { xWins: number; yWins: number; duels: number }) =>
+      a === x ? { aWins: v.xWins, bWins: v.yWins, duels: v.duels } : { aWins: v.yWins, bWins: v.xWins, duels: v.duels };
+    return { ...side(s), fmt: f ? { ...side(f), label: formatName ?? undefined } : null };
   };
 }
 
@@ -241,14 +285,22 @@ export function duelSteps(a: FavoriteCandidate, b: FavoriteCandidate, h2h?: H2hL
   // 5) direkte Bilanz
   let diff = c.base;
   if (c.h2h) {
-    const { w, l, n, weight } = c.h2h;
-    const p = (w + 1) / (n + 2);
+    const { w, l, n, weight, fmt } = c.h2h;
+    const pAll = (w + 1) / (n + 2);
+    const p = c.h2h.chance;
     const pc = clip(p, 0.05, 0.95);
     const hElo = eloOf(pc);
     const raw = n / (n + H2H_K);
     diff = (1 - weight) * c.base + weight * hElo;
-    out.push(`5) Direkte Bilanz an diesem Flipper ${w} : ${l}:`);
-    out.push(`   geglättet (${w} + 1) / (${n} + 2) = ${n2(p)}${pc !== p ? ` (begrenzt auf ${n2(pc)})` : ""} → Elo-Wert 400 × log10(${n2(pc)} / ${n2(1 - pc)}) = ${n1(hElo)} Pkt.`);
+    out.push(`5) Direkte Bilanz an diesem Flipper ${w} : ${l} (alle Formate):`);
+    out.push(`   geglättet (${w} + 1) / (${n} + 2) = ${n2(pAll)}`);
+    if (fmt) {
+      out.push(
+        `   davon ${fmt.label ?? "im Format"} ${fmt.w} : ${fmt.l} → geglättet (${fmt.w} + 1) / (${fmt.n} + 2) = ${n2(fmt.chance)}; zählt zu ${fmt.n} / (${fmt.n} + ${FMT_K}) = ${Math.round(fmt.share * 100)} %`
+      );
+      out.push(`   angeglichen: ${Math.round((1 - fmt.share) * 100)} % × ${n2(pAll)} + ${Math.round(fmt.share * 100)} % × ${n2(fmt.chance)} = ${n2(p)}`);
+    }
+    out.push(`   Bilanz ${n2(p)}${pc !== p ? ` (begrenzt auf ${n2(pc)})` : ""} → Elo-Wert 400 × log10(${n2(pc)} / ${n2(1 - pc)}) = ${n1(hElo)} Pkt.`);
     out.push(
       `   Gewicht = ${n} / (${n} + ${H2H_K}) = ${Math.round(raw * 100)} %${raw > H2H_MAX ? ` → höchstens ${Math.round(H2H_MAX * 100)} %` : ""}`
     );
@@ -273,7 +325,7 @@ export function chanceShortTitle(row: FavoriteRow, isFavorite: boolean): string 
     if (row.cand.elo != null && opp.elo != null) bits.push(`nach Elo ${pct(chanceOf(calc.eloDiff))}`);
     if (Math.abs(calc.mPart) >= 1) bits.push(`Flipper-Winrate ${calc.mPart >= 0 ? "+" : "−"}${Math.abs(Math.round(calc.mPart))}`);
     if (Math.abs(calc.tPart) >= 1) bits.push(`Form ${calc.tPart >= 0 ? "+" : "−"}${Math.abs(Math.round(calc.tPart))}`);
-    if (calc.h2h) bits.push(`Bilanz hier ${calc.h2h.w} : ${calc.h2h.l}`);
+    if (calc.h2h) bits.push(`Bilanz hier ${calc.h2h.w} : ${calc.h2h.l}${calc.h2h.fmt ? `, im Format ${calc.h2h.fmt.w} : ${calc.h2h.fmt.l}` : ""}`);
     lines.push(`· gegen ${opp.name ?? "?"}: ${pct(calc.chance)}${bits.length ? ` (${bits.join(", ")})` : ""}`);
   }
   lines.push("Nicht nur Elo: auch Flipper-Winrate, Turnierform und die Bilanz an diesem Flipper zählen.");

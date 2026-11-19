@@ -78,8 +78,8 @@ import MyEntryButton from "@/components/MyEntryButton";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
-import { saveChanceSnapshot } from "@/lib/chanceSnapshots";
-import ChanceChip, { chanceTone } from "@/components/ChanceChip";
+import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
+import { chanceTone } from "@/components/ChanceChip";
 import { roleOfUser } from "@/lib/authRoles";
 import RotationTimerOverlay from "@/components/RotationTimerOverlay";
 import ScoreInput from "@/components/ScoreInput";
@@ -94,6 +94,13 @@ import PlayerMachineHistory from "@/components/PlayerMachineHistory";
 import ScoreFormWatcher from "@/components/ScoreFormWatcher";
 import EloCalculator from "@/components/EloCalculator";
 import MatchAnalysis from "@/components/MatchAnalysis";
+import PlayerStatTiles from "@/components/PlayerStatTiles";
+
+/** 🧱 Anordnung der Spielerzeile im Match (Admin):
+ *  "kacheln" = Kennzahlen-Leiste (Siegchance · Turnier · Flipper · Pers. HS · Ø)
+ *  "balken"  = Siegchance als Balken, darunter Winrates + Highscore als Text
+ *  "mix"     = Siegchance als Balken + darunter Kästchen (Turnier · Flipper · HS · Ø) */
+const PLAYER_ROW_LAYOUT: "kacheln" | "balken" | "mix" = "balken";
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
@@ -6487,6 +6494,8 @@ function RoundMatchesCard({
   // Winrate / M-Winrate (für Anzeige direkt im Match links)
   // ================================
   const [tWinrateByPlayerId, setTWinrateByPlayerId] = useState<Record<string, number | null>>({});
+  // Turnier: Siege/Spiele je Profil (für "Siege im Turnier: 50 % 1/2")
+  const [tCountByProfile, setTCountByProfile] = useState<Record<string, { w: number; m: number }>>({});
   const [mWinrateByKey, setMWinrateByKey] = useState<Record<string, { winrate: number | null; matchesPlayed: number }>>({});
   const [winrateLoading, setWinrateLoading] = useState(false);
   const mwrHasLoadedOnceLeft = useRef(false);
@@ -7154,6 +7163,7 @@ async function autoAssignPositionsByExplicitScores(
 // Für die Anzeige im Match (links) greifen wir aber über playersById[player_id].profile_id zu.
 // Deshalb bauen wir hier eine Map: profileId -> winrate.
 const map: Record<string, number | null> = {};
+const cnt: Record<string, { w: number; m: number }> = {};
 
 for (const r of rows) {
   // player_id kann in der API mal als "id" oder "player_id" kommen
@@ -7167,9 +7177,11 @@ for (const r of rows) {
   if (!profileId) continue;
 
   map[profileId] = typeof r?.winrate === "number" ? r.winrate : null;
+  cnt[profileId] = { w: Number(r?.wins ?? 0) || 0, m: Number(r?.matches ?? 0) || 0 };
 }
 
 setTWinrateByPlayerId(map);
+setTCountByProfile(cnt);
 
         } catch {
           setTWinrateByPlayerId({});
@@ -7218,12 +7230,12 @@ setTWinrateByPlayerId(map);
             method: "POST",
             cache: "no-store",
             headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-            body: JSON.stringify({ locationId, profileIds, machineNames, _ts: Date.now() }),
+            body: JSON.stringify({ locationId, profileIds, machineNames, format: tournament?.format ?? null, _ts: Date.now() }),
           });
           const j = await res.json().catch(() => ({}));
           const rows = Array.isArray(j?.rows) ? j.rows : [];
 
-          const map: Record<string, { winrate: number | null; matchesPlayed: number }> = {};
+          const map: Record<string, { winrate: number | null; matchesPlayed: number; wins?: number; matchesFormat?: number; winsFormat?: number }> = {};
           for (const r of rows) {
             const p = r?.profileId ? String(r.profileId) : "";
             const mn = r?.machineName ? String(r.machineName) : "";
@@ -7232,6 +7244,10 @@ setTWinrateByPlayerId(map);
             map[key] = {
               winrate: typeof r?.winrate === "number" ? r.winrate : null,
               matchesPlayed: typeof r?.matchesPlayed === "number" ? r.matchesPlayed : Number(r?.matches_played ?? 0) || 0,
+              wins: typeof r?.wins === "number" ? r.wins : 0,
+              // nur im Format des Turniers (z. B. Round the Pinball)
+              matchesFormat: typeof r?.matchesFormat === "number" ? r.matchesFormat : 0,
+              winsFormat: typeof r?.winsFormat === "number" ? r.winsFormat : 0,
             };
           }
           setMWinrateByKey(map);
@@ -7243,7 +7259,7 @@ setTWinrateByPlayerId(map);
         setWinrateLoading(false);
       }
     },
-    [code, locationId, openMatches, matchPlayers, playersById, machinesInfoById]
+    [code, locationId, openMatches, matchPlayers, playersById, machinesInfoById, tournament?.format]
   );
 
   const lastWinrateSigRef = useRef<string>("");
@@ -8859,6 +8875,100 @@ disabled={
               const rotationWaitLocked =
                 isRotationFormat && rotationActivePlayerId != null && !isActiveAtMachine && !hasSavedScore;
 
+              // 📈 Siegchance + ★ Favorit (lib/favorite.ts): Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper.
+              // Solange das Match unberührt ist, werden die Chancen eingefroren (lib/chanceSnapshots.ts → 🧊 Favoritensturz).
+              const favInfo = (() => {
+                if (isTimeplayFormat || String((m as any)?.status ?? "").toLowerCase() === "finished") return null;
+                const machineName = machinesInfoById?.[String(m?.machine_id ?? "")]?.name ? String(machinesInfoById[String(m.machine_id)].name) : "";
+                const profOf = (raw: any) => {
+                  const p = raw ? String(raw) : "";
+                  return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
+                };
+                const cands = (mps ?? [])
+                  .map((o: any) => ({ pid: o?.player_id ? String(o.player_id) : "", prof: profOf(o?.player_id) }))
+                  .filter((x: any) => x.prof)
+                  .map((x: any) => {
+                    const t = tWinrateByPlayerId?.[x.prof];
+                    const mwr = machineName && locationId ? mWinrateByKey?.[`${x.prof}__${machineName}__${locationId}`] : null;
+                    const mw = mwr?.winrate;
+                    const pv = playersById?.[x.pid];
+                    return {
+                      key: x.pid,
+                      pid: x.pid,
+                      name: pv?.name ?? "?",
+                      t: typeof t === "number" && Number.isFinite(t) ? t : null,
+                      m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
+                      mCount: typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0,
+                      elo: typeof pv?.elo === "number" ? pv.elo : null,
+                      placeholder: pv?.isPlaceholder === true,
+                    };
+                  });
+                const h2hFav = h2hFromPairMachine(rivFavData.pairMachine, machineName, tournament?.format, tournamentFormatLabel(tournament?.format));
+                const bd = favoriteBreakdown(cands, { h2h: h2hFav });
+                const untouched = (mps ?? []).every(
+                  (x: any) => (x?.position == null || Number(x.position) <= 0) && (x?.score == null || x.score === "")
+                );
+                if (untouched && bd.rows.length >= 2 && !winrateLoading) {
+                  saveChanceSnapshot(code, String(m.id), {
+                    favoriteKey: bd.favoriteKey,
+                    chances: Object.fromEntries(bd.rows.map((r) => [String(r.cand.key), r.chance])),
+                  });
+                }
+                const myPid = String(mp?.player_id ?? "");
+                const myRow = bd.rows.find((r) => String(r.cand.key) === myPid) ?? null;
+                const isFav = !!bd.favoriteKey && bd.favoriteKey === myPid;
+                return {
+                  myRow,
+                  isFav,
+                  favRes: isFav ? pickFavorite(cands, { h2h: h2hFav }) : null,
+                  tone: myRow ? chanceTone(bd.rows.map((r) => r.chance), myRow.chance) : ("mid" as const),
+                };
+              })();
+
+              // 📈 Balken: laufend = aktuelle Siegchance; fertig = eingefrorener Stand VOR dem Spiel (falls dieses Gerät ihn hat)
+              const chanceBar = (() => {
+                if (favInfo?.myRow) {
+                  return { chance: favInfo.myRow.chance, tone: favInfo.tone, title: chanceShortTitle(favInfo.myRow, favInfo.isFav), frozen: false, wasFav: false };
+                }
+                if (isTimeplayFormat) return null;
+                const snap = getChanceSnapshot(code, String(m.id));
+                const mine = snap?.chances?.[String(mp?.player_id ?? "")];
+                if (!snap || mine == null) return null;
+                const all = Object.values(snap.chances);
+                const wasFav = snap.favoriteKey === String(mp?.player_id ?? "");
+                return {
+                  chance: mine,
+                  tone: chanceTone(all, mine),
+                  title: `Siegchance vor dem Spiel: ${Math.round(mine * 100)} %${wasFav ? " – war ★ Favorit" : ""} (eingefrorener Stand, bevor das erste Ergebnis eingetragen wurde)`,
+                  frozen: true,
+                  wasFav,
+                };
+              })();
+
+              // Turnier-/Flipper-Winrate + Töne (höchster grün, niedrigster rot) – für die Kennzahlen-Leiste
+              const wrInfo = (() => {
+                const profOf2 = (raw: any) => {
+                  const p = raw ? String(raw) : "";
+                  return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
+                };
+                const mName = machinesInfoById?.[String(m?.machine_id ?? "")]?.name ? String(machinesInfoById[String(m.machine_id)].name) : "";
+                const valsOf = (prof: string) => {
+                  const tv = prof ? tWinrateByPlayerId?.[prof] : null;
+                  const mw = prof && mName && locationId ? mWinrateByKey?.[`${prof}__${mName}__${locationId}`] : null;
+                  return {
+                    t: typeof tv === "number" && Number.isFinite(tv) ? tv : null,
+                    m: typeof mw?.winrate === "number" && Number.isFinite(mw.winrate) ? mw.winrate : null,
+                    n: typeof mw?.matchesPlayed === "number" ? mw.matchesPlayed : 0,
+                  };
+                };
+                const all = (mps ?? []).map((o: any) => valsOf(profOf2(o?.player_id)));
+                const mine = valsOf(profOf2(mp?.player_id));
+                const active = String((m as any)?.status ?? "").toLowerCase() !== "finished";
+                const tone = (list: (number | null)[], v: number | null) =>
+                  !active || v == null ? ("mid" as const) : chanceTone(list.filter((x): x is number => x != null), v);
+                return { ...mine, tTone: tone(all.map((x) => x.t), mine.t), mTone: tone(all.map((x) => x.m), mine.m) };
+              })();
+
               return (
                 <SortablePlayerRow
                   key={k(mp.match_id, mp.player_id)}
@@ -8878,9 +8988,9 @@ disabled={
                     }
                   >
                     
-<div className="flex flex-col min-w-0">
+<div className="flex min-w-0 flex-1 flex-col">
   <div className="flex flex-col gap-0.5">
-  <div className="flex items-center gap-2 text-[14px]">
+  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px]">
     {/* 📈 Antippen = Verlauf auf diesem Flipper auf-/zuklappen */}
     <button
       type="button"
@@ -8909,72 +9019,23 @@ disabled={
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
     <StreakFire n={winStreaks[String(mp.player_id)]} mode={winStreakMode} />
-    {/* 📈 Siegchance + ★ Favorit (lib/favorite.ts): Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper.
-        Solange das Match unberührt ist, werden die Chancen eingefroren (lib/chanceSnapshots.ts → 🧊 Favoritensturz). */}
-    {!isTimeplayFormat && String((m as any)?.status ?? "").toLowerCase() !== "finished" && (() => {
-      const machineName = machinesInfoById?.[String(m?.machine_id ?? "")]?.name ? String(machinesInfoById[String(m.machine_id)].name) : "";
-      const profOf = (raw: any) => {
-        const p = raw ? String(raw) : "";
-        return p && playersById?.[p]?.profile_id ? String(playersById[p].profile_id) : "";
-      };
-      const cands = (mps ?? [])
-        .map((o: any) => ({ pid: o?.player_id ? String(o.player_id) : "", prof: profOf(o?.player_id) }))
-        .filter((x: any) => x.prof)
-        .map((x: any) => {
-          const t = tWinrateByPlayerId?.[x.prof];
-          const mwr = machineName && locationId ? mWinrateByKey?.[`${x.prof}__${machineName}__${locationId}`] : null;
-          const mw = mwr?.winrate;
-          const pv = playersById?.[x.pid];
-          return {
-            key: x.pid,
-            pid: x.pid,
-            name: pv?.name ?? "?",
-            t: typeof t === "number" && Number.isFinite(t) ? t : null,
-            m: typeof mw === "number" && Number.isFinite(mw) ? mw : null,
-            mCount: typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0,
-            elo: typeof pv?.elo === "number" ? pv.elo : null,
-            placeholder: pv?.isPlaceholder === true,
-          };
-        });
-      const h2hFav = h2hFromPairMachine(rivFavData.pairMachine, machineName);
-      const bd = favoriteBreakdown(cands, { h2h: h2hFav });
-      // 🧊 unberührtes Match (noch kein Platz/Score) → Stand einfrieren
-      const untouched = (mps ?? []).every(
-        (x: any) => (x?.position == null || Number(x.position) <= 0) && (x?.score == null || x.score === "")
-      );
-      if (untouched && bd.rows.length >= 2 && !winrateLoading) {
-        saveChanceSnapshot(code, String(m.id), {
-          favoriteKey: bd.favoriteKey,
-          chances: Object.fromEntries(bd.rows.map((r) => [String(r.cand.key), r.chance])),
-        });
-      }
-      const myPid = String(mp?.player_id ?? "");
-      const myRow = bd.rows.find((r) => String(r.cand.key) === myPid);
-      const isFav = !!bd.favoriteKey && bd.favoriteKey === myPid;
-      const favRes = isFav ? pickFavorite(cands, { h2h: h2hFav }) : null;
-      return (
-        <>
-          {myRow && chanceOn ? (
-            <ChanceChip
-              chance={myRow.chance}
-              tone={chanceTone(bd.rows.map((r) => r.chance), myRow.chance)}
-              title={chanceShortTitle(myRow, isFav)}
-            />
-          ) : null}
-          {isFav && favRes && favBadgeOn ? (
-            <span
-              className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
-              title={favoriteTitle(favRes)}
-            >
-              ★ Favorit
-            </span>
-          ) : null}
-        </>
-      );
-    })()}
+    {/* ★ Favorit (Siegchance, lib/favorite.ts – berechnet oben als favInfo) */}
+    {favInfo?.isFav && favInfo.favRes && favBadgeOn ? (
+      <span
+        className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
+        title={favoriteTitle(favInfo.favRes)}
+      >
+        ★ Favorit
+      </span>
+    ) : null}
     {isActiveAtMachine ? (
-      <span className="inline-flex items-center rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-semibold text-white animate-pulse">
-        ▶ spielt
+      // ▶ nur das Symbol (spart Platz in der Namenszeile) – Text im Mouseover
+      <span
+        className="inline-flex items-center rounded-full bg-sky-500 px-2 py-0.5 text-[11px] font-semibold text-white animate-pulse"
+        title="spielt gerade an diesem Flipper"
+        aria-label="spielt gerade"
+      >
+        ▶
       </span>
     ) : null}
     {isSaving ? (
@@ -8982,10 +9043,32 @@ disabled={
     ) : null}
   </div>
 
-    
-    {/* Winrate direkt im Match (links) */}
-    {!isTimeplayFormat && (
-    <div className="pl-9 flex items-center gap-3 text-[11px] tabular-nums">
+    {/* 📈 Siegchance als Balken unter dem Namen (grün = höchste, rot = niedrigste im Match);
+        fertiges Match: ausgegraut "vor dem Spiel" (eingefrorener Stand) */}
+    {PLAYER_ROW_LAYOUT !== "kacheln" && chanceBar && chanceOn ? (
+      <div className={"pl-9 flex items-center gap-2 text-[11px] tabular-nums " + (chanceBar.frozen ? "opacity-60" : "")} title={chanceBar.title}>
+        <div className="h-1.5 w-28 overflow-hidden rounded-full bg-neutral-200 sm:w-40">
+          <div
+            className={
+              "h-full rounded-full " +
+              (chanceBar.tone === "top" ? "bg-emerald-500" : chanceBar.tone === "low" ? "bg-rose-300" : "bg-neutral-400")
+            }
+            style={{ width: `${Math.round(chanceBar.chance * 100)}%` }}
+          />
+        </div>
+        <span className={"cursor-help " + (chanceBar.tone === "top" ? "font-semibold text-emerald-600" : chanceBar.tone === "low" ? "font-semibold text-rose-500" : "text-neutral-500")}>
+          {Math.round(chanceBar.chance * 100)} %
+        </span>
+        <span className="text-neutral-400">
+          Siegchance{chanceBar.frozen ? " vor dem Spiel" : ""}
+          {chanceBar.frozen && chanceBar.wasFav ? " · war ★ Favorit" : ""}
+        </span>
+      </div>
+    ) : null}
+
+    {/* Winrate direkt im Match (links) – nur Anordnung "balken" */}
+    {!isTimeplayFormat && PLAYER_ROW_LAYOUT === "balken" && (
+    <div className="pl-9 flex flex-col text-[11px] leading-snug tabular-nums text-neutral-500">
       {(() => {
         const pid = mp?.player_id ? String(mp.player_id) : "";
         const profileId =
@@ -9049,8 +9132,21 @@ const isRoundActive = matchStatusRaw !== "finished";
           typeof mwr?.winrate === "number" && Number.isFinite(mwr.winrate) && minM != null && maxM != null && minM !== maxM && mwr.winrate === minM;
 
         // ✅ Nur in aktiver Runde grün (höchster) bzw. dezent rot (niedrigster) markieren. Wenn finished: alles neutral.
-        const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : isRoundActive && tIsLow ? "text-rose-400 font-semibold" : "text-neutral-500";
-        const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : isRoundActive && mIsLow ? "text-rose-400 font-semibold" : "text-neutral-500";
+        const tCls = isRoundActive && tIsTop ? "text-emerald-600 font-semibold" : isRoundActive && tIsLow ? "text-rose-500 font-semibold" : "text-neutral-500";
+        const mCls = isRoundActive && mIsTop ? "text-emerald-600 font-semibold" : isRoundActive && mIsLow ? "text-rose-500 font-semibold" : "text-neutral-500";
+
+        // Format-Quote (dieser Flipper, nur Format des Turniers) – gleiche Färbung: höchste grün, niedrigste rot
+        const fQuoteOf = (prof: string) => {
+          const r = prof && machineName && locationId ? mWinrateByKey?.[`${prof}__${machineName}__${locationId}`] : null;
+          return r && typeof r.matchesFormat === "number" && r.matchesFormat > 0 ? ((r.winsFormat ?? 0) / r.matchesFormat) * 100 : null;
+        };
+        const fVals = (mps ?? []).map((o: any) => fQuoteOf(getProfileId(o?.player_id))).filter((v: any): v is number => v != null);
+        const fMine = fQuoteOf(profileId);
+        const fMax = fVals.length ? Math.max(...fVals) : null;
+        const fMin = fVals.length > 1 ? Math.min(...fVals) : null;
+        const fIsTop = fMine != null && fMax != null && Math.abs(fMine - fMax) < 1e-9;
+        const fIsLow = fMine != null && fMin != null && fMax != null && fMin !== fMax && Math.abs(fMine - fMin) < 1e-9;
+        const fCls = isRoundActive && fIsTop ? "text-emerald-600 font-semibold" : isRoundActive && fIsLow ? "text-rose-500 font-semibold" : "text-neutral-500";
 
         // ⭐ Favorit: nur in aktiver Runde.
         // Favorit ist der Spieler, der mehr "grüne Werte" hat (Winrate + M-Winrate). Bei Gleichstand: kein Icon.
@@ -9075,13 +9171,49 @@ const isRoundActive = matchStatusRaw !== "finished";
 
 return (
           <>
-            <span className="text-neutral-500">
-              Turnier-Winrate <span className={tCls}>{fmtPct(t)}</span>
-            </span>
-            <span className="text-neutral-500">
-              Flipper-Winrate <span className={mCls}>{fmtPct(mwr?.winrate)}</span>
-              {mpCount > 0 ? ` (${mpCount})` : ""}
-            </span>
+            {/* Siege in drei Zeilen: Turnier · dieser Flipper (alle Formate) · dieser Flipper nur im Format */}
+            {(() => {
+              const tc = profileId ? tCountByProfile?.[profileId] : null;
+              const fmtName = tournamentFormatLabel(tournament?.format).split(" ").slice(1).join(" ") || String(tournament?.format ?? "");
+              const fmtQuote = (w: number, n: number) => (n > 0 ? fmtPct(Math.round((w / n) * 1000) / 10) : "—");
+              const line = (label: string, title: string, pctEl: React.ReactNode, w: number | null, n: number | null) => (
+                // Zahlen zuerst (feste Breiten → stehen sauber untereinander), dann der Text
+                <div className="cursor-help whitespace-nowrap" title={title}>
+                  <span className="inline-block w-12 text-right">{pctEl}</span>
+                  <span className="inline-block w-12 pl-1.5">{n != null && n > 0 ? `${w ?? 0}/${n}` : ""}</span>
+                  <span>{label}</span>
+                </div>
+              );
+              return (
+                <>
+                  {line(
+                    "Siege im Turnier",
+                    "Siegquote in diesem Turnier (Siege/Spiele)",
+                    <span className={tCls}>{fmtPct(t)}</span>,
+                    tc?.w ?? null,
+                    tc?.m ?? null
+                  )}
+                  {machineName
+                    ? line(
+                        `Siege ${machineName}`,
+                        "an diesem Flipper an dieser Location, alle Formate (Siege/Spiele)",
+                        mpCount > 0 ? <span className={mCls}>{fmtPct(mwr?.winrate)}</span> : <span className="text-neutral-400">—</span>,
+                        mwr?.wins ?? 0,
+                        mpCount
+                      )
+                    : null}
+                  {machineName && typeof mwr?.matchesFormat === "number" && mwr.matchesFormat > 0
+                    ? line(
+                        `Siege ${machineName} ${fmtName}`,
+                        `an diesem Flipper an dieser Location, nur ${fmtName} (Siege/Spiele)`,
+                        <span className={fCls}>{fmtQuote(mwr.winsFormat ?? 0, mwr.matchesFormat)}</span>,
+                        mwr.winsFormat ?? 0,
+                        mwr.matchesFormat
+                      )
+                    : null}
+                </>
+              );
+            })()}
             {winrateLoading ? <span className="text-neutral-400">lädt…</span> : null}
           </>
         );
@@ -9102,15 +9234,40 @@ return (
             : ""}
         </span>
       ) : null}
-      <PersonalBestLine
-        hidden={tournament?.status === "finished"}
+      {PLAYER_ROW_LAYOUT === "balken" ? (
+        <PersonalBestLine
+          hidden={tournament?.status === "finished"}
+          code={code}
+          profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
+          machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
+          liveEntries={liveRecordEntries}
+          matchId={m?.id ? String(m.id) : null}
+        />
+      ) : null}
+    </div>
+    {/* 🧱 Kennzahlen-Leiste (Anordnung "kacheln" bzw. "mix") */}
+    {PLAYER_ROW_LAYOUT !== "balken" && !isTimeplayFormat ? (
+      <PlayerStatTiles
+        showChance={PLAYER_ROW_LAYOUT === "kacheln" && chanceOn}
+        chance={
+          favInfo?.myRow
+            ? { value: favInfo.myRow.chance, tone: favInfo.tone, title: chanceShortTitle(favInfo.myRow, favInfo.isFav), favorite: favInfo.isFav }
+            : null
+        }
+        t={wrInfo.t}
+        tTone={wrInfo.tTone}
+        m={wrInfo.m}
+        mCount={wrInfo.n}
+        mTone={wrInfo.mTone}
+        winrateLoading={winrateLoading}
         code={code}
         profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
         machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
         liveEntries={liveRecordEntries}
         matchId={m?.id ? String(m.id) : null}
+        finished={tournament?.status === "finished"}
       />
-    </div>
+    ) : null}
 </div>
 </div>
 
@@ -9120,19 +9277,19 @@ return (
 
 
 
-                    <div className="flex flex-col gap-1">
+                    <div className="ml-auto flex flex-col items-end gap-1">
 
 
 
 
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center justify-end gap-1.5">
                       <PointsGainBadge
                         points={typeof pos === "number" && pos > 0 ? matchScheme[pos - 1] ?? 0 : null}
                       />
                       <Select
                         value={pos ?? ""}
-                        className="rounded-lg h-10 max-h-10 w--[160px] max-w-[160px]  px-1 py-1 text-xs sm:px-3 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8"
+                        className="rounded-lg h-10 max-h-10 !w-[112px] !max-w-[112px] px-1 py-1 text-xs sm:px-2 sm:py-2 sm:text-xs sm:h-8 sm:max-h-8"
                         disabled={locked || isEliminationFormat || isRotationFormat || (mps ?? []).some((x: any) => playersById?.[x.player_id]?.isBot)}
                         title={(mps ?? []).some((x: any) => playersById?.[x.player_id]?.isBot) ? "🤖 Mit Bot: Platz ergibt sich aus den Scores" : undefined}
                         //onChange={async (e) => {
@@ -13946,7 +14103,9 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
         })
         .filter(Boolean) as any[];
       // gleiche Regel wie das Abzeichen (inkl. direkter Bilanz am Flipper)
-      const favRes = pickFavorite(favCands, { h2h: h2hFromPairMachine(rivData?.pairMachine, machineName) });
+      const favRes = pickFavorite(favCands, {
+        h2h: h2hFromPairMachine(rivData?.pairMachine, machineName, data?.tournament?.format, tournamentFormatLabel(data?.tournament?.format)),
+      });
       const favName = favRes ? playersByIdLocal[favRes.key]?.name : null;
 
       if (favRes && favName) {

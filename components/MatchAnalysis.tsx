@@ -23,6 +23,29 @@ import {
 const pct = (p: number) => `${Math.round(p * 100)} %`;
 const pct1 = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v * 10) / 10}`.replace(".", ",") + " %");
 const signPts = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(Math.round(n))}`;
+/** Veränderung der Siegchance in Prozentpunkten (z. B. "+3 %" / "−10 %") */
+const signPct = (d: number) => {
+  const v = Math.round(d * 100);
+  return v === 0 ? "±0 %" : `${v > 0 ? "+" : "−"}${Math.abs(v)} %`;
+};
+/** Wirkung der Bausteine auf die Siegchance – Schritt für Schritt (Elo → + Flipper → + Form → + Bilanz) */
+function pctSteps(c: { eloDiff: number; mPart: number; tPart: number; base: number; chance: number }) {
+  const elo = eloChance(c.eloDiff);
+  const withM = eloChance(c.eloDiff + c.mPart);
+  const withT = eloChance(c.base);
+  return { m: withM - elo, t: withT - withM, h: c.chance - withT };
+}
+function PctNote({ d }: { d: number }) {
+  const v = Math.round(d * 100);
+  return (
+    <span
+      className={"block text-[10px] font-semibold " + (v > 0 ? "text-emerald-600" : v < 0 ? "text-rose-500" : "text-neutral-400")}
+      title="So viel verschiebt dieser Baustein die Siegchance (in Prozentpunkten)"
+    >
+      ≙ {signPct(d)}
+    </span>
+  );
+}
 
 type Bal = { w: number; l: number; d: number; n: number; pct: number | null };
 function bal(meWins: number, otherWins: number, duels: number): Bal {
@@ -80,7 +103,7 @@ export default function MatchAnalysis({
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) pairs.push({ a: list[i], b: list[j] });
 
   // 2) Favoriten-Berechnung
-  const h2h = h2hFromPairMachine(riv.pairMachine, machineName);
+  const h2h = h2hFromPairMachine(riv.pairMachine, machineName, fmtKey || null, fmtKey ? formatLabel(fmtKey) : null);
   const { rows, favoriteKey, lead } = favoriteBreakdown(list, { h2h });
 
   const th = "px-2 py-1 text-left font-normal text-neutral-400";
@@ -289,15 +312,26 @@ export default function MatchAnalysis({
                             )}
                           </td>
                           <td className={td}>
-                            {signPts(calc.mPart)} <span className="text-neutral-400">Pkt.</span>
+                            {signPts(calc.mPart)} <span className="text-neutral-400">Elo-Pkt.</span>
+                            <PctNote d={pctSteps(calc).m} />
                           </td>
                           <td className={td}>
-                            {signPts(calc.tPart)} <span className="text-neutral-400">Pkt.</span>
+                            {signPts(calc.tPart)} <span className="text-neutral-400">Elo-Pkt.</span>
+                            <PctNote d={pctSteps(calc).t} />
                           </td>
                           <td className={td}>
                             {calc.h2h ? (
                               <>
                                 {calc.h2h.w} : {calc.h2h.l}
+                                {calc.h2h.fmt ? (
+                                  <span
+                                    className="block text-[10px] text-neutral-500"
+                                    title={`Bilanz nur im Format des Turniers – gleicht die Gesamtbilanz an, je mehr Duelle desto stärker (${calc.h2h.fmt.n} Duelle → ${Math.round(calc.h2h.fmt.share * 100)} %)`}
+                                  >
+                                    davon {calc.h2h.fmt.label ? calc.h2h.fmt.label.split(" ")[0] : "Format"} {calc.h2h.fmt.w} : {calc.h2h.fmt.l}, zählt{" "}
+                                    {Math.round(calc.h2h.fmt.share * 100)} %
+                                  </span>
+                                ) : null}
                                 <span className="text-neutral-400">
                                   {" "}
                                   → {pct(calc.h2h.chance)}, zählt {Math.round(calc.h2h.weight * 100)} %
@@ -306,6 +340,7 @@ export default function MatchAnalysis({
                             ) : (
                               <span className="text-neutral-300">noch keine</span>
                             )}
+                            {calc.h2h ? <PctNote d={pctSteps(calc).h} /> : null}
                           </td>
                           <td className={td + " text-right font-bold " + (calc.chance > 0.5 ? "text-emerald-600" : calc.chance < 0.5 ? "text-rose-400" : "")}>
                             {pct(calc.chance)}

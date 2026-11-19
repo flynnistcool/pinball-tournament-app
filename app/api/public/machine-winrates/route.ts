@@ -36,7 +36,7 @@ export async function GET(req: Request) {
 
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, location_id")
+    .select("id, location_id, format")
     .eq("code", code)
     .maybeSingle();
   if (tErr) return noStoreJson({ error: tErr.message, rows: [] }, { status: 500 });
@@ -47,7 +47,7 @@ export async function GET(req: Request) {
     await Promise.all([
       sb.from("players").select("profile_id").eq("tournament_id", t.id),
       sb.from("machines").select("name").eq("tournament_id", t.id),
-      sb.from("tournaments").select("id").eq("location_id", t.location_id),
+      sb.from("tournaments").select("id, format").eq("location_id", t.location_id),
     ]);
   const firstErr = pErr ?? mErr ?? lErr;
   if (firstErr) return noStoreJson({ error: firstErr.message, rows: [] }, { status: 500 });
@@ -59,6 +59,11 @@ export async function GET(req: Request) {
     new Set((machines ?? []).map((m) => String(m.name ?? "").trim()).filter(Boolean))
   );
   const tournamentIds = (tourneys ?? []).map((x) => String(x.id)).filter(Boolean);
+  // 🎰 nur im Format des laufenden Turniers (matchesFormat / winsFormat)
+  const fmt = String((t as { format?: string | null }).format ?? "").toLowerCase();
+  const formatIds = new Set(
+    (tourneys ?? []).filter((x: { format?: string | null }) => fmt && String(x.format ?? "").toLowerCase() === fmt).map((x) => String(x.id))
+  );
   if (!profileIds.length || !machineNames.length || !tournamentIds.length) {
     return noStoreJson({ rows: [] });
   }
@@ -94,7 +99,10 @@ export async function GET(req: Request) {
   const ex = await loadStatsExclusions(sb);
   const hc = await loadHumanMatchContext(sb, ex, Array.from(new Set(data.map((r) => String(r.match_id)))));
 
-  const acc: Record<string, { profileId: string; machineName: string; matchesPlayed: number; wins: number }> = {};
+  const acc: Record<
+    string,
+    { profileId: string; machineName: string; matchesPlayed: number; wins: number; matchesFormat: number; winsFormat: number }
+  > = {};
   for (const raw of data) {
     if (isExcludedProfile(ex, raw?.players?.profile_id) || hc.isExcludedPlayer(String(raw.player_id))) continue;
     const pos = hc.position(String(raw.match_id), String(raw.player_id), raw.position);
@@ -104,9 +112,14 @@ export async function GET(req: Request) {
     const machineName = String(row?.matches?.machines?.name ?? "");
     if (!profileId || !machineName) continue;
     const key = `${profileId}__${machineName}`;
-    acc[key] ||= { profileId, machineName, matchesPlayed: 0, wins: 0 };
+    acc[key] ||= { profileId, machineName, matchesPlayed: 0, wins: 0, matchesFormat: 0, winsFormat: 0 };
     acc[key].matchesPlayed += 1;
     if (Number(row.position) === 1) acc[key].wins += 1;
+    const tid = String((raw as { matches?: { rounds?: { tournament_id?: string | null } | null } | null }).matches?.rounds?.tournament_id ?? "");
+    if (formatIds.has(tid)) {
+      acc[key].matchesFormat += 1;
+      if (Number(row.position) === 1) acc[key].winsFormat += 1;
+    }
   }
 
   const rows = Object.values(acc).map((r) => ({
