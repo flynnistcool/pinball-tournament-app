@@ -3,6 +3,8 @@
 //   → { ok: true, mode, top, bottom, topColor, bottomColor, poll, tournament,
 //       timer: { phase, toStart, toEnd }, active: "NAME" | null, scores: [{ name, score }] }
 //   timer/active/scores nur bei Round the Pinball (für 3-2-1-LOS, Schluss-Countdown, "Score eintragen")
+//   mode "blockdone" + blocks: [{ block, name, score }] – alle Durchgänge fertig, Highscores je Block
+//   mode "final" + ranking: [{ place, name, points }], tournamentName – Turnier gerade beendet (≤ 24 h)
 // Öffentlich (ohne Login, wie TV/Handy) – liefert nur Texte, die ohnehin am Infobildschirm stehen.
 //
 // flipper  = Flipper-Name wie in der App (Groß/Klein egal)
@@ -20,8 +22,11 @@ import {
   displayText,
   displayTimerInfo,
   flipperDisplay,
+  tournamentRanking,
+  type BlockHighscore,
   type DisplayRecord,
   type DisplayTimer,
+  type RankingEntry,
 } from "@/lib/flipperDisplay";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +39,8 @@ const POLL_SEC = 10;
 /** Allzeit-Rekorde ändern sich nur, wenn ein Turnier beendet wird → 5 Min. zwischenspeichern (je Location) */
 const ALLTIME_TTL_MS = 5 * 60_000;
 const NIL_ID = "00000000-0000-0000-0000-000000000000";
+/** Siegerliste nach Turnierende: höchstens so lange nach dem Anlegen des Turniers (danach wieder Allzeit) */
+const FINAL_SHOW_MS = 24 * 60 * 60_000;
 
 const allTimeCache = new Map<string, { at: number; records: Record<string, { score: number; holder: string | null }> }>();
 
@@ -97,6 +104,9 @@ export async function GET(req: Request) {
     let activePlayer: string | null = null;
     let tournamentBest: DisplayRecord | null = null;
     let scores: { name: string; score: number }[] = [];
+    let blocksDone: BlockHighscore[] | null = null;
+    let final: { name: string | null; ranking: RankingEntry[] } | null = null;
+    let finalCode: string | null = null;
 
     if (t) {
       const { data: machines, error: maErr } = await sb
@@ -113,7 +123,7 @@ export async function GET(req: Request) {
 
       const { data: rounds, error: rErr } = await sb
         .from("rounds")
-        .select("id, created_at")
+        .select("id, created_at, status")
         .eq("tournament_id", t.id);
       if (rErr) return fail(`Runden laden fehlgeschlagen: ${rErr.message}`, 500);
       const roundIds = (rounds ?? []).map((r: { id: string }) => String(r.id));
@@ -133,12 +143,13 @@ export async function GET(req: Request) {
         const inBlock = (id: string) => !newest || blocks?.[String(id)] === newest;
         const blockMatches = mRes.data.filter((m) => inBlock(String(m.id)));
         const matchIds = blockMatches.map((m) => String(m.id));
-        const mpRes = await fetchAllIn<{
+        const allMatchIds = mRes.data.map((m) => String(m.id));
+        const mpAll = await fetchAllIn<{
           match_id: string;
           player_id: string;
           score: number | string | null;
           start_position: number | null;
-        }>(matchIds, (chunk) =>
+        }>(allMatchIds, (chunk) =>
           sb
             .from("match_players")
             .select("match_id, player_id, score, start_position")
@@ -146,11 +157,36 @@ export async function GET(req: Request) {
             .order("match_id")
             .order("player_id")
         );
-        if (mpRes.error) return fail(`Scores laden fehlgeschlagen: ${mpRes.error.message}`, 500);
+        if (mpAll.error) return fail(`Scores laden fehlgeschlagen: ${mpAll.error.message}`, 500);
+        const blockIdSet = new Set(matchIds);
+        const mpRes = { data: mpAll.data.filter((mp) => blockIdSet.has(String(mp.match_id))) };
 
         const { data: players, error: pErr } = await sb.from("players").select("id, name").eq("tournament_id", t.id);
         if (pErr) return fail(`Spieler laden fehlgeschlagen: ${pErr.message}`, 500);
         const nameOf = new Map((players ?? []).map((p: { id: string; name: string | null }) => [String(p.id), p.name ?? null]));
+
+        // 🧱 Alle Durchgänge fertig (keine offene Runde) → Highscores dieses Flippers je Block
+        const allDone =
+          t.format === "rotation" && (rounds ?? []).every((r: { status: string | null }) => r.status !== "open");
+        if (allDone) {
+          const blockKeys = Array.from(new Set(Object.values(blocks ?? {}))).sort();
+          const blockNo = (mid: string) => (blocks ? blockKeys.indexOf(blocks[mid] ?? "") + 1 : 1);
+          const mineAll = new Set(
+            mRes.data.filter((m) => m.machine_id && mine.has(String(m.machine_id))).map((m) => String(m.id))
+          );
+          const best = new Map<number, { s: number; pid: string }>();
+          for (const mp of mpAll.data) {
+            if (!mineAll.has(String(mp.match_id))) continue;
+            const s = toScore(mp.score);
+            if (s == null) continue;
+            const b = blockNo(String(mp.match_id));
+            const cur = best.get(b);
+            if (!cur || s > cur.s) best.set(b, { s, pid: String(mp.player_id) });
+          }
+          blocksDone = Array.from(best.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([block, v]) => ({ block, name: displayText(nameOf.get(v.pid)) || "?", score: v.s }));
+        }
 
         const myMatches = new Set(
           blockMatches.filter((m) => m.machine_id && mine.has(String(m.machine_id))).map((m) => String(m.id))
@@ -186,6 +222,54 @@ export async function GET(req: Request) {
       }
     }
 
+    // 🏁 Kein laufendes Turnier: gerade beendetes Round the Pinball (≤ 24 h) → Siegerliste
+    if (!t) {
+      let fq = sb
+        .from("tournaments")
+        .select("id, code, name, format, created_at")
+        .eq("status", "finished")
+        .gte("created_at", new Date(Date.now() - FINAL_SHOW_MS).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (locationId) fq = fq.eq("location_id", locationId);
+      const { data: fts, error: fErr } = await fq;
+      if (fErr) return fail(`Turnier laden fehlgeschlagen: ${fErr.message}`, 500);
+      const ft = (fts ?? [])[0] as { id: string; code: string; name: string | null; format: string | null } | undefined;
+      if (ft && ft.format === "rotation") {
+        const [{ data: fPlayers, error: fpErr }, { data: fRounds, error: frErr }] = await Promise.all([
+          sb.from("players").select("id, name").eq("tournament_id", ft.id),
+          sb.from("rounds").select("id, format").eq("tournament_id", ft.id),
+        ]);
+        if (fpErr || frErr) return fail("Turnierdaten laden fehlgeschlagen", 500);
+        const fRoundIds = (fRounds ?? []).map((r: { id: string }) => String(r.id));
+        const fm = await fetchAllIn<{ id: string; round_id: string }>(fRoundIds, (chunk) =>
+          sb.from("matches").select("id, round_id").in("round_id", chunk).order("id")
+        );
+        if (fm.error) return fail(`Matches laden fehlgeschlagen: ${fm.error.message}`, 500);
+        const fmp = await fetchAllIn<{ match_id: string; player_id: string; position: number | null }>(
+          fm.data.map((m) => String(m.id)),
+          (chunk) =>
+            sb
+              .from("match_players")
+              .select("match_id, player_id, position")
+              .in("match_id", chunk)
+              .order("match_id")
+              .order("player_id")
+        );
+        if (fmp.error) return fail(`Plätze laden fehlgeschlagen: ${fmp.error.message}`, 500);
+        const ranking = tournamentRanking(
+          (fPlayers ?? []) as { id: string; name: string | null }[],
+          (fRounds ?? []) as { id: string; format: string | null }[],
+          fm.data,
+          fmp.data
+        );
+        if (ranking.length) {
+          final = { name: displayText(ft.name), ranking };
+          finalCode = String(ft.code);
+        }
+      }
+    }
+
     // ♾️ Allzeit-Highscore (Location des Turniers, sonst die angegebene)
     let allTime: DisplayRecord | null = null;
     const recLocation = t?.location_id ? String(t.location_id) : locationId;
@@ -205,6 +289,8 @@ export async function GET(req: Request) {
       tournamentBest,
       allTime,
       now: Date.now(),
+      blocksDone,
+      final,
     });
 
     // Animationen am Display (3-2-1-LOS, letzte 60 s, Score eintragen): nur bei Round the Pinball mit diesem Flipper
@@ -216,10 +302,14 @@ export async function GET(req: Request) {
         ok: true,
         ...out,
         poll: POLL_SEC,
-        tournament: t ? String(t.code) : null,
+        tournament: t ? String(t.code) : finalCode,
         timer,
         active: rtp && activePlayer ? displayText(activePlayer) : null,
         scores: rtp ? scores : [],
+        // 🧱 alle Durchgänge fertig: Highscores je Block · 🏁 Turnier beendet: Siegerliste
+        blocks: out.mode === "blockdone" ? blocksDone ?? [] : [],
+        ranking: out.mode === "final" ? final?.ranking ?? [] : [],
+        tournamentName: out.mode === "final" ? final?.name ?? null : null,
       },
       { headers: NO_STORE }
     );

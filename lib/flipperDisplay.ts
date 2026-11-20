@@ -10,7 +10,12 @@
 //   turn     – Timer NICHT gestartet, an diesem Flipper ist jemand dran (blau) → Spruch + Name
 //   highscore– Start gedrückt (Countdown), Timer läuft oder pausiert (oder niemand dran) → Turnier-Highscore
 //
+//   blockdone– alle Durchgänge fertig (Turnier läuft noch) → Highscores dieses Flippers je Block
+//   final    – Turnier gerade beendet (≤ 24 h, kein neues angelegt) → Siegerliste
+//
 // Die eingebaute Display-Schrift kennt nur ASCII → Umlaute werden zu AE/OE/UE, Emojis fallen weg.
+
+import { matchPoints } from "@/lib/points";
 
 export type DisplayRecord = { score: number; holder: string | null };
 
@@ -48,9 +53,50 @@ export type DisplayInput = {
   /** Allzeit-Highscore des Flippers an der Location (beendete Turniere) */
   allTime: DisplayRecord | null;
   now: number;
+  /** 🧱 alle Durchgänge fertig (Turnier läuft noch): Highscores dieses Flippers je Block */
+  blocksDone?: BlockHighscore[] | null;
+  /** 🏁 gerade beendetes Turnier (Round the Pinball): Name + Platzierungen */
+  final?: { name: string | null; ranking: RankingEntry[] } | null;
 };
 
-export type DisplayMode = "alltime" | "lobby" | "turn" | "highscore";
+export type DisplayMode = "alltime" | "lobby" | "turn" | "highscore" | "blockdone" | "final";
+
+/** 🧱 Block fertig: bester Score an diesem Flipper je Block */
+export type BlockHighscore = { block: number; name: string; score: number };
+/** 🏁 Turnier beendet: Platzierung (Punkte wie TV/Leaderboard) */
+export type RankingEntry = { place: number; name: string; points: number };
+
+/**
+ * Platzierungen eines Turniers: Punkte je gesetzter Position (lib/points.ts matchPoints, wie TV/Statistik),
+ * gleiche Punkte = gleicher Platz (1, 1, 3 …). Namen schon fürs Display umgeschrieben.
+ */
+export function tournamentRanking(
+  players: readonly { id: string; name: string | null }[],
+  rounds: readonly { id: string; format?: string | null }[],
+  matches: readonly { id: string; round_id: string }[],
+  mps: readonly { match_id: string; player_id: string; position: number | null }[]
+): RankingEntry[] {
+  const fmtOfRound = new Map(rounds.map((r) => [String(r.id), r.format ?? null]));
+  const roundOfMatch = new Map(matches.map((m) => [String(m.id), String(m.round_id)]));
+  const sizeOf = new Map<string, number>();
+  for (const mp of mps) sizeOf.set(String(mp.match_id), (sizeOf.get(String(mp.match_id)) ?? 0) + 1);
+  const pts = new Map<string, number>();
+  for (const mp of mps) {
+    if (mp.position == null) continue;
+    const fmt = fmtOfRound.get(roundOfMatch.get(String(mp.match_id)) ?? "") ?? null;
+    const p = matchPoints(Number(mp.position), sizeOf.get(String(mp.match_id)) ?? 0, fmt);
+    pts.set(String(mp.player_id), (pts.get(String(mp.player_id)) ?? 0) + p);
+  }
+  const list = players
+    .map((p) => ({ name: displayText(p.name) || "?", points: pts.get(String(p.id)) ?? 0 }))
+    .sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+  const out: RankingEntry[] = [];
+  list.forEach((e, i) => {
+    const prev = out[i - 1];
+    out.push({ ...e, place: prev && prev.points === e.points ? prev.place : i + 1 });
+  });
+  return out;
+}
 
 export type DisplayOutput = {
   mode: DisplayMode;
@@ -168,6 +214,28 @@ function allTimeView(flipper: string, allTime: DisplayRecord | null): DisplayOut
 
 export function flipperDisplay(input: DisplayInput): DisplayOutput {
   const { tournament } = input;
+  // 🏁 Turnier beendet → Siegerliste (das Gerät spielt sie animiert ab; top/bottom = einfache Anzeige)
+  if (input.final && input.final.ranking.length) {
+    const w = input.final.ranking[0];
+    return {
+      mode: "final",
+      top: `TURNIER BEENDET - SIEGER ${w.name}`,
+      bottom: String(w.points),
+      topColor: YELLOW,
+      bottomColor: YELLOW,
+    };
+  }
+  // 🧱 alle Durchgänge fertig → Highscores je Block (das Gerät wechselt alle 5 s)
+  if (input.blocksDone && input.blocksDone.length && tournament?.format === "rotation") {
+    const b = input.blocksDone[input.blocksDone.length - 1];
+    return {
+      mode: "blockdone",
+      top: `BLOCK ${b.block} HIGHSCORE  ${b.name}`,
+      bottom: displayScore(b.score),
+      topColor: ORANGE,
+      bottomColor: BLUE,
+    };
+  }
   // zunächst nur Round the Pinball – alles andere: Allzeit-Highscore
   if (!tournament || tournament.format !== "rotation" || !input.inTournament) {
     return allTimeView(input.flipper, input.allTime);
