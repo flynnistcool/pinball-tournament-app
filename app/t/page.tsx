@@ -60,6 +60,7 @@ import {
 } from "@/lib/speechTexts";
 import { findHalfSavedMatches } from "@/lib/halfSaved";
 import RotationRoundsDialog from "@/components/RotationRoundsDialog";
+import RotationMoreRoundsConfirm from "@/components/RotationMoreRoundsConfirm";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import LocationsTab from "./LocationsTab";
 import PlayersTab from "./PlayersTab";
@@ -13971,6 +13972,8 @@ if (rotEndTimeoutRef.current != null) {
 
   // 🎰 Round the Pinball: Fenster "Anzahl Flipper" vor dem Erzeugen (components/RotationRoundsDialog.tsx)
   const [rotRoundsDialogOpen, setRotRoundsDialogOpen] = useState(false);
+  // 🧱 Rückfrage "Alle Durchgänge gespielt – weitermachen?" vor dem Nachlegen
+  const [rotMoreConfirmOpen, setRotMoreConfirmOpen] = useState(false);
   const [rotStartSignal, setRotStartSignal] = useState<number | null>(null);
   const rotDialogPlayers = (data?.players ?? []).filter((p: any) => p?.active).length;
   const rotDialogMachines = (data?.machines ?? []).filter((m: any) => m?.active).length;
@@ -14016,8 +14019,10 @@ if (rotEndTimeoutRef.current != null) {
     }
 
     // Rotation: erst nach der Anzahl Flipper fragen (Fenster ruft createRound danach mit der Zahl auf)
+    // 🧱 Schon Durchgänge gespielt → vorher nachfragen, ob wirklich weitere hinzukommen sollen
     if (isRotationFormat && rotationMachineCount == null) {
-      setRotRoundsDialogOpen(true);
+      if ((rounds ?? []).length > 0) setRotMoreConfirmOpen(true);
+      else setRotRoundsDialogOpen(true);
       return;
     }
 
@@ -14430,6 +14435,23 @@ const tasksById = useMemo(() => {
 
 
 
+
+      <RotationMoreRoundsConfirm
+        open={rotMoreConfirmOpen}
+        wavesDone={
+          rotationProgress(
+            (matches ?? []).map((x: any) => String(x.id)),
+            (matchPlayers ?? []) as any[],
+            undefined,
+            rotationBlocksFrom(rounds ?? [], matches ?? [])
+          ).total
+        }
+        onNo={() => setRotMoreConfirmOpen(false)}
+        onYes={() => {
+          setRotMoreConfirmOpen(false);
+          setRotRoundsDialogOpen(true);
+        }}
+      />
 
       <RotationRoundsDialog
         open={rotRoundsDialogOpen}
