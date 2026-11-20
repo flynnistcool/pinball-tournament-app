@@ -263,6 +263,8 @@ type Row = {
   real: number;
   extra: number;
   total: number;
+  /** 🧱 nachgelegte Runden: Punkte je Block (nur bei mehreren Blöcken) */
+  blockPts?: { real: number; total: number }[];
   place: number;
   eloStart: number | null; // Elo vor dem Turnier (tournament_ratings)
   eloNow: number | null; // aktuelle Elo im Profil (wird nach jeder fertigen Runde neu berechnet)
@@ -438,6 +440,31 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     // Vorläufige Zusatzpunkte (nur Rotation)
     const extra = isRotation ? computeProvisionalRotationPoints(matches, mps) : {};
 
+    // 🧱 nachgelegte Runden: Punkte je Block (echte + vorläufige), für die Spalten "B1", "B2" … vor der Summe
+    const rotBlocks = isRotation ? rotationBlocksFrom(rounds, matches) : undefined;
+    const rotBlockKeys = Array.from(new Set(Object.values(rotBlocks ?? {}))).sort();
+    const blockPtsOf: Record<string, { real: number; total: number }[]> = {};
+    if (rotBlocks && rotBlockKeys.length > 1) {
+      rotBlockKeys.forEach((key, bi) => {
+        const bMatches = matches.filter((m) => rotBlocks[m.id] === key);
+        const bIds = new Set(bMatches.map((m) => m.id));
+        const bExtra = computeProvisionalRotationPoints(
+          bMatches,
+          mps.filter((mp) => bIds.has(mp.match_id))
+        );
+        for (const p of players) {
+          let r = 0;
+          for (const m of bMatches) {
+            const list = mpsByMatch[m.id] ?? [];
+            const mine = list.find((x) => x.player_id === p.id);
+            if (mine?.position != null)
+              r += matchPoints(mine.position, list.length, roundById[m.round_id]?.format ?? null);
+          }
+          (blockPtsOf[p.id] ||= [])[bi] = { real: r, total: r + (bExtra[p.id] ?? 0) };
+        }
+      });
+    }
+
     // Leaderboard-Zeilen
     const rowsUnsorted = players.map((p) => {
       const prof = p.profile_id ? profileById[p.profile_id] : undefined;
@@ -451,6 +478,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
         real: r,
         extra: e,
         total: r + e,
+        blockPts: blockPtsOf[p.id],
         place: 0,
         eloStart: p.profile_id != null ? startEloByProfile[p.profile_id] ?? null : null,
         eloNow:
@@ -530,24 +558,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
           block: blockOf ? blockKeys.indexOf(blockOf[m.id] ?? "") + 1 : 0,
         });
       }
-
-      // Gleicher Flipper mehrfach (z. B. nachgelegter Block): Turnier-Highscore über alle seine Spalten
-      const bestByName = new Map<string, { s: number; holder: string }>();
-      for (const c of columns) {
-        if (c.highscore == null) continue;
-        const k = c.machineName.trim().toLowerCase();
-        const cur = bestByName.get(k);
-        if (!cur || c.highscore > cur.s) bestByName.set(k, { s: c.highscore, holder: c.holder });
-        else if (c.highscore === cur.s && c.holder && !cur.holder.split(" & ").includes(c.holder))
-          bestByName.set(k, { s: cur.s, holder: `${cur.holder} & ${c.holder}` });
-      }
-      for (const c of columns) {
-        const best = bestByName.get(c.machineName.trim().toLowerCase());
-        if (best) {
-          c.highscore = best.s;
-          c.holder = best.holder;
-        }
-      }
+      // 🧱 Jeder Block steht für sich: Turnier-Highscore je Spalte (gleicher Flipper in Block 2 beginnt neu)
     }
 
     return { rows, columns, eloOn };
@@ -1913,7 +1924,10 @@ function RotationTable({
                   </div>
                 </th>
               ))}
-              <th />
+              {/* über den Block-Punktespalten + der Summe */}
+              <th colSpan={lastBlock + 1} className="border-l border-white/10 bg-white/[0.04] px-2 pt-3">
+                <div className="text-center text-xs font-semibold uppercase tracking-widest text-white/40">Punkte</div>
+              </th>
             </tr>
           ) : null}
           <tr className="align-bottom">
@@ -1958,6 +1972,22 @@ function RotationTable({
                 </div>
               </th>
             ))}
+            {/* 🧱 Punkte je Block (nur bei nachgelegten Runden), danach die Summe */}
+            {lastBlock > 1
+              ? Array.from({ length: lastBlock }, (_, i) => (
+                  <th
+                    key={`bp-${i}`}
+                    className={
+                      "w-px whitespace-nowrap bg-white/[0.04] px-2 pb-3 pt-4 text-right text-xs font-semibold uppercase tracking-normal " +
+                      (i === 0 ? "border-l border-white/10 " : "") +
+                      (i + 1 < lastBlock ? "text-white/40" : "text-sky-200/80")
+                    }
+                    title={`Punkte aus Block ${i + 1}`}
+                  >
+                    B{i + 1}
+                  </th>
+                ))
+              : null}
             {/* nur EINE Punktespalte: vor dem Ende "vorl." (vorläufig), danach "Pkt" (endgültig) */}
             <th
               className={
@@ -2056,6 +2086,24 @@ function RotationTable({
                     </td>
                   );
                 })}
+                {lastBlock > 1
+                  ? Array.from({ length: lastBlock }, (_, i) => {
+                      const bp = r.blockPts?.[i];
+                      const v = bp ? (finished ? bp.real : bp.total) : 0;
+                      return (
+                        <td
+                          key={`bp-${i}`}
+                          className={
+                            "w-px whitespace-nowrap bg-white/[0.04] px-2 py-2 text-right text-[1.05em] font-bold tabular-nums " +
+                            (i === 0 ? "border-l border-white/10 " : "") +
+                            (i + 1 < lastBlock ? "text-white/45" : "text-sky-100/90")
+                          }
+                        >
+                          {v}
+                        </td>
+                      );
+                    })
+                  : null}
                 <td
                   className={`w-px whitespace-nowrap border-l border-white/10 bg-white/[0.04] px-2.5 py-2 text-right text-[1.4em] font-extrabold tabular-nums ${
                     !finished && r.extra > 0 ? "text-emerald-300" : "text-white"

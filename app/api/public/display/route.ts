@@ -15,7 +15,7 @@ import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { loadMachineRecords } from "@/lib/feedContextServer";
 import { machineKey } from "@/lib/machineStats";
-import { rotationActiveMap } from "@/lib/rotationTurn";
+import { rotationActiveMap, rotationBlocksFrom } from "@/lib/rotationTurn";
 import {
   displayText,
   displayTimerInfo,
@@ -111,17 +111,28 @@ export async function GET(req: Request) {
       );
       inTournament = mine.size > 0;
 
-      const { data: rounds, error: rErr } = await sb.from("rounds").select("id").eq("tournament_id", t.id);
+      const { data: rounds, error: rErr } = await sb
+        .from("rounds")
+        .select("id, created_at")
+        .eq("tournament_id", t.id);
       if (rErr) return fail(`Runden laden fehlgeschlagen: ${rErr.message}`, 500);
       const roundIds = (rounds ?? []).map((r: { id: string }) => String(r.id));
       hasRounds = roundIds.length > 0;
 
       if (inTournament && hasRounds) {
-        const mRes = await fetchAllIn<{ id: string; machine_id: string | null }>(roundIds, (chunk) =>
-          sb.from("matches").select("id, machine_id").in("round_id", chunk).order("id")
+        const mRes = await fetchAllIn<{ id: string; round_id: string; machine_id: string | null }>(roundIds, (chunk) =>
+          sb.from("matches").select("id, round_id, machine_id").in("round_id", chunk).order("id")
         );
         if (mRes.error) return fail(`Matches laden fehlgeschlagen: ${mRes.error.message}`, 500);
-        const matchIds = mRes.data.map((m) => String(m.id));
+        // 🧱 nachgelegte Runden: jeder Block steht für sich – nur der neueste Block zählt (Highscore, wer dran ist)
+        const blocks = rotationBlocksFrom(
+          (rounds ?? []) as { id: string; created_at: string | null }[],
+          mRes.data
+        );
+        const newest = blocks ? Object.values(blocks).sort().pop() : undefined;
+        const inBlock = (id: string) => !newest || blocks?.[String(id)] === newest;
+        const blockMatches = mRes.data.filter((m) => inBlock(String(m.id)));
+        const matchIds = blockMatches.map((m) => String(m.id));
         const mpRes = await fetchAllIn<{
           match_id: string;
           player_id: string;
@@ -141,7 +152,11 @@ export async function GET(req: Request) {
         if (pErr) return fail(`Spieler laden fehlgeschlagen: ${pErr.message}`, 500);
         const nameOf = new Map((players ?? []).map((p: { id: string; name: string | null }) => [String(p.id), p.name ?? null]));
 
-        const myMatches = new Set(mRes.data.filter((m) => m.machine_id && mine.has(String(m.machine_id))).map((m) => String(m.id)));
+        const myMatches = new Set(
+          blockMatches.filter((m) => m.machine_id && mine.has(String(m.machine_id))).map((m) => String(m.id))
+        );
+        // Flipper spielt im aktuellen Block nicht mit → wie "nicht im Turnier" (Allzeit-Highscore)
+        if (!myMatches.size) inTournament = false;
 
         // 🔵 wer ist an diesem Flipper gerade dran? (gleiche Regel wie Admin/TV/Handy)
         const active = rotationActiveMap(matchIds, mpRes.data);
