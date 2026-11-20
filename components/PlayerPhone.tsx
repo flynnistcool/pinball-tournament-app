@@ -15,7 +15,7 @@ import PhoneMatchInsights from "@/components/PhoneMatchInsights";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import PinballScore from "@/components/PinballScore";
 import PhonePodium from "@/components/PhonePodium";
-import { rotationProgress } from "@/lib/rotationTurn";
+import { rotationBlocksFrom, rotationProgress } from "@/lib/rotationTurn";
 import { RoundPointsBars } from "@/components/charts";
 import {
   entryMode,
@@ -239,7 +239,9 @@ function MatchTab({
       mode === "own" && String(data.tournament?.status ?? "") !== "finished"
         ? rotationProgress(
             data.matches.map((m) => String(m.id)),
-            data.match_players
+            data.match_players,
+            undefined,
+            rotationBlocksFrom(data.rounds, data.matches) // 🧱 nachgelegte Runden: weiterzählen
           )
         : null,
     [data, mode]

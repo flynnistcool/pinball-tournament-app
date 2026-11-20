@@ -10,6 +10,8 @@ export type MmRound = {
   id: string;
   number: number | null;
   status?: string | null;
+  /** Round the Pinball: Runden mit gleichem created_at = ein Block (nachgelegte Runden, lib/rotationTurn.ts) */
+  created_at?: string | null;
   format?: string | null;
   elo_enabled?: boolean | null;
 };

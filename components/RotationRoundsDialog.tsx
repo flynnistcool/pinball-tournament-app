@@ -12,6 +12,8 @@ export default function RotationRoundsDialog({
   players,
   maxMachines,
   busy,
+  adding = false,
+  unplayed,
   onConfirm,
   onCancel,
 }: {
@@ -19,6 +21,10 @@ export default function RotationRoundsDialog({
   players: number;
   maxMachines: number;
   busy?: boolean;
+  /** 🧱 weitere Runden nachlegen (es gibt schon fertige Durchgänge) */
+  adding?: boolean;
+  /** davon im Turnier noch nicht gespielte Flipper (werden zuerst genommen) */
+  unplayed?: number;
   onConfirm: (machineCount: number) => void;
   onCancel: () => void;
 }) {
@@ -49,10 +55,20 @@ export default function RotationRoundsDialog({
         className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-1 text-lg font-semibold">🎰 Round the Pinball – Runden erzeugen</div>
+        <div className="mb-1 text-lg font-semibold">
+          {adding ? "🎰 Round the Pinball – weitere Runden" : "🎰 Round the Pinball – Runden erzeugen"}
+        </div>
         <div className="mb-4 text-sm text-neutral-500">
           {players} Spieler · {maxMachines} aktive Flipper
+          {adding && unplayed != null ? ` · ${unplayed} davon noch nicht gespielt` : ""}
         </div>
+        {adding ? (
+          <div className="mb-4 rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Alle bisherigen Durchgänge sind fertig. Die neuen Durchgänge zählen weiter, Punkte kommen dazu.
+            {unplayed ? " Flipper, die noch nicht dran waren, kommen zuerst." : ""} Tauschen kannst du einen Flipper je
+            Runde, solange dort noch kein Score steht.
+          </div>
+        ) : null}
 
         <div className="mb-1 text-sm font-semibold">Anzahl Flipper</div>
         <div className="flex items-center gap-3">
@@ -164,7 +180,7 @@ export default function RotationRoundsDialog({
               disabled={busy || count < 1 || players < 1}
               className="rounded-xl bg-neutral-900 px-4 py-2 font-semibold text-white disabled:opacity-50"
             >
-              Runden erzeugen
+              {adding ? "Weitere Runden erzeugen" : "Runden erzeugen"}
             </button>
           </div>
         )}

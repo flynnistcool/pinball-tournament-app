@@ -9,7 +9,7 @@
 
 import { scheduleDoneFeed } from "@/lib/feedOrder";
 import { useEffect, useRef, useState } from "react";
-import type { RotationProgress } from "@/lib/rotationTurn";
+import { rotationBlockEnd, type RotationProgress } from "@/lib/rotationTurn";
 import { notifSetting } from "@/lib/notifications";
 import { playSoundById } from "@/lib/playSound";
 import type { MmData } from "@/lib/myMatch";
@@ -22,7 +22,7 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 const SHOW_MS = 4000;
 
 type Splash =
-  | { kind: "start"; total: number }
+  | { kind: "start"; total: number; /** nachgelegte Runden: erster Durchgang des neuen Blocks */ from?: number }
   | { kind: "turn"; current: number; total: number; summary?: RoundSummary | null }
   | { kind: "done"; total: number; summary?: RoundSummary | null };
 
@@ -53,28 +53,50 @@ export default function RotationTurnSplash({
   dataRef.current = data ?? null;
   const prevRef = useRef<RotationProgress | null>(null);
   const pendingStartRef = useRef(false);
+  /** für welche Gesamtzahl die Start-Einblendung schon kam (nicht doppelt: Signal + Zähler-Wechsel) */
+  const startShownRef = useRef<number | null>(null);
   const [splash, setSplash] = useState<Splash | null>(null);
   const [anim, setAnim] = useState(false);
 
+  const cur = progress?.current ?? 0;
+  const total = progress?.total ?? 0;
+  const done = !!progress?.done;
+  // 🧱 nachgelegte Runden: erster Durchgang des aktuellen Blocks (1 = erster Block)
+  const blockStart = progress?.blockStart ?? 1;
+
   // 📣 Turnierstart in den Ticker (nur Admin hat onFeed; doppelte Einträge verhindert die Kennung)
-  const postStart = (waves: number) => {
-    const machines = new Set((data?.matches ?? []).map((m) => String(m.machine_id ?? m.id))).size;
+  // Nachgelegter Block: "Weiter geht's!" mit den Flippern dieses Blocks (Kennung = Block-Ende, wie am Server)
+  const postStart = (waves: number, from = 1) => {
+    const blockMatches =
+      from > 1 && data?.rounds?.length
+        ? (() => {
+            const newest = data.rounds
+              .map((r) => String(r.created_at ?? ""))
+              .sort()
+              .pop();
+            const ids = new Set(data.rounds.filter((r) => String(r.created_at ?? "") === newest).map((r) => String(r.id)));
+            return (data.matches ?? []).filter((m) => ids.has(String(m.round_id)));
+          })()
+        : data?.matches ?? [];
+    const machines = new Set(blockMatches.map((m) => String(m.machine_id ?? m.id))).size;
+    const n = waves - from + 1;
     onFeedRef.current?.([
       {
         key: `rotStart|${waves}`,
         kind: "roundStart",
         icon: "🏁",
-        title: "Los geht's!",
-        body: `Round the Pinball: ${waves} ${waves === 1 ? "Durchgang" : "Durchgänge"}${
-          machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
-        } – viel Spaß!`,
+        title: from > 1 ? "Weiter geht's!" : "Los geht's!",
+        body:
+          from > 1
+            ? `Round the Pinball: ${n} weitere ${n === 1 ? "Durchgang" : "Durchgänge"}${
+                machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
+              } (Durchgang ${from}–${waves}) – viel Spaß!`
+            : `Round the Pinball: ${waves} ${waves === 1 ? "Durchgang" : "Durchgänge"}${
+                machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
+              } – viel Spaß!`,
       },
     ]);
   };
-
-  const cur = progress?.current ?? 0;
-  const total = progress?.total ?? 0;
-  const done = !!progress?.done;
 
   useEffect(() => {
     // Daten noch nicht geladen / noch keine Runden → noch kein "erster Stand"
@@ -88,11 +110,14 @@ export default function RotationTurnSplash({
     const prev = prevRef.current;
     prevRef.current = { current: cur, total, done };
 
-    if (pendingStartRef.current || (prev && prev.total === 0)) {
+    // Start: erste Runden erzeugt – oder (nachgelegt) alles war fertig und jetzt gibt es mehr Durchgänge
+    const newBlock = !!prev && prev.done && !done && total > prev.total;
+    if (pendingStartRef.current || (prev && prev.total === 0) || newBlock) {
       pendingStartRef.current = false;
-      if (!done) {
-        setSplash({ kind: "start", total });
-        postStart(total);
+      if (!done && startShownRef.current !== total) {
+        startShownRef.current = total;
+        setSplash({ kind: "start", total, from: blockStart });
+        postStart(total, blockStart);
       }
       return;
     }
@@ -103,18 +128,20 @@ export default function RotationTurnSplash({
     const withSummary = (wave: number, next?: FeedItemInput) => {
       const s = data ? rotationWaveSummary(data, wave) : null;
       if (s) {
+        // Kennung mit dem Ende des Blocks (wie am Server) → alte Meldungen bleiben eindeutig
+        const end = rotationBlockEnd(progress, wave);
         const item = {
-          key: `rotWave|${wave}|${total}`,
+          key: `rotWave|${wave}|${end}`,
           kind: "roundDone",
           icon: "✅",
-          title: `Durchgang ${wave} / ${total} geschafft`,
+          title: `Durchgang ${wave} / ${end} geschafft`,
           body: summaryText(s, true) || "Alle Scores des Durchgangs sind da.",
         };
         // 📣 erst nach den anderen Meldungen des Durchgangs (die haben 10 s Tippfehler-Schutz) → Rückblick oben
         // 📰 Shortnews (alle Scores des Durchgangs) direkt davor – Daten erst beim Eintragen lesen (Korrekturen)
         scheduleDoneFeed(() => {
           const d = dataRef.current;
-          const short = d ? waveShortNews(d, wave, total) : null;
+          const short = d ? waveShortNews(d, wave, end) : null;
           const items: FeedItemInput[] = short ? [short, item] : [item];
           if (next) items.push(next);
           onFeedRef.current?.(items);
@@ -146,10 +173,12 @@ export default function RotationTurnSplash({
   // sonst sobald sie da sind (siehe oben).
   useEffect(() => {
     if (!startSignal) return;
-    if (total > 0 && !done && cur <= 1) {
+    if (total > 0 && !done && cur <= blockStart) {
       prevRef.current = { current: cur, total, done };
-      setSplash({ kind: "start", total });
-      postStart(total);
+      if (startShownRef.current === total) return; // schon über den Zähler-Wechsel gezeigt
+      startShownRef.current = total;
+      setSplash({ kind: "start", total, from: blockStart });
+      postStart(total, blockStart);
     } else {
       pendingStartRef.current = true;
     }
@@ -174,7 +203,11 @@ export default function RotationTurnSplash({
   const tv = variant === "tv";
   const isDone = splash.kind === "done";
   // Balken = fertige Durchgänge (wie die Durchgang-Karte), animiert vom alten auf den neuen Stand
-  const after = isDone ? splash.total : splash.kind === "start" ? 0 : Math.max(0, splash.current - 1);
+  const after = isDone
+    ? splash.total
+    : splash.kind === "start"
+      ? Math.max(0, (splash.from ?? 1) - 1)
+      : Math.max(0, splash.current - 1);
   const before = Math.max(0, after - 1);
   const pct = (n: number) => `${Math.round((n / Math.max(1, splash.total)) * 100)}%`;
 
@@ -215,11 +248,15 @@ export default function RotationTurnSplash({
         ) : splash.kind === "start" ? (
           <>
             <div className={"font-semibold uppercase tracking-widest " + (tv ? "text-2xl text-white/80" : "text-sm text-white/85")}>
-              🎰 Runden generiert
+              {(splash.from ?? 1) > 1 ? "🎰 Weitere Runden generiert" : "🎰 Runden generiert"}
             </div>
-            <div className={"mt-2 font-black " + (tv ? "text-6xl" : "text-3xl")}>Es kann losgehen!</div>
+            <div className={"mt-2 font-black " + (tv ? "text-6xl" : "text-3xl")}>
+              {(splash.from ?? 1) > 1 ? "Weiter geht's!" : "Es kann losgehen!"}
+            </div>
             <div className={"mt-2 font-semibold " + (tv ? "text-3xl text-white/80" : "text-lg text-white/85")}>
-              Gleich startet der 1. Durchgang von {splash.total}
+              {(splash.from ?? 1) > 1
+                ? `Gleich startet Durchgang ${splash.from} von ${splash.total}`
+                : `Gleich startet der 1. Durchgang von ${splash.total}`}
             </div>
           </>
         ) : (

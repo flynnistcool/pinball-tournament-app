@@ -1,6 +1,8 @@
 // 📟 LED-Display am Flipper (Adafruit Matrix Portal): was soll es gerade zeigen?
 // GET /api/public/display?flipper=Godzilla&location=Spielhalle
-//   → { ok: true, mode, top, bottom, topColor, bottomColor, poll, tournament }
+//   → { ok: true, mode, top, bottom, topColor, bottomColor, poll, tournament,
+//       timer: { phase, toStart, toEnd }, active: "NAME" | null, scores: [{ name, score }] }
+//   timer/active/scores nur bei Round the Pinball (für 3-2-1-LOS, Schluss-Countdown, "Score eintragen")
 // Öffentlich (ohne Login, wie TV/Handy) – liefert nur Texte, die ohnehin am Infobildschirm stehen.
 //
 // flipper  = Flipper-Name wie in der App (Groß/Klein egal)
@@ -14,7 +16,13 @@ import { fetchAllIn } from "@/lib/supabaseChunks";
 import { loadMachineRecords } from "@/lib/feedContextServer";
 import { machineKey } from "@/lib/machineStats";
 import { rotationActiveMap } from "@/lib/rotationTurn";
-import { flipperDisplay, type DisplayRecord, type DisplayTimer } from "@/lib/flipperDisplay";
+import {
+  displayText,
+  displayTimerInfo,
+  flipperDisplay,
+  type DisplayRecord,
+  type DisplayTimer,
+} from "@/lib/flipperDisplay";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -88,6 +96,7 @@ export async function GET(req: Request) {
     let hasRounds = false;
     let activePlayer: string | null = null;
     let tournamentBest: DisplayRecord | null = null;
+    let scores: { name: string; score: number }[] = [];
 
     if (t) {
       const { data: machines, error: maErr } = await sb
@@ -144,15 +153,21 @@ export async function GET(req: Request) {
           }
         }
 
-        // 🏆 bester Score an diesem Flipper im Turnier
+        // 🏆 bester Score an diesem Flipper im Turnier + beste Scores je Spieler (für "Platz X" am Display)
+        const bestOf = new Map<string, number>();
         for (const mp of mpRes.data) {
           if (!myMatches.has(String(mp.match_id))) continue;
           const s = toScore(mp.score);
           if (s == null) continue;
+          const pid = String(mp.player_id);
+          if (!bestOf.has(pid) || s > (bestOf.get(pid) as number)) bestOf.set(pid, s);
           if (!tournamentBest || s > tournamentBest.score) {
-            tournamentBest = { score: s, holder: nameOf.get(String(mp.player_id)) ?? null };
+            tournamentBest = { score: s, holder: nameOf.get(pid) ?? null };
           }
         }
+        scores = Array.from(bestOf.entries())
+          .map(([pid, score]) => ({ name: displayText(nameOf.get(pid)), score }))
+          .sort((a, b) => b.score - a.score);
       }
     }
 
@@ -177,8 +192,20 @@ export async function GET(req: Request) {
       now: Date.now(),
     });
 
+    // Animationen am Display (3-2-1-LOS, letzte 60 s, Score eintragen): nur bei Round the Pinball mit diesem Flipper
+    const rtp = !!t && t.format === "rotation" && inTournament && hasRounds;
+    const timer = rtp ? displayTimerInfo(t?.rotation_timer ?? null, Date.now()) : displayTimerInfo(null, 0);
+
     return NextResponse.json(
-      { ok: true, ...out, poll: POLL_SEC, tournament: t ? String(t.code) : null },
+      {
+        ok: true,
+        ...out,
+        poll: POLL_SEC,
+        tournament: t ? String(t.code) : null,
+        timer,
+        active: rtp && activePlayer ? displayText(activePlayer) : null,
+        scores: rtp ? scores : [],
+      },
       { headers: NO_STORE }
     );
   } catch (e: unknown) {

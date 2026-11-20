@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     await Promise.all([
       sb.from("players").select("id, name, active, profile_id").eq("tournament_id", t.id).order("created_at"),
       sb.from("machines").select("id, name, active, icon_emoji").eq("tournament_id", t.id).order("created_at"),
-      sb.from("rounds").select("id, format, number, status, elo_enabled").eq("tournament_id", t.id).order("format").order("number"),
+      sb.from("rounds").select("id, format, number, status, elo_enabled, created_at").eq("tournament_id", t.id).order("format").order("number"),
     ]);
 
   if (pErr) return NextResponse.json({ error: `Players load failed: ${pErr.message}` }, { status: 500 });

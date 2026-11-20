@@ -16,7 +16,7 @@
 
 import type { FeedItemInput } from "@/lib/feed";
 import { liveLeaderboard, type MmData } from "@/lib/myMatch";
-import { rotationProgress, rotationWaveMap } from "@/lib/rotationTurn";
+import { rotationBlocksFrom, rotationProgress, rotationWaveMap } from "@/lib/rotationTurn";
 import { roundSummary, rotationWaveSummary, summaryText } from "@/lib/roundSummary";
 import { matchWinValue, streakMin, streakMode, streakText } from "@/lib/winStreaks";
 import { flawlessMode, flawlessText, flawlessWinners, rotationAllDone, unbeatenStep } from "@/lib/flawless";
@@ -115,24 +115,40 @@ function rotationItems(data: MmData, out: FeedCandidate[], done: FeedCandidate[]
   const matchIds = data.matches.map((m) => String(m.id));
   if (!matchIds.length) return;
   const mps = data.match_players as Parameters<typeof rotationProgress>[1];
-  const prog = rotationProgress(matchIds, mps);
+  // 🧱 nachgelegte Runden: je Block eigene Start-Meldung, Kennungen mit dem Block-Ende (alte bleiben gleich)
+  const blocks = rotationBlocksFrom(data.rounds, data.matches);
+  const prog = rotationProgress(matchIds, mps, undefined, blocks);
   const total = prog.total;
   if (total < 1) return;
-  const machines = new Set(data.matches.map((m) => String(m.machine_id ?? m.id))).size;
-  out.push({
-    item: {
-      key: `rotStart|${total}`,
-      kind: "roundStart",
-      icon: "🏁",
-      title: "Los geht's!",
-      body: `Round the Pinball: ${total} ${total === 1 ? "Durchgang" : "Durchgänge"}${
-        machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
-      } – viel Spaß!`,
-    },
-    sig: `${total}`,
+  const ends = prog.ends ?? [total];
+  const blockKeys = Array.from(new Set(Object.values(blocks ?? {}))).sort();
+  ends.forEach((end, b) => {
+    const from = b === 0 ? 1 : ends[b - 1] + 1;
+    const waves = end - from + 1;
+    const blockMatches =
+      ends.length === 1 ? data.matches : data.matches.filter((m) => blocks?.[String(m.id)] === blockKeys[b]);
+    const machines = new Set(blockMatches.map((m) => String(m.machine_id ?? m.id))).size;
+    out.push({
+      item: {
+        key: `rotStart|${end}`,
+        kind: "roundStart",
+        icon: "🏁",
+        title: b === 0 ? "Los geht's!" : "Weiter geht's!",
+        body:
+          b === 0
+            ? `Round the Pinball: ${waves} ${waves === 1 ? "Durchgang" : "Durchgänge"}${
+                machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
+              } – viel Spaß!`
+            : `Round the Pinball: ${waves} weitere ${waves === 1 ? "Durchgang" : "Durchgänge"}${
+                machines ? ` an ${machines} ${machines === 1 ? "Flipper" : "Flippern"}` : ""
+              } (Durchgang ${from}–${end}) – viel Spaß!`,
+      },
+      sig: `${end}`,
+    });
   });
 
-  const waveOf = rotationWaveMap(matchIds, mps);
+  const waveOf = rotationWaveMap(matchIds, mps, undefined, blocks);
+  const endOf = (w: number) => ends.find((e) => w <= e) ?? total;
   for (let w = 1; w <= total; w++) {
     const inWave = data.match_players.filter((mp) => waveOf.get(`${mp.match_id}|${mp.player_id}`) === w);
     if (!inWave.length || !inWave.every((mp) => entered(mp.score))) continue;
@@ -146,10 +162,10 @@ function rotationItems(data: MmData, out: FeedCandidate[], done: FeedCandidate[]
     const s = rotationWaveSummary(then, w);
     done.push({
       item: {
-        key: `rotWave|${w}|${total}`,
+        key: `rotWave|${w}|${endOf(w)}`,
         kind: "roundDone",
         icon: "✅",
-        title: `Durchgang ${w} / ${total} geschafft`,
+        title: `Durchgang ${w} / ${endOf(w)} geschafft`,
         body: summaryText(s, true) || "Alle Scores des Durchgangs sind da.",
       },
       sig: inWave.map((mp) => `${mp.match_id}:${mp.player_id}:${mp.score}`).join(","),
@@ -594,7 +610,9 @@ function annotateAge(data: MmData, cands: FeedCandidate[]) {
   if (rotation) {
     const waveOf = rotationWaveMap(
       data.matches.map((m) => String(m.id)),
-      data.match_players as Parameters<typeof rotationWaveMap>[1]
+      data.match_players as Parameters<typeof rotationWaveMap>[1],
+      undefined,
+      rotationBlocksFrom(data.rounds, data.matches)
     );
     for (const c of cands) {
       if (c.age != null) continue;
@@ -625,7 +643,12 @@ export function currentAge(data: MmData): number {
   if (String(data.tournament.format ?? "") === "rotation") {
     const ids = data.matches.map((m) => String(m.id));
     if (!ids.length) return 0;
-    const p = rotationProgress(ids, data.match_players as Parameters<typeof rotationProgress>[1]);
+    const p = rotationProgress(
+      ids,
+      data.match_players as Parameters<typeof rotationProgress>[1],
+      undefined,
+      rotationBlocksFrom(data.rounds, data.matches)
+    );
     return p.current;
   }
   return Math.max(0, ...data.rounds.map((r) => Number(r.number ?? 0)));

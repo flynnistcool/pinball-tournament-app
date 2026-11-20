@@ -1,6 +1,6 @@
 # Projekt-Überblick – Pinball-Turnier-App
 
-> Einstiegsdokument für einen neuen Claude-Chat. Stand: **2026-11-20**, letzter Live-Deploy **efb6c92**.
+> Einstiegsdokument für einen neuen Claude-Chat. Stand: **2026-11-20 (spät)**, letzte Live-Deploys siehe Abschnitt 6.
 > Ergänzt die `CLAUDE.md` (technische Regeln). Bei Widerspruch gilt: aktuelle Nutzer-Anweisung > CLAUDE.md > dieses Dokument.
 
 ---
@@ -165,6 +165,9 @@ Weitere: `finales, final_players, final_games` (Superfinale), `profile_links` (L
 ## 6. Aktueller Stand
 
 ### Zuletzt live
+- **2026-11-20 (spät)**: 📟 Flipper-Displays mit Animationen (3-2-1-LOS + Rennauto beim Start, „NOCH X S“ in der letzten Minute, Zielflagge/ZEIT!/GAME OVER, Lauflicht-Rahmen „BITTE SCORE EINTRAGEN“, Rückmeldung „PLATZ X“, Rennauto bei neuem Highscore). App liefert dafür `timer`/`active`/`scores` in `/api/public/display`, iPad meldet den 15-s-Countdown („prestart“). Gerätecode liegt NUR auf dem Matrix Portal (`D:\code.py`), nicht im Repo.
+- **2026-11-20 (spät)**: 🧱 Round the Pinball – weitere Flipper-Runden nachlegen, wenn alle Durchgänge fertig sind (nicht bei beendetem Turnier). Block = Runden mit gleichem `rounds.created_at`; Durchgänge zählen weiter (`lib/rotationTurn.ts` `rotationBlocksFrom`), Ticker-Kennungen mit Block-Ende, ungespielte Flipper zuerst, Schild „🧱 Block N“ in der Rundenliste.
+- **f5b705d** (2026-11-20): Flipper-LED-Display `/api/public/display` (Round the Pinball) + dieser Projekt-Überblick.
 - **efb6c92** (2026-11-20): Lob fürs Score-Eintragen am Handy (1/3 nur Handy, ab 5 Ticker/TV/Admin mit Ton), einmaliger Tipp bei Match ohne Scores, Badge 🤝 Team, Ticker-Reihenfolge (Elo-Marke unter Durchgang/Runde fertig), Score-Form-Spruch kursiv, goldene Sterne bei Tabellenführung, RtP weiße Zeilen gesperrt + Sprung zur blauen Zeile.
 - **a4b1b02** (2026-11-19): Sperre gegen doppelte Runden, Ticker-Meldungen ausblenden, „Auf Messers Schneide – entschieden!“.
 - **ab395dd** (2026-11-19): Auf Messers Schneide, Spieler-Badge, Ticker-Vorschau (unter „Meldungen & Sounds“), Match-Karten fertig/läuft.

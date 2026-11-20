@@ -8,7 +8,7 @@
 
 import type { FeedItemInput } from "@/lib/feed";
 import type { MmData } from "@/lib/myMatch";
-import { rotationWaveMap } from "@/lib/rotationTurn";
+import { rotationBlocksFrom, rotationWaveMap } from "@/lib/rotationTurn";
 
 export type ShortMatchLine = { pos: number; name: string; score: number | null };
 export type ShortWaveLine = { name: string; machine: string; score: number; place: number; machineIcon?: string | null };
@@ -83,7 +83,9 @@ export function waveShortNews(data: MmData, wave: number, total: number): FeedIt
   const { player, matchMachine, matchMachineIcon } = names(data);
   const waveOf = rotationWaveMap(
     data.matches.map((m) => String(m.id)),
-    data.match_players as any
+    data.match_players as any,
+    undefined,
+    rotationBlocksFrom(data.rounds, data.matches)
   );
   // alle Scores je Flipper (= Match) – für "aktuell Platz X"
   const scoresByMatch = new Map<string, number[]>();

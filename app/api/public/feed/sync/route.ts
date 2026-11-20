@@ -77,7 +77,7 @@ export async function POST(req: Request) {
   const [pl, mc, rd] = await Promise.all([
     sb.from("players").select("id, name, active, profile_id").eq("tournament_id", tid).order("created_at"),
     sb.from("machines").select("id, name, icon_emoji").eq("tournament_id", tid).order("created_at"),
-    sb.from("rounds").select("id, format, number, status").eq("tournament_id", tid).order("format").order("number"),
+    sb.from("rounds").select("id, format, number, status, created_at").eq("tournament_id", tid).order("format").order("number"),
   ]);
   if (pl.error || mc.error || rd.error) return fail("Turnierdaten laden fehlgeschlagen", 500);
   const roundIds = (rd.data ?? []).map((r: { id: string }) => String(r.id));

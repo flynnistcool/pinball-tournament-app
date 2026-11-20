@@ -7,14 +7,30 @@
 // Situationen (zunächst nur Round the Pinball – andere Formate zeigen den Allzeit-Highscore):
 //   alltime  – kein laufendes Turnier (bzw. anderes Format / Flipper nicht im Turnier) → Allzeit-Highscore
 //   lobby    – Turnier angelegt, noch keine Runden → "ROUND THE PINBALL – GLEICH GEHT'S LOS" + Turniername
-//   turn     – Timer läuft NICHT, an diesem Flipper ist jemand dran (blau) → Spruch + Name
-//   highscore– Timer läuft (oder niemand dran) → Turnier-Highscore an diesem Flipper
+//   turn     – Timer NICHT gestartet, an diesem Flipper ist jemand dran (blau) → Spruch + Name
+//   highscore– Start gedrückt (Countdown), Timer läuft oder pausiert (oder niemand dran) → Turnier-Highscore
 //
 // Die eingebaute Display-Schrift kennt nur ASCII → Umlaute werden zu AE/OE/UE, Emojis fallen weg.
 
 export type DisplayRecord = { score: number; holder: string | null };
 
-export type DisplayTimer = { state?: string | null; endAt?: number | null } | null;
+export type DisplayTimer = {
+  state?: string | null;
+  endAt?: number | null;
+  /** nur bei "prestart": wann der Timer losgeht (Server-Uhr) */
+  startAt?: number | null;
+  remainingMs?: number | null;
+  at?: number | null;
+} | null;
+
+/** Timer fürs Display: Phase + Sekunden bis Start/Ende (relativ – das Display zählt mit eigener Uhr weiter) */
+export type DisplayTimerInfo = {
+  phase: "off" | "prestart" | "running" | "paused";
+  /** Sekunden bis LOS (nur prestart) */
+  toStart: number | null;
+  /** Sekunden bis Schluss (nur running) */
+  toEnd: number | null;
+};
 
 export type DisplayInput = {
   flipper: string;
@@ -102,10 +118,38 @@ export function sayingFor(flipper: string, player: string): string {
   return TURN_SAYINGS[hash(`${flipper.toLowerCase()}|${player.toLowerCase()}`) % TURN_SAYINGS.length];
 }
 
+/**
+ * Durchgang "läuft" fürs Display: schon ab dem Druck auf Start (15-s-Countdown "prestart"),
+ * während des Timers und auch in der Pause → Highscore zeigen (der neue Spieler kann ihn in Ruhe ansehen).
+ */
 export function timerRunning(timer: DisplayTimer, now: number): boolean {
-  if (!timer || timer.state !== "running") return false;
+  if (!timer) return false;
+  if (timer.state === "prestart" || timer.state === "paused") return true;
+  if (timer.state !== "running") return false;
   const end = Number(timer.endAt);
   return Number.isFinite(end) && end > now;
+}
+
+const round1 = (ms: number) => Math.round(ms / 100) / 10;
+
+export function displayTimerInfo(timer: DisplayTimer, now: number): DisplayTimerInfo {
+  const off: DisplayTimerInfo = { phase: "off", toStart: null, toEnd: null };
+  if (!timer) return off;
+  if (timer.state === "paused") return { phase: "paused", toStart: null, toEnd: null };
+  if (timer.state === "prestart") {
+    // ältere Einträge ohne startAt: at + remainingMs
+    const start = Number.isFinite(Number(timer.startAt)) && timer.startAt != null
+      ? Number(timer.startAt)
+      : Number(timer.at) + Number(timer.remainingMs);
+    if (!Number.isFinite(start)) return { phase: "prestart", toStart: null, toEnd: null };
+    return { phase: "prestart", toStart: round1(Math.max(0, start - now)), toEnd: null };
+  }
+  if (timer.state === "running") {
+    const end = Number(timer.endAt);
+    if (!Number.isFinite(end) || end <= now) return off;
+    return { phase: "running", toStart: null, toEnd: round1(end - now) };
+  }
+  return off;
 }
 
 function allTimeView(flipper: string, allTime: DisplayRecord | null): DisplayOutput {

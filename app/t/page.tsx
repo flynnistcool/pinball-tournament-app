@@ -25,7 +25,7 @@ import { BarChart, Sparkline, RoundPointsBars, CumulativePointsLine } from "@/co
 import QRCode from "qrcode";
 import PlayerQrButton from "@/components/PlayerQrButton";
 import EntryLogMatchLine from "@/components/EntryLogLine";
-import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
+import { rotationActiveMap, rotationBlocksFrom, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
 import MusicPreviewButton from "@/components/MusicPreviewButton";
@@ -7839,6 +7839,13 @@ async function saveStartOrder(matchId: string, orderedPlayerIds: string[]) {
 
 
 
+// 🧱 Round the Pinball mit nachgelegten Runden: Block je Runde (gleiches created_at = zusammen erzeugt)
+const rotBlockKeys: string[] = isRotationFormat
+  ? Array.from(new Set((rounds ?? []).map((x: any) => String(x?.created_at ?? "")).filter(Boolean))).sort()
+  : [];
+const rotBlockOf = (r: any): number | null =>
+  rotBlockKeys.length > 1 ? rotBlockKeys.indexOf(String(r?.created_at ?? "")) + 1 || null : null;
+
 return (
   <Card>
     <CardHeader>
@@ -7952,7 +7959,11 @@ const winnersText = (() => {
                 key={r.id}
                 id={`round-${r.id}`}
                 data-open={isOpen ? "true" : "false"}
-                className="border-b last:border-b-0"
+                className={
+                  "border-b last:border-b-0" +
+                  // 🧱 Runden früherer Blöcke etwas blasser (sind fertig, neue stehen unten)
+                  (rotBlockOf(r) != null && rotBlockOf(r)! < rotBlockKeys.length && !isOpen ? " opacity-60" : "")
+                }
               >
                 <button
                   className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-neutral-50 sm:grid sm:grid-cols-12 sm:gap-2"
@@ -7997,6 +8008,23 @@ const winnersText = (() => {
     {formatLabel(r.format)}
   </span>
                       </span>
+                      {rotBlockOf(r) != null ? (
+                        <span
+                          className={
+                            "mt-0.5 w-fit rounded-full px-1.5 py-px text-[10px] font-semibold " +
+                            (rotBlockOf(r)! < rotBlockKeys.length
+                              ? "bg-neutral-100 text-neutral-500"
+                              : "bg-sky-100 text-sky-700")
+                          }
+                          title={
+                            rotBlockOf(r)! < rotBlockKeys.length
+                              ? "Vorher erzeugte Runden (fertig)"
+                              : "Zuletzt nachgelegte Runden"
+                          }
+                        >
+                          🧱 Block {rotBlockOf(r)}
+                        </span>
+                      ) : null}
 
                     </div>
                   </div>
@@ -13605,8 +13633,9 @@ useEffect(() => {
     if (!isAdmin || !isRotationFormat || !code) return;
     const endAt = typeof rotTimer?.endAt === "number" ? rotTimer.endAt : null;
     const rem = Number.isFinite(rotTimer?.remainingMs) ? (rotTimer.remainingMs as number) : null;
-    const state = endAt != null ? "running" : rem != null ? "paused" : "off";
-    const sig = `${code}|${state}|${endAt ?? ""}|${rem ?? ""}`;
+    // 📟 "prestart" = 15-s-Countdown läuft (Flipper-Displays zeigen dann schon den Highscore; TV ignoriert es)
+    const state = endAt != null ? "running" : rotPrestartEndAt != null ? "prestart" : rem != null ? "paused" : "off";
+    const sig = `${code}|${state}|${endAt ?? ""}|${rem ?? ""}|${rotPrestartEndAt ?? ""}`;
     if (rotTimerSyncRef.current === null) {
       rotTimerSyncRef.current = sig;
       return;
@@ -13628,9 +13657,10 @@ useEffect(() => {
       const t = window.setTimeout(() => send("off", 0), left + 1500);
       return () => window.clearTimeout(t);
     }
-    send(state, rem ?? 0);
+    // 📟 beim Countdown die Restzeit bis zum Start mitschicken (Displays zählen 3-2-1-LOS passend runter)
+    send(state, state === "prestart" ? Math.max(0, (rotPrestartEndAt as number) - Date.now()) : rem ?? 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, isRotationFormat, code, rotTimer?.endAt, rotTimer?.remainingMs]);
+  }, [isAdmin, isRotationFormat, code, rotTimer?.endAt, rotTimer?.remainingMs, rotPrestartEndAt]);
 
   useEffect(() => {
   if (!isRotationFormat) {
@@ -13944,6 +13974,11 @@ if (rotEndTimeoutRef.current != null) {
   const [rotStartSignal, setRotStartSignal] = useState<number | null>(null);
   const rotDialogPlayers = (data?.players ?? []).filter((p: any) => p?.active).length;
   const rotDialogMachines = (data?.machines ?? []).filter((m: any) => m?.active).length;
+  // 🧱 Nachlegen: wie viele aktive Flipper waren in diesem Turnier noch nicht dran?
+  const rotDialogUnplayed = (() => {
+    const used = new Set((data?.matches ?? []).map((m: any) => String(m?.machine_id ?? "")));
+    return (data?.machines ?? []).filter((m: any) => m?.active && !used.has(String(m.id))).length;
+  })();
 
   // 🔒 Doppeltipp-Sperre: bleibt zu, bis die neue Runde GELADEN ist (nicht nur bis der Server antwortet) –
   //    sonst ist der Knopf kurz wieder frei, während die Seite die neue Runde noch nicht kennt → zweite Runde.
@@ -13957,10 +13992,10 @@ if (rotEndTimeoutRef.current != null) {
       typeof opts?.rotationMachineCount === "number" ? opts.rotationMachineCount : null;
 
     // Rotation erzeugt alle Runden (1 pro Maschine) auf einmal.
-    // Danach darf dieser Button nichts mehr erzeugen.
-    if (isRotationFormat && (rounds ?? []).length > 0) {
+    // 🧱 Sind alle Durchgänge fertig, können weitere Flipper-Runden nachgelegt werden (Durchgänge zählen weiter).
+    if (isRotationFormat && (rounds ?? []).length > 0 && hasActiveRound) {
       setNotice(
-        "Rotation: Die Maschinen-Runden wurden bereits erzeugt. Bitte jetzt nur noch Scores eintragen und die Runden beenden."
+        "Round the Pinball: Es sind noch Durchgänge offen. Weitere Runden kannst du erzeugen, sobald alle Scores eingetragen sind."
       );
       return;
     }
@@ -14400,6 +14435,8 @@ const tasksById = useMemo(() => {
         open={rotRoundsDialogOpen}
         players={rotDialogPlayers}
         maxMachines={rotDialogMachines}
+        adding={(rounds ?? []).length > 0}
+        unplayed={rotDialogUnplayed}
         busy={busy}
         onCancel={() => setRotRoundsDialogOpen(false)}
         onConfirm={(n) => {
@@ -15212,7 +15249,9 @@ const tasksById = useMemo(() => {
     const displayMs = preLeftMs != null ? preLeftMs : rotTimeLeftMs();
     const rotProgressNow = rotationProgress(
       (matches ?? []).map((x: any) => String(x.id)),
-      (matchPlayers ?? []) as any[]
+      (matchPlayers ?? []) as any[],
+      undefined,
+      rotationBlocksFrom(rounds ?? [], matches ?? []) // 🧱 nachgelegte Runden: weiterzählen
     );
 
     return (

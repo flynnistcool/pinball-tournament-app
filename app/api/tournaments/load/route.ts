@@ -35,7 +35,7 @@ async function handle(codeRaw: string) {
   // 2) Runden laden
   const { data: rounds, error: rErr } = await sb
     .from("rounds")
-    .select("id, tournament_id, number, format, status, elo_enabled")
+    .select("id, tournament_id, number, format, status, elo_enabled, created_at")
     .eq("tournament_id", t.id)
     .order("format")
     .order("number");

@@ -175,13 +175,84 @@ export type RotationProgress = {
   current: number;
   total: number;
   done: boolean;
+  /** nachgelegte Runden: erster Durchgang des aktuellen Blocks (1 = erster Block) */
+  blockStart?: number;
+  /** nachgelegte Runden: letzter Durchgang je Block, fortlaufend gezählt (ein Block → [total]) */
+  ends?: number[];
 };
+
+// ── 🧱 Blöcke: Round the Pinball kann nachträglich weitere Flipper-Runden bekommen ─────────────────
+// Ein Block = alle Runden, die zusammen erzeugt wurden (gleiches rounds.created_at, da in EINEM insert).
+// Durchgänge werden über alle Blöcke weitergezählt (Block 1: 1–2, Block 2: 3–12 …).
+// Ohne Block-Angabe (oder nur ein Block) rechnet alles genau wie vorher.
+
+/** matchId → Block-Kennung (sortierbar, z. B. created_at der Runde) */
+export type RotationBlocks = Record<string, string>;
+
+/** Blöcke aus Turnierdaten: Runden mit gleichem created_at gehören zusammen. undefined = nur ein Block. */
+export function rotationBlocksFrom(
+  rounds: readonly { id: string | number; created_at?: string | null }[] | null | undefined,
+  matches: readonly { id: string | number; round_id?: string | number | null }[] | null | undefined
+): RotationBlocks | undefined {
+  const createdOf = new Map<string, string>();
+  for (const r of rounds ?? []) {
+    if (r?.created_at) createdOf.set(String(r.id), String(r.created_at));
+  }
+  if (new Set(Array.from(createdOf.values())).size < 2) return undefined;
+  const out: RotationBlocks = {};
+  for (const m of matches ?? []) {
+    const c = createdOf.get(String(m.round_id ?? ""));
+    if (c) out[String(m.id)] = c;
+  }
+  return out;
+}
+
+/** Match-IDs je Block, in Reihenfolge der Blöcke (Matches ohne Block-Angabe zählen zum ersten Block) */
+function splitBlocks(matchIds: readonly string[], blocks?: RotationBlocks): string[][] {
+  if (!blocks) return [matchIds.slice()];
+  const keys = Array.from(new Set(matchIds.map((id) => blocks[String(id)] ?? ""))).sort();
+  if (keys.length < 2) return [matchIds.slice()];
+  return keys.map((k) => matchIds.filter((id) => (blocks[String(id)] ?? "") === k));
+}
+
+/** Letzter Durchgang des Blocks, zu dem Durchgang `wave` gehört (für Kennungen wie "rotWave|3|12") */
+export function rotationBlockEnd(progress: RotationProgress | null | undefined, wave: number): number {
+  const ends = progress?.ends;
+  if (!ends || !ends.length) return progress?.total ?? wave;
+  return ends.find((e) => wave <= e) ?? ends[ends.length - 1];
+}
 
 /**
  * Durchgang-Zähler: Ein Durchgang = eine Vergabe der blauen Felder (eine Welle).
  * Je Stufe gibt es so viele Durchgänge, wie ein Spieler dort höchstens Flipper hat.
+ * Mit `blocks` (nachgelegte Runden): je Block getrennt rechnen und fortlaufend weiterzählen.
  */
 export function rotationProgress(
+  matchIds: readonly string[],
+  players: readonly TurnPlayer[],
+  orderOverride?: Record<string, readonly string[] | undefined>,
+  blocks?: RotationBlocks
+): RotationProgress {
+  const parts = splitBlocks(matchIds, blocks);
+  if (parts.length < 2) return singleProgress(matchIds, players, orderOverride);
+  const ends: number[] = [];
+  let offset = 0;
+  let found: RotationProgress | null = null;
+  for (const ids of parts) {
+    const set = new Set(ids.map(String));
+    const p = singleProgress(ids, players.filter((x) => set.has(String(x.match_id))), orderOverride);
+    if (!found && !p.done && p.total > 0) {
+      found = { current: offset + p.current, total: 0, done: false, blockStart: offset + 1 };
+    }
+    offset += p.total;
+    ends.push(offset);
+  }
+  if (found) return { ...found, total: offset, ends };
+  const lastStart = ends.length > 1 ? ends[ends.length - 2] + 1 : 1;
+  return { current: offset, total: offset, done: offset > 0, blockStart: lastStart, ends };
+}
+
+function singleProgress(
   matchIds: readonly string[],
   players: readonly TurnPlayer[],
   orderOverride?: Record<string, readonly string[] | undefined>
@@ -209,13 +280,33 @@ export function rotationProgress(
 export function rotationWaveMap(
   matchIds: readonly string[],
   players: readonly TurnPlayer[],
-  orderOverride?: Record<string, readonly string[] | undefined>
+  orderOverride?: Record<string, readonly string[] | undefined>,
+  blocks?: RotationBlocks
 ): Map<string, number> {
+  const parts = splitBlocks(matchIds, blocks);
+  if (parts.length < 2) return singleWaveMap(matchIds, players, orderOverride, 0).map;
+  const out = new Map<string, number>();
+  let offset = 0;
+  for (const ids of parts) {
+    const set = new Set(ids.map(String));
+    const r = singleWaveMap(ids, players.filter((x) => set.has(String(x.match_id))), orderOverride, offset);
+    r.map.forEach((v, k) => out.set(k, v));
+    offset = r.end;
+  }
+  return out;
+}
+
+function singleWaveMap(
+  matchIds: readonly string[],
+  players: readonly TurnPlayer[],
+  orderOverride: Record<string, readonly string[] | undefined> | undefined,
+  start: number
+): { map: Map<string, number>; end: number } {
   const ordered = orderedByMatch(matchIds, players, orderOverride);
   let maxLen = 0;
   for (const list of Array.from(ordered.values())) maxLen = Math.max(maxLen, list.length);
   const out = new Map<string, number>();
-  let offset = 0;
+  let offset = start;
   for (let level = 0; level < maxLen; level++) {
     const { machinesOf } = machinesAtLevel(ordered, level);
     let w = 0;
@@ -225,5 +316,5 @@ export function rotationWaveMap(
     }
     offset += w;
   }
-  return out;
+  return { map: out, end: offset };
 }

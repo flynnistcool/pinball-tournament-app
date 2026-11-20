@@ -2,7 +2,7 @@
 // Genutzt von den Einblendungen "Runde abgeschlossen" / "Durchgang geschafft" und dem Live-Ticker.
 
 import { liveLeaderboard, type MmData } from "@/lib/myMatch";
-import { rotationWaveMap } from "@/lib/rotationTurn";
+import { rotationBlocksFrom, rotationWaveMap } from "@/lib/rotationTurn";
 
 export type RoundSummary = {
   /** Rundensieger (Platz 1 je Match) bzw. bei Round the Pinball: wer im Durchgang an seinem Flipper vorn liegt */
@@ -74,7 +74,12 @@ export function roundSummary(data: AnyData, roundId: string): RoundSummary {
 export function rotationWaveSummary(data: AnyData, wave: number): RoundSummary {
   const { player, matchMachine } = names(data);
   const matchIds = data.matches.map((m) => String(m.id));
-  const waveOf = rotationWaveMap(matchIds, data.match_players as any);
+  const waveOf = rotationWaveMap(
+    matchIds,
+    data.match_players as any,
+    undefined,
+    rotationBlocksFrom((data as any).rounds, data.matches as any)
+  );
   const inWave = data.match_players.filter(
     (mp) => waveOf.get(String(mp.match_id) + "|" + String(mp.player_id)) === wave && num(mp.score) != null
   );

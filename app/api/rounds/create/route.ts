@@ -635,7 +635,7 @@ if (!machinesToValidate.length) {
   const { data: matches } = roundIds.length
     ? await sb
         .from("matches")
-        .select("id, round_id")
+        .select("id, round_id, machine_id")
         .in("round_id", roundIds)
     : { data: [] as any[] };
 
@@ -651,20 +651,35 @@ if (!machinesToValidate.length) {
   // ================================
   // ROTATION
   // - erstellt ALLE Runden auf einmal: 1 Runde pro aktiver Maschine
+  // - sind alle fertig, können weitere Runden nachgelegt werden (neuer Block, ungespielte Flipper zuerst)
   // - jede Runde enthält GENAU 1 Match
   // - in jedem Match spielen ALLE aktiven Spieler (n = 2..4 in dieser App)
   // ================================
   if (format === "rotation") {
     const warnings: string[] = [];
 
-    if ((rounds ?? []).length > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Rotation erstellt alle Maschinen-Runden in einem Rutsch. In diesem Turnier existieren bereits Runden – bitte ein neues Rotation-Turnier anlegen.",
-        },
-        { status: 400 }
-      );
+    // 🧱 Weitere Flipper-Runden nachlegen: nur wenn ALLE bisherigen Runden fertig sind
+    //    (beendetes Turnier ist oben schon gesperrt). Durchgänge zählen danach weiter (lib/rotationTurn.ts, Blöcke).
+    const addingBlock = (rounds ?? []).length > 0;
+    if (addingBlock) {
+      const { data: openRounds, error: orErr } = await sb
+        .from("rounds")
+        .select("id")
+        .eq("tournament_id", t.id)
+        .eq("status", "open")
+        .limit(1);
+      if (orErr) {
+        return NextResponse.json({ ok: false, error: `Runden prüfen fehlgeschlagen: ${orErr.message}` }, { status: 500 });
+      }
+      if (openRounds && openRounds.length) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Round the Pinball: Es sind noch Durchgänge offen – weitere Runden erst, wenn alle Scores eingetragen sind.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
 
@@ -692,9 +707,22 @@ if (!machinesToValidate.length) {
     const allMachines = (machines as any[]) ?? [];
     const wantedMachineCount = rotationMachineCount ?? playerCount;
     const useMachineCount = Math.min(wantedMachineCount, allMachines.length);
-    const machinesForRotation = shuffle(allMachines).slice(0, useMachineCount);
+    // Nachlegen: zuerst Flipper, die in diesem Turnier noch nicht gespielt wurden (zufällig), danach die übrigen
+    const usedMachineIds = new Set((matches ?? []).map((m: any) => String(m.machine_id ?? "")).filter(Boolean));
+    const machinesForRotation = [
+      ...shuffle(allMachines.filter((m: any) => !usedMachineIds.has(String(m.id)))),
+      ...shuffle(allMachines.filter((m: any) => usedMachineIds.has(String(m.id)))),
+    ].slice(0, useMachineCount);
 
-    if (allMachines.length > useMachineCount) {
+    if (addingBlock) {
+      const fresh = machinesForRotation.filter((m: any) => !usedMachineIds.has(String(m.id))).length;
+      const again = machinesForRotation.length - fresh;
+      warnings.push(
+        `Round the Pinball: ${machinesForRotation.length} weitere Flipper-Runden erzeugt` +
+          (again > 0 ? ` (${fresh} neue Flipper, ${again} schon gespielte).` : ` (alles Flipper, die noch nicht dran waren).`) +
+          " Du kannst einen Flipper je Runde noch tauschen, solange dort kein Score steht."
+      );
+    } else if (allMachines.length > useMachineCount) {
       warnings.push(
         rotationMachineCount != null
           ? `Rotation: Es sind ${allMachines.length} Maschinen aktiv, genutzt werden ${useMachineCount} (wie gewählt).`

@@ -12,7 +12,7 @@
 // Flipper, sobald alle dort gespielt haben – nur wenn sein Spiel dort eine Premiere war.
 
 import { machineKey, personalKey } from "@/lib/recordWatch";
-import { rotationProgress, rotationWaveMap } from "@/lib/rotationTurn";
+import { rotationBlocksFrom, rotationProgress, rotationWaveMap } from "@/lib/rotationTurn";
 
 export type PremiereSlot = {
   matchId: string;
@@ -59,8 +59,9 @@ export function premiereSlots(data: PData, prior: PPrior): PremiereSlot[] {
   let curWave = Infinity;
   if (rotation) {
     const ids = matches.map((m) => String(m.id));
-    waveOf = rotationWaveMap(ids, mps);
-    const prog = rotationProgress(ids, mps);
+    const blocks = rotationBlocksFrom(data.rounds as any, matches as any);
+    waveOf = rotationWaveMap(ids, mps, undefined, blocks);
+    const prog = rotationProgress(ids, mps, undefined, blocks);
     curWave = prog.done ? Infinity : prog.current;
   }
   const order = (mp: { match_id: string; player_id: string }) => {

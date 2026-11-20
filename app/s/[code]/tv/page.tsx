@@ -47,7 +47,7 @@ import { formatLabel as formatLabelLib } from "@/lib/formatLabel";
 import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
 import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import PlayerQrWall, { loadPlayerLinks, type QrWallPlayer } from "@/components/PlayerQrWall";
-import { rotationActiveMap, rotationProgress } from "@/lib/rotationTurn";
+import { rotationActiveMap, rotationBlocksFrom, rotationProgress } from "@/lib/rotationTurn";
 import RotationProgressBar from "@/components/RotationProgressBar";
 import RotationTurnSplash from "@/components/RotationTurnSplash";
 import { type RotationTimerState } from "@/components/RotationTimerBadge";
@@ -199,6 +199,7 @@ type Round = {
   format: string | null;
   status: string | null;
   elo_enabled?: boolean | null;
+  created_at?: string | null;
 };
 type StartRating = { profile_id: string; rating_before: number | null };
 type Match = { id: string; round_id: string; machine_id: string | null };
@@ -535,7 +536,9 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       isRotation && data
         ? rotationProgress(
             (data.matches ?? []).map((m) => m.id),
-            data.match_players ?? []
+            data.match_players ?? [],
+            undefined,
+            rotationBlocksFrom(data.rounds, data.matches) // 🧱 nachgelegte Runden: weiterzählen
           )
         : null,
     [data, isRotation]

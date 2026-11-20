@@ -1,5 +1,6 @@
 // ⏱️ Round the Pinball: Timer-Stand speichern (Admin-iPad → TV zeigt "Timer läuft").
-// POST { code, state: "running" | "paused" | "off", remainingMs?, durationSec? }
+// POST { code, state: "running" | "paused" | "prestart" | "off", remainingMs?, durationSec? }
+// remainingMs = Restzeit des Timers (running/paused) bzw. bis zum Start (prestart)
 // Die Endzeit wird hier mit der SERVER-Uhr gebildet (Uhren von iPad und TV können abweichen).
 
 import { NextResponse } from "next/server";
@@ -16,7 +17,8 @@ export async function POST(req: Request) {
   if (!code) return NextResponse.json({ ok: false, error: "Code fehlt" }, { status: 400, headers: NO_STORE });
 
   const state = String(body.state ?? "");
-  if (state !== "running" && state !== "paused" && state !== "off") {
+  // "prestart" = 15-s-Countdown vor dem Start (für die Flipper-Displays; TV zeigt dabei nichts an)
+  if (state !== "running" && state !== "paused" && state !== "prestart" && state !== "off") {
     return NextResponse.json({ ok: false, error: "Ungültiger Zustand" }, { status: 400, headers: NO_STORE });
   }
   const remainingMs = Math.max(0, Math.round(Number(body.remainingMs) || 0));
@@ -28,6 +30,8 @@ export async function POST(req: Request) {
       : {
           state,
           endAt: state === "running" ? now + remainingMs : null,
+          // Countdown: wann der Timer losgeht (remainingMs = Restzeit bis zum Start)
+          startAt: state === "prestart" ? now + remainingMs : null,
           remainingMs,
           durationSec,
           at: now,
