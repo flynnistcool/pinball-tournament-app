@@ -252,6 +252,8 @@ type Column = {
   highscore: number | null;
   holder: string;
   cells: Record<string, Cell>;
+  /** 🧱 nachgelegte Runden: Block (1, 2, …); 0 = nur ein Block */
+  block: number;
 };
 type Row = {
   id: string;
@@ -474,6 +476,9 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       const sorted = [...matches].sort(
         (a, b) => (roundById[a.round_id]?.number ?? 0) - (roundById[b.round_id]?.number ?? 0)
       );
+      // 🧱 nachgelegte Runden: Block je Flipper-Spalte (0 = nur ein Block)
+      const blockOf = rotationBlocksFrom(data?.rounds, matches);
+      const blockKeys = Array.from(new Set(Object.values(blockOf ?? {}))).sort();
       for (const m of sorted) {
         const list = mpsByMatch[m.id] ?? [];
         const scored = list
@@ -522,7 +527,26 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
           highscore,
           holder,
           cells,
+          block: blockOf ? blockKeys.indexOf(blockOf[m.id] ?? "") + 1 : 0,
         });
+      }
+
+      // Gleicher Flipper mehrfach (z. B. nachgelegter Block): Turnier-Highscore über alle seine Spalten
+      const bestByName = new Map<string, { s: number; holder: string }>();
+      for (const c of columns) {
+        if (c.highscore == null) continue;
+        const k = c.machineName.trim().toLowerCase();
+        const cur = bestByName.get(k);
+        if (!cur || c.highscore > cur.s) bestByName.set(k, { s: c.highscore, holder: c.holder });
+        else if (c.highscore === cur.s && c.holder && !cur.holder.split(" & ").includes(c.holder))
+          bestByName.set(k, { s: cur.s, holder: `${cur.holder} & ${c.holder}` });
+      }
+      for (const c of columns) {
+        const best = bestByName.get(c.machineName.trim().toLowerCase());
+        if (best) {
+          c.highscore = best.s;
+          c.holder = best.holder;
+        }
       }
     }
 
@@ -1847,11 +1871,51 @@ function RotationTable({
     return () => window.clearTimeout(id);
   }, [recPhase]);
 
+  // 🧱 nachgelegte Runden: Spalten nach Block gruppieren (Kopfzeile + Trennstrich, frühere Blöcke blasser)
+  const lastBlock = columns.reduce((mx, c) => Math.max(mx, c.block), 0);
+  const blockGroups: { block: number; count: number; done: boolean }[] = [];
+  if (lastBlock > 1) {
+    for (const c of columns) {
+      const g = blockGroups[blockGroups.length - 1];
+      if (g && g.block === c.block) {
+        g.count++;
+        g.done = g.done && c.finished;
+      } else blockGroups.push({ block: c.block, count: 1, done: c.finished });
+    }
+  }
+  const blockStartCol = (i: number) => lastBlock > 1 && i > 0 && columns[i - 1].block !== columns[i].block;
+  const oldBlock = (c: Column) => lastBlock > 1 && c.block < lastBlock;
+
   return (
     <div className="overflow-hidden rounded-3xl bg-white/[0.04] ring-1 ring-white/10 shadow-2xl backdrop-blur">
       {/* feste Basisgröße – das Einpassen auf den Bildschirm übernimmt scale() */}
       <table className="w-full border-collapse text-[20px]">
         <thead>
+          {blockGroups.length > 1 ? (
+            <tr>
+              <th colSpan={2} />
+              {blockGroups.map((g, i) => (
+                <th
+                  key={`${g.block}-${i}`}
+                  colSpan={g.count}
+                  className={"px-2 pt-3 " + (i > 0 ? "border-l-2 border-sky-300/30" : "")}
+                >
+                  <div
+                    className={
+                      "mx-auto w-fit rounded-full px-3 py-0.5 text-xs font-bold uppercase tracking-widest ring-1 " +
+                      (g.block < lastBlock
+                        ? "bg-white/5 text-white/45 ring-white/15"
+                        : "bg-sky-500/20 text-sky-200 ring-sky-300/40")
+                    }
+                  >
+                    🧱 Block {g.block}
+                    {g.done ? " ✓" : ""}
+                  </div>
+                </th>
+              ))}
+              <th />
+            </tr>
+          ) : null}
           <tr className="align-bottom">
             {corner ? (
               <th colSpan={2} className="px-3 pb-3 pt-4 text-left align-top font-normal">
@@ -1864,9 +1928,15 @@ function RotationTable({
                 <th className="px-3 pb-3 pt-4" />
               </>
             )}
-            {columns.map((c) => (
-              <th key={c.matchId} className="px-2 pb-2 pt-3 text-center font-normal">
-                <div className="mx-auto flex w-[8.5em] flex-col items-center gap-0.5">
+            {columns.map((c, ci) => (
+              <th
+                key={c.matchId}
+                className={
+                  "px-2 pb-2 pt-3 text-center font-normal" +
+                  (blockStartCol(ci) ? " border-l-2 border-sky-300/30" : "")
+                }
+              >
+                <div className={"mx-auto flex w-[8.5em] flex-col items-center gap-0.5" + (oldBlock(c) ? " opacity-60" : "")}>
                   {/* Flipper-Icon */}
                   <span
                     className={`flex h-8 w-8 items-center justify-center rounded-lg text-xl ring-1 ${
@@ -1929,12 +1999,15 @@ function RotationTable({
                     </div>
                   </div>
                 </td>
-                {columns.map((c) => {
+                {columns.map((c, ci) => {
                   const cell = c.cells[r.id];
+                  // 🧱 Trennstrich vor jedem neuen Block, frühere Blöcke etwas blasser
+                  const blockCls =
+                    (blockStartCol(ci) ? " border-l-2 border-sky-300/30" : "") + (oldBlock(c) ? " opacity-60" : "");
                   if (!cell && c.activePlayerId === r.id) {
                     // ▶ spielt gerade an diesem Flipper
                     return (
-                      <td key={c.matchId} className="px-1.5 py-1.5 text-center">
+                      <td key={c.matchId} className={"px-1.5 py-1.5 text-center" + blockCls}>
                         <div className="mx-auto flex w-[7.5em] flex-col items-center justify-center rounded-xl bg-sky-500/20 px-2 py-1 ring-2 ring-sky-400/80 shadow-[0_0_16px_rgba(56,189,248,0.45)]">
                           <span className="animate-pulse text-[1.1em] font-extrabold text-sky-300">▶</span>
                           <span className="text-[0.65em] font-semibold uppercase tracking-wider text-sky-200">
@@ -1946,14 +2019,14 @@ function RotationTable({
                   }
                   if (!cell) {
                     return (
-                      <td key={c.matchId} className="px-2 py-2 text-center text-white/15">
+                      <td key={c.matchId} className={"px-2 py-2 text-center text-white/15" + blockCls}>
                         ·
                       </td>
                     );
                   }
                   const cp = podium(cell.place);
                   return (
-                    <td key={c.matchId} className="px-1.5 py-1.5 text-center">
+                    <td key={c.matchId} className={"px-1.5 py-1.5 text-center" + blockCls}>
                       <div
                         className={`mx-auto w-[7.5em] rounded-xl px-2 py-1 transition-transform group-hover:scale-105 ${
                           cell.provisional

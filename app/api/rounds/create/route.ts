@@ -707,12 +707,31 @@ if (!machinesToValidate.length) {
     const allMachines = (machines as any[]) ?? [];
     const wantedMachineCount = rotationMachineCount ?? playerCount;
     const useMachineCount = Math.min(wantedMachineCount, allMachines.length);
-    // Nachlegen: zuerst Flipper, die in diesem Turnier noch nicht gespielt wurden (zufällig), danach die übrigen
-    const usedMachineIds = new Set((matches ?? []).map((m: any) => String(m.machine_id ?? "")).filter(Boolean));
-    const machinesForRotation = [
-      ...shuffle(allMachines.filter((m: any) => !usedMachineIds.has(String(m.id)))),
-      ...shuffle(allMachines.filter((m: any) => usedMachineIds.has(String(m.id)))),
-    ].slice(0, useMachineCount);
+    // Nachlegen: zuerst Flipper, die in diesem Turnier noch nicht gespielt wurden (zufällig), danach die übrigen.
+    // Vergleich über den NAMEN (gleicher Flipper kann mehrfach in der Liste stehen bzw. wurde getauscht);
+    // je Block jeder Name höchstens einmal, solange genug verschiedene da sind.
+    const nameKey = (m: any) => String(m?.name ?? "").trim().toLowerCase() || `id:${String(m?.id ?? "")}`;
+    const machineById = new Map(allMachines.map((m: any) => [String(m.id), m]));
+    const usedNames = new Set(
+      (matches ?? [])
+        .map((m: any) => machineById.get(String(m.machine_id ?? "")) ?? (machinesRaw ?? []).find((x: any) => String(x.id) === String(m.machine_id ?? "")))
+        .filter(Boolean)
+        .map(nameKey)
+    );
+    const isUsed = (m: any) => usedNames.has(nameKey(m));
+    const pickOrder = [...shuffle(allMachines.filter((m: any) => !isUsed(m))), ...shuffle(allMachines.filter((m: any) => isUsed(m)))];
+    const firstOfName: any[] = [];
+    const dupes: any[] = [];
+    const seenNames = new Set<string>();
+    for (const m of pickOrder) {
+      if (seenNames.has(nameKey(m))) dupes.push(m);
+      else {
+        seenNames.add(nameKey(m));
+        firstOfName.push(m);
+      }
+    }
+    const machinesForRotation = [...firstOfName, ...dupes].slice(0, useMachineCount);
+    const usedMachineIds = new Set(machinesForRotation.filter((m: any) => isUsed(m)).map((m: any) => String(m.id)));
 
     if (addingBlock) {
       const fresh = machinesForRotation.filter((m: any) => !usedMachineIds.has(String(m.id))).length;
