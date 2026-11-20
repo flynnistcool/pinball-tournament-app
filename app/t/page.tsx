@@ -6511,15 +6511,21 @@ function RoundMatchesCard({
 
   // ✅ Rotation: welcher Flipper ist in welcher Runde gewählt? (machineId -> [{matchId, roundNo}])
   // Grundlage für Doppel-Prüfung beim Score-Speichern und Hinweis im Dropdown.
+  // 🧱 nachgelegte Runden: "nur einmal" gilt je Block (block = Nummer des Blocks, 1 = erster)
   const rotationMachineUse = useMemo(() => {
     const roundNoById: Record<string, number> = {};
     for (const r of rounds ?? []) roundNoById[String(r.id)] = Number(r.number);
-    const map: Record<string, { matchId: string; roundNo: number }[]> = {};
+    const blockKeys = Array.from(new Set((rounds ?? []).map((r: any) => String(r?.created_at ?? "")).filter(Boolean))).sort();
+    const blockByRound: Record<string, number> = {};
+    for (const r of rounds ?? [])
+      blockByRound[String(r.id)] = blockKeys.length > 1 ? blockKeys.indexOf(String((r as any)?.created_at ?? "")) + 1 : 1;
+    const map: Record<string, { matchId: string; roundNo: number; block: number }[]> = {};
     for (const m of matches ?? []) {
       if (!m.machine_id) continue;
       (map[m.machine_id] ||= []).push({
         matchId: String(m.id),
         roundNo: roundNoById[String((m as any).round_id)] ?? 0,
+        block: blockByRound[String((m as any).round_id)] ?? 1,
       });
     }
     for (const id of Object.keys(map)) map[id].sort((a, b) => a.roundNo - b.roundNo);
@@ -7485,11 +7491,17 @@ function elimSpeak(text: string, lang: SpeechLang = "en") {
   function rotationDuplicateMachinesText(): string {
     if (!isRotationFormat) return "";
     const lines: string[] = [];
+    // 🧱 je Block prüfen: in einem neuen Block darf ein früher gespielter Flipper wieder vorkommen
     for (const [machineId, uses] of Object.entries(rotationMachineUse)) {
-      if (uses.length < 2) continue;
-      const name = machinesInfoById?.[machineId]?.name ?? "Unbekannter Flipper";
-      const roundsTxt = uses.map((u) => `#${u.roundNo}`).join(", ");
-      lines.push(`• „${name}“ ist mehrfach gewählt: Runde ${roundsTxt}`);
+      const byBlock: Record<number, typeof uses> = {};
+      for (const u of uses) (byBlock[u.block] ||= []).push(u);
+      for (const [block, list] of Object.entries(byBlock)) {
+        if (list.length < 2) continue;
+        const name = machinesInfoById?.[machineId]?.name ?? "Unbekannter Flipper";
+        const roundsTxt = list.map((u) => `#${u.roundNo}`).join(", ");
+        const multi = Object.keys(byBlock).length > 1 || uses.some((u) => u.block > 1);
+        lines.push(`• „${name}“ ist mehrfach gewählt: Runde ${roundsTxt}${multi ? ` (Block ${block})` : ""}`);
+      }
     }
     return lines.join("\n");
   }
@@ -7503,7 +7515,7 @@ function elimSpeak(text: string, lang: SpeechLang = "en") {
       if (dupText) {
         alert(
           "⚠️ Score wurde NICHT gespeichert.\n\n" +
-            "Im Modus „Round the Pinball“ darf jeder Flipper nur einmal vorkommen:\n\n" +
+            "Im Modus „Round the Pinball“ darf jeder Flipper nur einmal vorkommen (je Block):\n\n" +
             dupText +
             "\n\nBitte zuerst die Flipper-Auswahl korrigieren."
         );
@@ -8323,16 +8335,32 @@ disabled={
                                       <option value="">Maschine wählen…</option>
                                       {Object.entries(machinesInfoById).map(([id, info]) => {
                                         // ✅ Rotation: Hinweis, wenn Flipper schon in einer anderen Runde gewählt ist
-                                        const otherRounds = isRotationFormat
-                                          ? (rotationMachineUse[id] ?? [])
-                                              .filter((u) => u.matchId !== String(m.id))
-                                              .map((u) => `#${u.roundNo}`)
-                                          : [];
+                                        // 🧱 nur im selben Block ist "schon in" ein Problem; frühere Blöcke = nur Hinweis
+                                        const uses = isRotationFormat ? rotationMachineUse[id] ?? [] : [];
+                                        const myBlock =
+                                          Object.values(rotationMachineUse)
+                                            .flat()
+                                            .find((u) => u.matchId === String(m.id))?.block ??
+                                          (() => {
+                                            const keys = Array.from(
+                                              new Set((rounds ?? []).map((x: any) => String(x?.created_at ?? "")).filter(Boolean))
+                                            ).sort();
+                                            const rr = (rounds ?? []).find((x: any) => String(x.id) === String(m.round_id));
+                                            return keys.length > 1 ? keys.indexOf(String(rr?.created_at ?? "")) + 1 : 1;
+                                          })();
+                                        const otherRounds = uses
+                                          .filter((u) => u.matchId !== String(m.id) && u.block === myBlock)
+                                          .map((u) => `#${u.roundNo}`);
+                                        const earlierBlocks = Array.from(
+                                          new Set(uses.filter((u) => u.block < myBlock).map((u) => u.block))
+                                        );
                                         return (
                                           <option key={id} value={id}>
                                             {info.name}
                                             {otherRounds.length > 0
                                               ? ` (schon in ${otherRounds.join(", ")})`
+                                              : earlierBlocks.length > 0
+                                              ? ` (gespielt in Block ${earlierBlocks.join(", ")})`
                                               : ""}
                                           </option>
                                         );
