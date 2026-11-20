@@ -456,6 +456,32 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     },
   },
   {
+    id: "scoreThanks",
+    icon: "📊",
+    title: "Lob fürs Score-Eintragen (1. und 3. Score)",
+    when: "Matchplay & Co.: jemand trägt am Handy Scores ein (eigene oder die der Mitspieler) – beim 1. und 3. Score im Turnier",
+    devices: { phone: PHONE_ME },
+  },
+  {
+    id: "scoreHelper",
+    icon: "📊",
+    title: "Score-Profi (ab 5 Scores)",
+    when: "Matchplay & Co.: jemand hat am Handy schon 5, 10, 15 … Scores im Turnier eingetragen",
+    devices: {
+      ticker: TICKER,
+      phone: PHONE_ME,
+      tv: { where: "kleine Karte unten links", seconds: 6, sound: { kind: "ding", label: "Ding" } },
+      admin: { where: "kleine Karte unten links", seconds: 4, sound: { kind: "ding", label: "Ding" }, note: "Antippen schließt" },
+    },
+  },
+  {
+    id: "scoreTip",
+    icon: "💡",
+    title: "Tipp: Scores eintragen",
+    when: "Matchplay & Co.: jemand trägt am Handy ein Match nur mit Plätzen ein (ohne Scores) – einmal pro Turnier",
+    devices: { phone: PHONE_ME },
+  },
+  {
     id: "scoreForm",
     icon: "📊",
     title: "Shortnews: Score im Vergleich zum eigenen Schnitt",
@@ -669,7 +695,7 @@ export function notifSetting(
 // ─────────────────────────────────────────────────────────────────────────────
 // 🏷️ Bereich einer Mitteilung – worauf bezieht sie sich? (Plakette in Ticker, Einblendung, Einstellungen)
 
-export type NotifScope = "turnier" | "30tage" | "allzeit" | "duell" | "short" | "spieler";
+export type NotifScope = "turnier" | "30tage" | "allzeit" | "duell" | "short" | "spieler" | "team";
 
 export const SCOPE_INFO: Record<NotifScope, { icon: string; label: string; long: string }> = {
   turnier: { icon: "🏟️", label: "Turnier", long: "in diesem Turnier" },
@@ -679,6 +705,8 @@ export const SCOPE_INFO: Record<NotifScope, { icon: string; label: string; long:
   duell: { icon: "♾️", label: "Allzeit · Duell", long: "Duell-Bilanz über alle Turniere" },
   // Spieler-Meldung: dreht sich um einen Spieler (Serie beendet …)
   spieler: { icon: "👤", label: "Spieler", long: "über einen Spieler in diesem Turnier" },
+  // Team: Lob/Tipp fürs Mithelfen beim Eintragen (Scores am Handy)
+  team: { icon: "🤝", label: "Team", long: "Mithelfen beim Eintragen der Scores" },
   short: { icon: "📰", label: "Ergebnis", long: "kurzes Ergebnis aus diesem Turnier (Shortnews)" },
 };
 
@@ -720,6 +748,9 @@ const SCOPE_OF: Record<string, NotifScope> = {
   matchShort: "short",
   waveShort: "short",
   scoreForm: "spieler",
+  scoreThanks: "team",
+  scoreHelper: "team",
+  scoreTip: "team",
 };
 
 export function scopeOf(kind: string): NotifScope | null {

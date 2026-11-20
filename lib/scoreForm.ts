@@ -121,6 +121,16 @@ export function scoreForm(score: number, avg: number | null | undefined, n: numb
   };
 }
 
+/** Score-Form-Zeile in Vergleich + Spruch teilen ("… (−100 %)" | "🙈 Streichergebnis. Abhaken – …") – null = passt nicht */
+export function splitFormLine(line: string | null | undefined): { compare: string; slogan: string } | null {
+  const s = String(line ?? "");
+  const i = s.indexOf(" – "); // erster Gedankenstrich trennt (im Spruch kann noch einer stehen)
+  if (i <= 0) return null;
+  const compare = s.slice(0, i).trim();
+  const slogan = s.slice(i + 3).trim();
+  return compare && slogan ? { compare, slogan } : null;
+}
+
 /** Beschriftung des Punkteniveaus für Mouseover/Erklärungen */
 export function levelText(level: string | null | undefined): string {
   return level === "high" ? "mit Extraball" : "ohne Extraball / Round the Pinball";

@@ -14,9 +14,10 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import ScopeChip from "@/components/ScopeChip";
 import { parseUpsetBody } from "@/lib/upsetText";
 import { closeChancesOf } from "@/lib/closeMatch";
+import { splitFormLine } from "@/lib/scoreForm";
 
 const FOR_ALL = new Set(["record", "month", "flawless"]);
-const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark", "closeMatch"]);
+const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark", "closeMatch", "scoreThanks", "scoreHelper", "scoreTip"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -40,6 +41,10 @@ const TONE: Record<string, string> = {
   eloMark: "border-emerald-200 bg-emerald-50 text-emerald-900",
   scoreForm: "border-indigo-200 bg-indigo-50 text-indigo-900",
   closeMatch: "border-amber-200 bg-amber-50 text-amber-900",
+  // 🤝 Team (Türkis)
+  scoreThanks: "border-teal-200 bg-teal-50 text-teal-900",
+  scoreHelper: "border-teal-300 bg-gradient-to-r from-teal-50 to-cyan-50 text-teal-900",
+  scoreTip: "border-teal-200 bg-teal-50 text-teal-900",
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
@@ -157,6 +162,20 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
       }
       return { title: me ? "Auf Messers Schneide! ⚖️" : x.title, text: x.body };
     }
+    case "scoreThanks":
+      return d.n === 1
+        ? { title: "Danke für deinen Score! 📊", text: "Damit zählt er für Highscores, Bestwerte & Score-Form. Weiter so!" }
+        : { title: "Score-Sammler! 📊", text: `Schon ${fmt(d.n)} Scores von dir eingetragen – stark!` };
+    case "scoreHelper":
+      return {
+        title: Number(d.n) >= 15 ? "Score-Legende! 📊🏆" : Number(d.n) >= 10 ? "Score-Held! 📊📊" : "Score-Profi! 📊",
+        text: `${fmt(d.n)} Scores hast du in diesem Turnier eingetragen – du machst das Turnier spannender! 👏`,
+      };
+    case "scoreTip":
+      return {
+        title: "Tipp: Trag auch die Scores ein! 💡",
+        text: "Mit Scores gibt's Highscores, Bestwerte, Score-Form, Fotofinish & mehr – richtig cool! 😎",
+      };
     case "streakEnd":
       return {
         title: "Serie beendet! 🧯",
@@ -285,6 +304,12 @@ export default function PhoneFeedCards({
             </span>
           ) : closeMine ? (
             <CloseCard x={x} rows={closeMine} meId={String(meId)} />
+          ) : x.kind === "scoreForm" && splitFormLine(t.text) ? (
+            // 📊 Vergleich oben, Spruch kursiv in eigener Zeile
+            <span className="block text-sm">
+              {splitFormLine(t.text)!.compare}
+              <span className="mt-0.5 block italic opacity-90">{splitFormLine(t.text)!.slogan}</span>
+            </span>
           ) : (
             <span className="block text-sm">{t.text}</span>
           )}

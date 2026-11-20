@@ -10,6 +10,7 @@ import type { FeedItem, FeedItemInput } from "@/lib/feed";
 import { NOTIFICATIONS, SCOPE_INFO, notifSetting, scopeOf } from "@/lib/notifications";
 import { boldNameParts, momentNameParts, namesFromData } from "@/lib/momentNames";
 import { closeChancesOf, type CloseChance } from "@/lib/closeMatch";
+import { splitFormLine } from "@/lib/scoreForm";
 
 // Icons aus den Einstellungen statt des gespeicherten Icons – nur für Arten mit festem Icon
 // (andere Arten wählen ihr Icon je Meldung, z. B. Serien/Momente). Alte 🎯-Icons werden immer ersetzt.
@@ -541,6 +542,8 @@ export default function LiveTicker({
                             ? "bg-gradient-to-r from-amber-200/15 to-amber-200/[0.05]"
                             : sc === "duell"
                             ? "bg-gradient-to-r from-rose-400/20 to-rose-400/[0.06]"
+                            : sc === "team"
+                            ? "bg-gradient-to-r from-teal-400/20 to-teal-400/[0.06]"
                             : "bg-white/[0.03]")
                         : "px-2 py-1.5 " +
                           (isNew
@@ -553,11 +556,13 @@ export default function LiveTicker({
                             ? "bg-gradient-to-r from-[#f8efdc] to-[#fdf9f1]"
                             : sc === "duell"
                             ? "bg-gradient-to-r from-[#fde6ea] to-[#fff8f9]"
+                            : sc === "team"
+                            ? "bg-gradient-to-r from-teal-50 to-[#f5fdfc]"
                             : "bg-neutral-50")) + edge)
                 }
                 style={{
                   ...(isNew ? { animation: "tickerIn 0.6s ease-out both" } : {}),
-                  ...(x.kind === "premiereWin" || x.kind === "wins" || x.kind === "upset" || x.kind === "superfinalStart" || x.kind === "superfinalChampion"
+                  ...(x.kind === "premiereWin" || x.kind === "wins" || x.kind === "upset" || x.kind === "leader" || x.kind === "superfinalStart" || x.kind === "superfinalChampion"
                     ? { position: "relative", overflow: "hidden", isolation: "isolate" }
                     : {}),
                 }}
@@ -566,8 +571,8 @@ export default function LiveTicker({
                 {x.kind === "premiereWin" || x.kind === "wins" ? <TickerConfetti tv={tv} /> : null}
                 {/* 🧊 Favoritensturz: Eissplitter + Riss + ⚡ */}
                 {x.kind === "upset" ? <TickerIceCrack tv={tv} /> : null}
-                {/* 🏆 Superfinale gestartet / 👑 Super Grand Champion: gold-sandfarbene Sterne */}
-                {x.kind === "superfinalStart" || x.kind === "superfinalChampion" ? <TickerGoldStars tv={tv} /> : null}
+                {/* 🏆 Superfinale gestartet / 👑 Super Grand Champion / 👑 Neuer Tabellenführer: gold-sandfarbene Sterne */}
+                {x.kind === "superfinalStart" || x.kind === "superfinalChampion" || x.kind === "leader" ? <TickerGoldStars tv={tv} /> : null}
                 <span className={tv ? "text-2xl leading-none" : "text-base leading-none"}>{tickerIcon(x)}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
@@ -626,6 +631,12 @@ export default function LiveTicker({
                             {x.body.slice(0, x.body.indexOf(NAME_FIRST[x.kind]))}
                           </b>
                           {x.body.slice(x.body.indexOf(NAME_FIRST[x.kind]))}
+                        </>
+                      ) : x.kind === "scoreForm" && splitFormLine(x.body) ? (
+                        // 📊 Vergleich oben, Spruch kursiv in eigener Zeile
+                        <>
+                          {splitFormLine(x.body)!.compare}
+                          <span className={"mt-0.5 block italic " + (tv ? "text-amber-200/90" : "text-amber-800/90")}>{splitFormLine(x.body)!.slogan}</span>
                         </>
                       ) : x.kind === "closeMatch" && closeChancesOf(x.data).length >= 2 ? (
                         <CloseBody item={x} tv={tv} />

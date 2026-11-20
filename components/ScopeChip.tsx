@@ -11,6 +11,7 @@ const LOOK: Record<NotifScope, { light: string; dark: string }> = {
   duell: { light: "bg-rose-50 text-rose-700 ring-rose-200", dark: "bg-rose-400/15 text-rose-200 ring-rose-300/30" },
   // Spieler = Farben der früheren Allzeit-Plakette (Sand/Bernstein)
   spieler: { light: "bg-amber-50 text-amber-800 ring-amber-200", dark: "bg-amber-400/15 text-amber-200 ring-amber-300/30" },
+  team: { light: "bg-teal-50 text-teal-700 ring-teal-200", dark: "bg-teal-400/15 text-teal-200 ring-teal-300/30" },
   short: { light: "bg-neutral-100 text-neutral-600 ring-neutral-200", dark: "bg-white/10 text-white/70 ring-white/20" },
 };
 

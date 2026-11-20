@@ -11,14 +11,16 @@ import { createPortal } from "react-dom";
 import type { FeedItem } from "@/lib/feed";
 import { SCOPE_INFO, notifSetting, scopeOf } from "@/lib/notifications";
 import { closeChancesOf } from "@/lib/closeMatch";
+import { boldNameParts, namesFromData } from "@/lib/momentNames";
+import { splitFormLine } from "@/lib/scoreForm";
 import { playSoundById } from "@/lib/playSound";
 import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { fmtScore, posLabel, shortLines, type ShortMatchLine, type ShortWaveLine } from "@/lib/shortNews";
 
 /** Arten, die als Karte aus dem Ticker kommen */
-const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm", "closeMatch"]);
+const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm", "closeMatch", "scoreHelper"]);
 /** 📰 Shortnews: kleine Karte unten links, eigene Warteschlange (hält die großen Karten nicht auf) */
-const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm", "closeMatch"]);
+const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm", "closeMatch", "scoreHelper"]);
 /** 📊 Score-Form im Admin rechts unten (stört dort nicht), sonst links unten */
 const RIGHT_IN_ADMIN = new Set(["scoreForm"]);
 /** große Karte in der Mitte mit Effekten */
@@ -402,8 +404,25 @@ function ShortNewsCard({ item, onClose, right = false }: { item: FeedItem; onClo
               ))}
             </div>
           )
+        ) : item.kind === "scoreForm" && splitFormLine(item.body) ? (
+          // 📊 Vergleich oben, Spruch kursiv in eigener Zeile
+          <div className="mt-1 text-[max(13px,1vw)] text-white/85">
+            {splitFormLine(item.body)!.compare}
+            <div className="mt-0.5 italic text-amber-200/90">{splitFormLine(item.body)!.slogan}</div>
+          </div>
         ) : item.body ? (
-          <div className="mt-1 text-[max(13px,1vw)] text-white/85">{item.body}</div>
+          <div className="mt-1 text-[max(13px,1vw)] text-white/85">
+            {/* Spielernamen fett (z. B. 📊 "Gerald hat schon 5 Scores eingetragen") */}
+            {(boldNameParts(item.body, namesFromData(item.data)) ?? [{ text: item.body, bold: false }]).map((p, i) =>
+              p.bold ? (
+                <b key={i} className="text-white">
+                  {p.text}
+                </b>
+              ) : (
+                <span key={i}>{p.text}</span>
+              )
+            )}
+          </div>
         ) : null}
         {onClose ? <div className="mt-1 text-[10px] text-white/40">Antippen schließt</div> : null}
       </div>

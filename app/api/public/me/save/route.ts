@@ -19,6 +19,7 @@ import { entryMode, eliminationExpected, positionsFromScores, toScore } from "@/
 import { rotationActiveMap } from "@/lib/rotationTurn";
 import { POST as setScorePost } from "@/app/api/match_players/set-score/route";
 import { POST as setPositionPost } from "@/app/api/match_players/set-position/route";
+import { scoreNudgeAfterPhoneSave } from "@/lib/scoreNudgeServer";
 
 export const dynamic = "force-dynamic";
 // Datenbank-Antworten NIE zwischenspeichern (sonst liefert Next.js alte Stände aus)
@@ -254,6 +255,17 @@ export async function POST(req: Request) {
         auto = "set";
       }
     }
+  }
+
+  // 📊 Lob fürs Score-Eintragen / 💡 Tipp, wenn nur Plätze kamen (Matchplay & Co.; Fehler egal)
+  if (mode === "full") {
+    await scoreNudgeAfterPhoneSave(sb, {
+      tournamentId: String(t.id),
+      matchId: String(matchId),
+      playerId: String(myId),
+      playerName: author.entered_by,
+      savedScore: entries.some((e) => "score" in e && e.score != null),
+    });
   }
 
   return NextResponse.json({ ok: true, auto });

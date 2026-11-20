@@ -8938,7 +8938,8 @@ disabled={
               // 🔒 Rotation: noch nicht dran (weiß, ohne Score) → Score-Feld gesperrt.
               // Editierbar: wer blau ist und wer schon einen Score hat (bis Turnierende).
               const rotationWaitLocked =
-                isRotationFormat && rotationActivePlayerId != null && !isActiveAtMachine && !hasSavedScore;
+                // auch dann gesperrt, wenn an diesem Flipper gerade niemand blau ist (Durchgang läuft woanders weiter)
+                isRotationFormat && !locked && !isActiveAtMachine && !hasSavedScore;
 
               // 📈 Siegchance + ★ Favorit (lib/favorite.ts): Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper.
               // Solange das Match unberührt ist, werden die Chancen eingefroren (lib/chanceSnapshots.ts → 🧊 Favoritensturz).
@@ -9044,6 +9045,7 @@ disabled={
                   disabled={dndDisabled}
                 >
                   <div
+                    id={`mprow-${mp.match_id}-${mp.player_id}`}
                     className={
                       "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-3 sm:py-2 " +
                       (isWinner
@@ -15242,7 +15244,12 @@ const tasksById = useMemo(() => {
             key: String(m.id),
             player: playersById?.[String(active[String(m.id)])]?.name ?? "?",
             machine: machinesInfoById?.[String(m.machine_id)]?.name ?? "Flipper",
-            onClick: () => scrollToRound(String(m.round_id)),
+            // direkt zur blauen Zeile (Mitte des Bildschirms) – nicht nur zum Flipper-Kopf oben in der Karte
+            onClick: () => {
+              const row = document.getElementById(`mprow-${String(m.id)}-${String(active[String(m.id)])}`);
+              if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+              else scrollToRound(String(m.round_id));
+            },
           }));
       })()}
     />

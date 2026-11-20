@@ -130,6 +130,7 @@ export function tickerPreviewSamples(): Sample[] {
     },
     moment("upset", { winnerChance: 0.23, loserChance: 0.77 }),
     moment("revenge", { prevRound: 1 }),
+    { key: "p|scoreHelper", kind: "scoreHelper", icon: "📊", title: "Score-Profi!", body: "Gerald hat schon 5 Scores eingetragen – Vorbild! 👏", data: { player: "Gerald", n: 5 } },
     {
       key: "p|scoreForm",
       kind: "scoreForm",
