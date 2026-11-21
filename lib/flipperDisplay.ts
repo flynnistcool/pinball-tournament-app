@@ -79,7 +79,149 @@ export function displayPinList(value: unknown): { code: string; at: string | nul
   return out;
 }
 
-export type DisplayMode = "alltime" | "lobby" | "turn" | "highscore" | "blockdone" | "final";
+export type DisplayMode =
+  | "alltime"
+  | "lobby"
+  | "turn"
+  | "highscore"
+  | "blockdone"
+  | "final"
+  // Matchplay / Swiss / Round Robin
+  | "mplay"
+  | "mwin"
+  | "slides";
+
+/** 🎯 Formate mit Runden + Paarungen (je Flipper ein Match pro Runde) */
+export const MATCH_DISPLAY_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
+
+const FORMAT_LABEL: Record<string, string> = {
+  matchplay: "MATCHPLAY",
+  swiss: "SWISS",
+  round_robin: "ROUND ROBIN",
+  rotation: "ROUND THE PINBALL",
+};
+
+/** Aufbauende Worte vor dem Spiel – je Spieler, Flipper und Runde ein anderer */
+export const MATCH_SAYINGS = [
+  "VIEL ERFOLG",
+  "DU SCHAFFST DAS",
+  "ZEIG WAS DU KANNST",
+  "VOLLE KONZENTRATION",
+  "JETZT GILT'S",
+  "HOL DIR DEN SIEG",
+  "RUHIG BLEIBEN",
+  "GUTE KUGELN",
+  "LASS ES KRACHEN",
+  "DEIN MOMENT",
+  "AUF GEHT'S",
+  "GIB ALLES",
+];
+
+/** Ein Bildschirm der Wechselanzeige (Rahmen; oben Text, unten Zahl/Name) */
+export type DisplaySlide = { top: string; bottom: string };
+
+/** Match dieses Flippers in der aktuellen Runde */
+export type DisplayMatch = {
+  matchId: string;
+  round: number;
+  /** Spieler in Startreihenfolge (Display-Text) */
+  players: string[];
+  /** wer gerade spielt (erster in der Startreihenfolge ohne Score/Platz) */
+  active: string | null;
+  /** persönlicher Bestwert des Spielenden an diesem Flipper (Location, alle Turniere inkl. diesem) */
+  activeBest: number | null;
+  finished: boolean;
+  /** Sieger (bei Gleichstand "A & B") + sein Score */
+  winner: { name: string; score: number | null } | null;
+};
+
+export type MatchDisplayInput = {
+  flipper: string;
+  format: string;
+  tournamentName: string | null;
+  hasRounds: boolean;
+  /** Match an diesem Flipper in der aktuellen Runde (null = Flipper diese Runde frei) */
+  match: DisplayMatch | null;
+  /** aktuelle Runde komplett fertig → Tabelle */
+  roundDone: boolean;
+  roundNo: number;
+  /** Tabelle (Platz, Name, Punkte) – Top 3 werden gezeigt */
+  standings: RankingEntry[];
+  /** bester Score an diesem Flipper im Turnier */
+  tournamentBest: DisplayRecord | null;
+  allTime: DisplayRecord | null;
+};
+
+export function matchSayingFor(flipper: string, player: string, round: number): string {
+  return MATCH_SAYINGS[hash(`${flipper.toLowerCase()}|${player.toLowerCase()}|${round}`) % MATCH_SAYINGS.length];
+}
+
+/**
+ * Matchplay / Swiss / Round Robin: was zeigt das Display an diesem Flipper?
+ *   lobby  – noch keine Runde
+ *   slides – Runde komplett fertig: Sieger hier + Tabelle Top 3 (Wechselanzeige mit Rahmen)
+ *   mplay  – Match läuft: wer spielt + Spruch + pers. Bestwert, Runde + Paarung
+ *   mwin   – Match hier fertig (andere spielen noch): Sieger
+ *   highscore/alltime – Flipper diese Runde frei
+ */
+export function matchDisplay(input: MatchDisplayInput): DisplayOutput & { slides?: DisplaySlide[] } {
+  const label = FORMAT_LABEL[input.format] ?? "TURNIER";
+  if (!input.hasRounds) {
+    return {
+      mode: "lobby",
+      top: `${label} - GLEICH GEHT'S LOS`,
+      bottom: displayText(input.tournamentName) || "TURNIER",
+      topColor: PINK,
+      bottomColor: GREEN,
+    };
+  }
+  const m = input.match;
+  if (input.roundDone && input.standings.length) {
+    const slides: DisplaySlide[] = [];
+    if (m?.winner) {
+      slides.push({
+        top: `RUNDE ${m.round} - SIEGER ${m.winner.name}!`,
+        bottom: m.winner.score != null ? displayScore(m.winner.score) : m.winner.name,
+      });
+    }
+    slides.push({ top: `TABELLE NACH RUNDE ${input.roundNo}`, bottom: "" });
+    for (const e of input.standings.slice(0, 3)) {
+      slides.push({ top: `${e.place}. ${e.name}`, bottom: `${e.points} PKT` });
+    }
+    return { mode: "slides", top: slides[0].top, bottom: slides[0].bottom, topColor: ORANGE, bottomColor: BLUE, slides };
+  }
+  if (m && !m.finished && m.active) {
+    const best = m.activeBest != null ? `PERS. BESTWERT ${displayScore(m.activeBest)}` : "HIER NOCH KEIN BESTWERT";
+    return {
+      mode: "mplay",
+      top: `${matchSayingFor(input.flipper, m.active, m.round)} ${m.active}!  ${best}  -  RUNDE ${m.round}: ${m.players.join(" - ")}`,
+      bottom: m.active,
+      topColor: GREEN,
+      bottomColor: BLUE,
+    };
+  }
+  if (m && m.finished && m.winner) {
+    return {
+      mode: "mwin",
+      top: `SIEGER ${m.winner.name}!  -  RUNDE ${m.round}: ${m.players.join(" - ")}`,
+      bottom: m.winner.score != null ? displayScore(m.winner.score) : m.winner.name,
+      topColor: YELLOW,
+      bottomColor: YELLOW,
+    };
+  }
+  // Flipper diese Runde frei → Turnier-Highscore (sonst Allzeit)
+  if (input.tournamentBest) {
+    const holder = displayText(input.tournamentBest.holder);
+    return {
+      mode: "highscore",
+      top: `FREI - TURNIER HIGHSCORE${holder ? `  ${holder}` : ""}`,
+      bottom: displayScore(input.tournamentBest.score),
+      topColor: ORANGE,
+      bottomColor: BLUE,
+    };
+  }
+  return allTimeView(input.flipper, input.allTime);
+}
 
 /** 🧱 Block fertig: bester Score an diesem Flipper je Block */
 export type BlockHighscore = { block: number; name: string; score: number };

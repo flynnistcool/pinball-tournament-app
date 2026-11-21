@@ -1,5 +1,6 @@
 // 📟 LED-Display am Flipper (Adafruit Matrix Portal): was soll es gerade zeigen?
-// GET /api/public/display?flipper=Godzilla&location=Spielhalle
+// GET /api/public/display?flipper=Godzilla&location=Spielhalle[&shown=CODE]
+//   shown = Turnier, das das Display gerade zeigt (für die Lösch-Explosion)
 //   → { ok: true, mode, top, bottom, topColor, bottomColor, poll, tournament,
 //       timer: { phase, toStart, toEnd }, active: "NAME" | null, scores: [{ name, score }] }
 //   timer/active/scores nur bei Round the Pinball (für 3-2-1-LOS, Schluss-Countdown, "Score eintragen")
@@ -7,6 +8,8 @@
 //   mode "final" + ranking: [{ place, name, points }], tournamentName – Turnier gerade beendet (≤ 10 Min.)
 //   deleted: ["CODE", …] – gemerkte, inzwischen gelöschte Turniere (Display: Explosion, dann Allzeit)
 //   icon: "🦖" | null – Flipper-Icon der Location (Display wählt danach sein Maskottchen)
+//   best: Turnier-Highscore am Flipper (Zahl) · Matchplay/Swiss/Round Robin: mode "mplay" | "mwin" | "slides"
+//     (+ matchId, slides: [{ top, bottom }]) – siehe lib/flipperDisplay.ts matchDisplay
 // Öffentlich (ohne Login, wie TV/Handy) – liefert nur Texte, die ohnehin am Infobildschirm stehen.
 //
 // flipper  = Flipper-Name wie in der App (Groß/Klein egal)
@@ -23,12 +26,15 @@ import { fetchAllIn } from "@/lib/supabaseChunks";
 import { loadMachineRecords } from "@/lib/feedContextServer";
 import { machineKey } from "@/lib/machineStats";
 import { rotationActiveMap, rotationBlocksFrom } from "@/lib/rotationTurn";
+import { finalRankingFromResults, loadMatchDisplay } from "@/lib/displayMatchServer";
 import {
   displayText,
   displayPinList,
   displayTimerInfo,
   displayTournamentKey,
   flipperDisplay,
+  matchDisplay,
+  MATCH_DISPLAY_FORMATS,
   tournamentRanking,
   type BlockHighscore,
   type DisplayRecord,
@@ -188,6 +194,14 @@ export async function GET(req: Request) {
       t = (ts ?? [])[0] as TRow | undefined;
     }
 
+    // 💥 Das Display meldet, welches Turnier es gerade zeigt (?shown=CODE) – gibt es das nicht mehr,
+    //    wurde es gelöscht (funktioniert auch ohne gemerkte Turnier-Liste)
+    const shown = String(url.searchParams.get("shown") ?? "").trim().toUpperCase();
+    if (shown && !deletedCodes.includes(shown) && shown !== String(t?.code ?? "").toUpperCase()) {
+      const { data: still, error: sErr } = await sb.from("tournaments").select("id").eq("code", shown).maybeSingle();
+      if (!sErr && !still) deletedCodes = [...deletedCodes, shown];
+    }
+
     let inTournament = false;
     let hasRounds = false;
     let activePlayer: string | null = null;
@@ -209,6 +223,50 @@ export async function GET(req: Request) {
           .map((m: { id: string }) => String(m.id))
       );
       inTournament = mine.size > 0;
+
+      // 🎯 Matchplay / Swiss / Round Robin: eigener Weg (lib/displayMatchServer.ts) – Round the Pinball unten
+      if (MATCH_DISPLAY_FORMATS.has(String(t.format ?? "")) && inTournament) {
+        const md = await loadMatchDisplay(sb, { id: t.id, location_id: t.location_id, format: t.format }, mine, flipper);
+        const recLoc = t.location_id ? String(t.location_id) : locationId;
+        let allTimeM: DisplayRecord | null = null;
+        if (recLoc) {
+          const r = (await allTimeRecords(sb, recLoc))[key];
+          if (r) allTimeM = { score: Number(r.score), holder: r.holder ?? null };
+        }
+        const iconM = recLoc ? (await machineIcons(sb, recLoc))[key] ?? null : null;
+        const outM = matchDisplay({
+          flipper,
+          format: String(t.format),
+          tournamentName: t.name,
+          hasRounds: md.hasRounds,
+          match: md.match,
+          roundDone: md.roundDone,
+          roundNo: md.roundNo,
+          standings: md.standings,
+          tournamentBest: md.tournamentBest,
+          allTime: allTimeM,
+        });
+        return NextResponse.json(
+          {
+            ok: true,
+            ...outM,
+            poll: POLL_SEC,
+            tournament: String(t.code),
+            timer: displayTimerInfo(null, 0),
+            active: md.match?.active ?? null,
+            scores: [],
+            best: md.tournamentBest?.score ?? null,
+            matchId: md.match?.matchId ?? null,
+            slides: outM.slides ?? [],
+            blocks: [],
+            ranking: [],
+            tournamentName: null,
+            deleted: deletedCodes,
+            icon: iconM,
+          },
+          { headers: NO_STORE }
+        );
+      }
 
       const { data: rounds, error: rErr } = await sb
         .from("rounds")
@@ -311,7 +369,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // 🏁 Kein laufendes Turnier: Round the Pinball vor ≤ 10 Min. beendet → Siegerliste
+    // 🏁 Kein laufendes Turnier: Round the Pinball / Matchplay & Co. vor ≤ 10 Min. beendet → Siegerliste
     //    (tournaments.finished_at aus supabase_tournament_finished_at.sql – fehlt die Spalte: keine Siegerliste)
     if (!t) {
       type FRow = { id: string; code: string; name: string | null; format: string | null };
@@ -329,7 +387,15 @@ export async function GET(req: Request) {
         if (fErr && !/finished_at/i.test(fErr.message)) return fail(`Turnier laden fehlgeschlagen: ${fErr.message}`, 500);
         ft = (fts ?? [])[0] as FRow | undefined;
       }
-      if (ft && ft.format === "rotation") {
+      // Matchplay & Co.: Endplatzierung aus der Auswertung (inkl. Superfinale), sonst wie unten berechnen
+      if (ft && MATCH_DISPLAY_FORMATS.has(String(ft.format ?? ""))) {
+        const fromResults = await finalRankingFromResults(sb, String(ft.id));
+        if (fromResults && fromResults.length) {
+          final = { name: displayText(ft.name), ranking: fromResults };
+          finalCode = String(ft.code);
+        }
+      }
+      if (ft && !final && (ft.format === "rotation" || MATCH_DISPLAY_FORMATS.has(String(ft.format ?? "")))) {
         const [{ data: fPlayers, error: fpErr }, { data: fRounds, error: frErr }] = await Promise.all([
           sb.from("players").select("id, name").eq("tournament_id", ft.id),
           sb.from("rounds").select("id, format").eq("tournament_id", ft.id),
@@ -402,6 +468,8 @@ export async function GET(req: Request) {
         timer,
         active: rtp && activePlayer ? displayText(activePlayer) : null,
         scores: rtp ? scores : [],
+        // 🏆 Turnier-Highscore an diesem Flipper (Zahl) – steigt er, fährt das Maskottchen
+        best: rtp ? tournamentBest?.score ?? null : null,
         // 🧱 alle Durchgänge fertig: Highscores je Block · 🏁 Turnier beendet: Siegerliste
         blocks: out.mode === "blockdone" ? blocksDone ?? [] : [],
         ranking: out.mode === "final" ? final?.ranking ?? [] : [],
