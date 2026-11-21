@@ -11,7 +11,7 @@
 //   highscore– Start gedrückt (Countdown), Timer läuft oder pausiert (oder niemand dran) → Turnier-Highscore
 //
 //   blockdone– alle Durchgänge fertig (Turnier läuft noch) → Highscores dieses Flippers je Block
-//   final    – Turnier gerade beendet (≤ 24 h, kein neues angelegt) → Siegerliste
+//   final    – Turnier gerade beendet (≤ 10 Min. nach "Turnier beenden", kein neues angelegt) → Siegerliste
 //
 // Die eingebaute Display-Schrift kennt nur ASCII → Umlaute werden zu AE/OE/UE, Emojis fallen weg.
 
@@ -58,6 +58,26 @@ export type DisplayInput = {
   /** 🏁 gerade beendetes Turnier (Round the Pinball): Name + Platzierungen */
   final?: { name: string | null; ranking: RankingEntry[] } | null;
 };
+
+/** 📟 app_settings-Schlüssel: zuletzt am Admin-iPad geöffnetes laufendes Turnier (je Location, null = allgemein) */
+export function displayTournamentKey(locationId: string | null): string {
+  return locationId ? `display_tournament:${locationId}` : "display_tournament";
+}
+
+/** so viele zuletzt geöffnete Turniere merken (je Location) */
+export const DISPLAY_PIN_MAX = 6;
+
+/** gemerkte Turniere aus app_settings.value (neuestes vorne; ältere Einträge hatten nur { code }) */
+export function displayPinList(value: unknown): { code: string; at: string | null }[] {
+  const v = (value ?? {}) as { code?: unknown; at?: unknown; list?: unknown };
+  const raw = Array.isArray(v.list) ? v.list : v.code ? [{ code: v.code, at: v.at }] : [];
+  const out: { code: string; at: string | null }[] = [];
+  for (const e of raw as { code?: unknown; at?: unknown }[]) {
+    const code = String(e?.code ?? "").trim().toUpperCase();
+    if (code && !out.some((x) => x.code === code)) out.push({ code, at: e?.at ? String(e.at) : null });
+  }
+  return out;
+}
 
 export type DisplayMode = "alltime" | "lobby" | "turn" | "highscore" | "blockdone" | "final";
 

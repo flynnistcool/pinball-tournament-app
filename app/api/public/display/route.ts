@@ -4,12 +4,17 @@
 //       timer: { phase, toStart, toEnd }, active: "NAME" | null, scores: [{ name, score }] }
 //   timer/active/scores nur bei Round the Pinball (für 3-2-1-LOS, Schluss-Countdown, "Score eintragen")
 //   mode "blockdone" + blocks: [{ block, name, score }] – alle Durchgänge fertig, Highscores je Block
-//   mode "final" + ranking: [{ place, name, points }], tournamentName – Turnier gerade beendet (≤ 24 h)
+//   mode "final" + ranking: [{ place, name, points }], tournamentName – Turnier gerade beendet (≤ 10 Min.)
+//   deleted: ["CODE", …] – gemerkte, inzwischen gelöschte Turniere (Display: Explosion, dann Allzeit)
+//   icon: "🦖" | null – Flipper-Icon der Location (Display wählt danach sein Maskottchen)
 // Öffentlich (ohne Login, wie TV/Handy) – liefert nur Texte, die ohnehin am Infobildschirm stehen.
 //
 // flipper  = Flipper-Name wie in der App (Groß/Klein egal)
 // location = Name der Location (optional; nötig für den Allzeit-Highscore, wenn kein Turnier läuft)
-// Laufendes Turnier = neuestes nicht beendetes Turnier (an dieser Location, falls angegeben).
+// Welches Turnier: 1) aus den am Admin-iPad geöffneten Turnieren (Liste, /api/display-tournament,
+//   app_settings "display_tournament:<location>") das neueste, in dem DIESER Flipper mitspielt –
+//   beendet: noch 10 Min. Siegerliste; gelöscht/später/Flipper nicht dabei: Allzeit-Highscore;
+//   2) nur falls noch nie eines gemerkt wurde: das neueste nicht beendete Turnier (an dieser Location).
 // Logik der Anzeige: lib/flipperDisplay.ts
 
 import { NextResponse } from "next/server";
@@ -20,7 +25,9 @@ import { machineKey } from "@/lib/machineStats";
 import { rotationActiveMap, rotationBlocksFrom } from "@/lib/rotationTurn";
 import {
   displayText,
+  displayPinList,
   displayTimerInfo,
+  displayTournamentKey,
   flipperDisplay,
   tournamentRanking,
   type BlockHighscore,
@@ -39,8 +46,8 @@ const POLL_SEC = 10;
 /** Allzeit-Rekorde ändern sich nur, wenn ein Turnier beendet wird → 5 Min. zwischenspeichern (je Location) */
 const ALLTIME_TTL_MS = 5 * 60_000;
 const NIL_ID = "00000000-0000-0000-0000-000000000000";
-/** Siegerliste nach Turnierende: höchstens so lange nach dem Anlegen des Turniers (danach wieder Allzeit) */
-const FINAL_SHOW_MS = 24 * 60 * 60_000;
+/** Siegerliste nach Turnierende: so lange nach "Turnier beenden" (danach wieder Allzeit-Highscore) */
+const FINAL_SHOW_MS = 10 * 60_000;
 
 const allTimeCache = new Map<string, { at: number; records: Record<string, { score: number; holder: string | null }> }>();
 
@@ -66,6 +73,21 @@ async function allTimeRecords(sb: Sb, locationId: string) {
   return records;
 }
 
+/** Flipper-Icons je Location (location_machines.icon_emoji) – 5 Min. zwischenspeichern */
+const iconCache = new Map<string, { at: number; icons: Record<string, string> }>();
+async function machineIcons(sb: Sb, locationId: string): Promise<Record<string, string>> {
+  const hit = iconCache.get(locationId);
+  if (hit && Date.now() - hit.at < ALLTIME_TTL_MS) return hit.icons;
+  const { data } = await sb.from("location_machines").select("name, icon_emoji").eq("location_id", locationId);
+  const icons: Record<string, string> = {};
+  for (const m of (data ?? []) as { name: string | null; icon_emoji: string | null }[]) {
+    const ic = String(m.icon_emoji ?? "").trim();
+    if (ic) icons[machineKey(m.name)] = ic;
+  }
+  iconCache.set(locationId, { at: Date.now(), icons });
+  return icons;
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -85,19 +107,86 @@ export async function GET(req: Request) {
       locationId = String((loc as { id: string }).id);
     }
 
-    // 🏁 laufendes Turnier
-    let tq = sb
-      .from("tournaments")
-      .select("id, code, name, format, location_id, rotation_timer, created_at")
-      .neq("status", "finished")
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (locationId) tq = tq.eq("location_id", locationId);
-    const { data: ts, error: tErr } = await tq;
-    if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
-    const t = (ts ?? [])[0] as
-      | { id: string; code: string; name: string | null; format: string | null; location_id: string | null; rotation_timer: DisplayTimer }
-      | undefined;
+    type TRow = {
+      id: string;
+      code: string;
+      name: string | null;
+      format: string | null;
+      location_id: string | null;
+      rotation_timer: DisplayTimer;
+      status?: string | null;
+    };
+    let t: TRow | undefined;
+    // 🏁 Kandidat für die Siegerliste (gemerktes Turnier, vor ≤ 10 Min. beendet)
+    let finalCandidate: TRow | null = null;
+    let pinnedUsed = false;
+    let deletedCodes: string[] = [];
+
+    // 📟 1) Am Admin-iPad geöffnete Turniere (Liste, neuestes vorne – app_settings, /api/display-tournament).
+    //    Dieses Display nimmt das neueste davon, in dem SEIN Flipper mitspielt (zwei iPads / zwei Turniere
+    //    an verschiedenen Flippern stören sich nicht). Gibt es eine Liste, wird NICHT geraten:
+    //    gelöscht → übersprungen, beendet → 10 Min. Siegerliste, sonst Allzeit-Highscore.
+    const { data: pinRow } = await sb
+      .from("app_settings")
+      .select("value")
+      .eq("key", displayTournamentKey(locationId))
+      .maybeSingle();
+    const pins = displayPinList((pinRow as { value?: unknown } | null)?.value);
+    if (pins.length) {
+      pinnedUsed = true;
+      const { data: pts, error: ptErr } = await sb
+        .from("tournaments")
+        .select("id, code, name, format, location_id, rotation_timer, status")
+        .in(
+          "code",
+          pins.map((p) => p.code)
+        );
+      if (ptErr) return fail(`Turnier laden fehlgeschlagen: ${ptErr.message}`, 500);
+      const byCode = new Map(((pts ?? []) as TRow[]).map((p) => [String(p.code).toUpperCase(), p]));
+      // 💥 gemerkt, aber nicht mehr da = gelöscht → das Display, das es gerade zeigte, spielt die Explosion
+      deletedCodes = pins.map((p) => p.code).filter((c) => !byCode.has(c));
+      const ids = ((pts ?? []) as TRow[]).map((p) => String(p.id));
+      const { data: pm, error: pmErr } = ids.length
+        ? await sb.from("machines").select("tournament_id, name, active").in("tournament_id", ids)
+        : { data: [], error: null };
+      if (pmErr) return fail(`Flipper laden fehlgeschlagen: ${pmErr.message}`, 500);
+      const withFlipper = new Set(
+        ((pm ?? []) as { tournament_id: string; name: string | null; active: boolean | null }[])
+          .filter((m) => machineKey(m.name) === key && m.active !== false)
+          .map((m) => String(m.tournament_id))
+      );
+      for (const pin of pins) {
+        const p = byCode.get(pin.code);
+        if (!p || !withFlipper.has(String(p.id))) continue; // gelöscht / Flipper spielt dort nicht mit
+        if (locationId && String(p.location_id ?? "") !== locationId) continue;
+        if (p.status !== "finished") {
+          t = p;
+          break;
+        }
+        // beendet: nur innerhalb von 10 Min. nach "Turnier beenden" (Spalte finished_at fehlt → nicht)
+        const { data: fa, error: faErr } = await sb.from("tournaments").select("finished_at").eq("id", p.id).maybeSingle();
+        const finRaw = !faErr ? (fa as { finished_at?: string | null } | null)?.finished_at : null;
+        const fin = finRaw ? Date.parse(String(finRaw)) : NaN;
+        if (Number.isFinite(fin) && Date.now() - fin < FINAL_SHOW_MS) {
+          finalCandidate = p;
+          break;
+        }
+      }
+    }
+
+    // 🏁 2) nur wenn noch NIE ein Turnier gemerkt wurde: automatisch das neueste nicht beendete (an der Location)
+    if (!pinnedUsed) {
+      let tq = sb
+        .from("tournaments")
+        .select("id, code, name, format, location_id, rotation_timer, created_at")
+        .neq("status", "finished")
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (locationId) tq = tq.eq("location_id", locationId);
+      const { data: ts, error: tErr } = await tq;
+      if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
+      t = (ts ?? [])[0] as TRow | undefined;
+    }
 
     let inTournament = false;
     let hasRounds = false;
@@ -222,19 +311,24 @@ export async function GET(req: Request) {
       }
     }
 
-    // 🏁 Kein laufendes Turnier: gerade beendetes Round the Pinball (≤ 24 h) → Siegerliste
+    // 🏁 Kein laufendes Turnier: Round the Pinball vor ≤ 10 Min. beendet → Siegerliste
+    //    (tournaments.finished_at aus supabase_tournament_finished_at.sql – fehlt die Spalte: keine Siegerliste)
     if (!t) {
-      let fq = sb
-        .from("tournaments")
-        .select("id, code, name, format, created_at")
-        .eq("status", "finished")
-        .gte("created_at", new Date(Date.now() - FINAL_SHOW_MS).toISOString())
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (locationId) fq = fq.eq("location_id", locationId);
-      const { data: fts, error: fErr } = await fq;
-      if (fErr) return fail(`Turnier laden fehlgeschlagen: ${fErr.message}`, 500);
-      const ft = (fts ?? [])[0] as { id: string; code: string; name: string | null; format: string | null } | undefined;
+      type FRow = { id: string; code: string; name: string | null; format: string | null };
+      let ft: FRow | undefined = finalCandidate ?? undefined;
+      if (!ft && !pinnedUsed) {
+        let fq = sb
+          .from("tournaments")
+          .select("id, code, name, format, finished_at")
+          .eq("status", "finished")
+          .gte("finished_at", new Date(Date.now() - FINAL_SHOW_MS).toISOString())
+          .order("finished_at", { ascending: false })
+          .limit(1);
+        if (locationId) fq = fq.eq("location_id", locationId);
+        const { data: fts, error: fErr } = await fq;
+        if (fErr && !/finished_at/i.test(fErr.message)) return fail(`Turnier laden fehlgeschlagen: ${fErr.message}`, 500);
+        ft = (fts ?? [])[0] as FRow | undefined;
+      }
       if (ft && ft.format === "rotation") {
         const [{ data: fPlayers, error: fpErr }, { data: fRounds, error: frErr }] = await Promise.all([
           sb.from("players").select("id, name").eq("tournament_id", ft.id),
@@ -278,6 +372,8 @@ export async function GET(req: Request) {
       const r = records[key];
       if (r) allTime = { score: Number(r.score), holder: r.holder ?? null };
     }
+    // 🦖 Icon des Flippers an der Location (Display wählt danach sein Maskottchen, falls nicht fest eingestellt)
+    const icon = recLocation ? (await machineIcons(sb, recLocation))[key] ?? null : null;
 
     const out = flipperDisplay({
       flipper,
@@ -310,6 +406,9 @@ export async function GET(req: Request) {
         blocks: out.mode === "blockdone" ? blocksDone ?? [] : [],
         ranking: out.mode === "final" ? final?.ranking ?? [] : [],
         tournamentName: out.mode === "final" ? final?.name ?? null : null,
+        // 💥 gelöschte (vorher gemerkte) Turniere – zeigte das Display eines davon, kommt die Explosion
+        deleted: deletedCodes,
+        icon,
       },
       { headers: NO_STORE }
     );

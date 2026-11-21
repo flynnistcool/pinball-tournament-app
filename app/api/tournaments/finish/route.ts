@@ -400,5 +400,15 @@ export async function POST(req: Request) {
     );
   }
 
+  // 🏁 Zeitpunkt des Beendens merken (Flipper-Display zeigt 10 Min. die Siegerliste) – nur beim ERSTEN Mal,
+  //    "Auswertung neu schreiben" startet die 10 Minuten nicht neu. Fehlt die Spalte noch
+  //    (supabase_tournament_finished_at.sql nicht ausgeführt) → einfach ohne, Beenden klappt trotzdem.
+  const { error: faErr } = await sb
+    .from("tournaments")
+    .update({ finished_at: new Date().toISOString() })
+    .eq("id", t.id)
+    .is("finished_at", null);
+  if (faErr) console.warn("finished_at nicht gesetzt (Spalte fehlt?):", faErr.message);
+
   return NextResponse.json({ ok: true, results: resultRows.length });
 }

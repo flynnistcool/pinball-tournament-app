@@ -20,6 +20,7 @@ import { rotationActiveMap } from "@/lib/rotationTurn";
 import { POST as setScorePost } from "@/app/api/match_players/set-score/route";
 import { POST as setPositionPost } from "@/app/api/match_players/set-position/route";
 import { scoreNudgeAfterPhoneSave } from "@/lib/scoreNudgeServer";
+import { pinDisplayTournament } from "@/lib/displayPinServer";
 
 export const dynamic = "force-dynamic";
 // Datenbank-Antworten NIE zwischenspeichern (sonst liefert Next.js alte Stände aus)
@@ -266,6 +267,12 @@ export async function POST(req: Request) {
       playerName: author.entered_by,
       savedScore: entries.some((e) => "score" in e && e.score != null),
     });
+  }
+
+  // 📟 Score am Handy → Flipper-Displays auf dieses Turnier (Fehler egal – Displays sind Zusatz)
+  if (entries.some((e) => "score" in e && e.score != null)) {
+    const pin = await pinDisplayTournament(sb, code).catch(() => null);
+    if (pin && !pin.ok) console.warn("Display-Turnier merken fehlgeschlagen:", pin.error);
   }
 
   return NextResponse.json({ ok: true, auto });

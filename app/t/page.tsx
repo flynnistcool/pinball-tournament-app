@@ -7569,6 +7569,16 @@ try {
         alert(j.error ?? "Speichern fehlgeschlagen");
       } else {
         onSaved();
+        // 📟 Hier wird gespielt → Flipper-Displays auf dieses Turnier (nebenbei, ohne zu warten)
+        if (score !== null) {
+          fetch("/api/display-tournament", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          }).catch(() => {
+            /* Displays sind nur Zusatz */
+          });
+        }
       }
     } catch {
       alert("Speichern fehlgeschlagen (Netzwerk setScore)");
@@ -13655,6 +13665,29 @@ useEffect(() => {
 
   const rotPaused = !rotRunning && Number.isFinite(rotTimer?.remainingMs);
 
+  // 📟 Flipper-Displays: dieses (laufende) Turnier anzeigen – beim Öffnen einmal melden (nur Admin).
+  //    Beendete Turniere (Archiv ansehen) melden nichts (Server prüft das auch). Siehe /api/display-tournament.
+  const displayPinnedRef = useRef<string | null>(null);
+  const [displayPinFlash, setDisplayPinFlash] = useState(false);
+  function pinDisplayTournament() {
+    if (!isAdmin || !code) return;
+    fetch("/api/display-tournament", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }).catch(() => {
+      /* Displays sind nur Zusatz */
+    });
+  }
+  useEffect(() => {
+    if (!isAdmin || !code || !data?.tournament) return;
+    if (data.tournament.status === "finished") return;
+    if (displayPinnedRef.current === code) return;
+    displayPinnedRef.current = code;
+    pinDisplayTournament();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, code, data?.tournament?.status, !!data?.tournament]);
+
   // ⏱️ Timer-Stand für den TV speichern ("Timer läuft" / "pausiert") – nur Admin, nur bei Änderungen
   // (nicht beim ersten Laden: sonst würde ein zweites Admin-Gerät einen laufenden Timer löschen)
   const rotTimerSyncRef = useRef<string | null>(null);
@@ -13916,6 +13949,9 @@ function rotStartGlobal(minutes = 10) {
 
 
   const dur = Math.max(1, Math.floor(minutes)) * 60;
+
+  // 📟 Start gedrückt → Displays sicher auf dieses Turnier (falls zwischendurch ein anderes geöffnet wurde)
+  pinDisplayTournament();
 
   // Prestart-Flags reset
   setRotPrestartEndAt(null);
@@ -14762,6 +14798,26 @@ const tasksById = useMemo(() => {
       matchSize={data?.tournament?.match_size}
       nPlayers={Array.isArray(data?.players) ? data.players.length : 0}
     />
+    {/* 📟 Flipper-Displays wieder auf dieses Turnier holen (falls jemand ein anderes geöffnet hat) */}
+    {isAdmin && data?.tournament?.status !== "finished" ? (
+      <button
+        type="button"
+        onClick={() => {
+          pinDisplayTournament();
+          setDisplayPinFlash(true);
+          window.setTimeout(() => setDisplayPinFlash(false), 2500);
+        }}
+        className={
+          "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold ring-1 transition " +
+          (displayPinFlash
+            ? "bg-emerald-50 text-emerald-700 ring-emerald-300"
+            : "bg-sky-50 text-sky-800 ring-sky-200 hover:bg-sky-100")
+        }
+        title="Die LED-Displays an den Flippern zeigen dieses Turnier (z. B. wenn auf einem anderen iPad ein anderes Turnier geöffnet wurde)"
+      >
+        {displayPinFlash ? "✓ Displays zeigen dieses Turnier" : "📟 An Displays senden"}
+      </button>
+    ) : null}
     {currentRoundObj && (
       <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
         <span className="text-neutral-500">Elo in dieser Runde</span>

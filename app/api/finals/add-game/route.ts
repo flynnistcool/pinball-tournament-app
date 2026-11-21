@@ -157,6 +157,12 @@ export async function POST(req: Request) {
     .from("tournaments")
     .update({ status: "finished" })
     .eq("id", t.id);
+  // 🏁 Zeitpunkt des Beendens (Flipper-Display, nur beim ersten Mal; fehlt die Spalte → ohne)
+  await sb
+    .from("tournaments")
+    .update({ finished_at: new Date().toISOString() })
+    .eq("id", t.id)
+    .is("finished_at", null);
 
   await sb
     .from("finales")
