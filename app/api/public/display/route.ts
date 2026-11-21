@@ -141,6 +141,8 @@ export async function GET(req: Request) {
       .eq("key", displayTournamentKey(locationId))
       .maybeSingle();
     const pins = displayPinList((pinRow as { value?: unknown } | null)?.value);
+    // Eintrag vorhanden (auch leer nach "Displays zurücksetzen") → nicht raten, nur gemerkte Turniere zählen
+    if (pinRow) pinnedUsed = true;
     if (pins.length) {
       pinnedUsed = true;
       const { data: pts, error: ptErr } = await sb

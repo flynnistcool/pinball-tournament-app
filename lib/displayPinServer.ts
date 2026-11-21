@@ -7,6 +7,21 @@ import { DISPLAY_PIN_MAX, displayPinList, displayTournamentKey } from "@/lib/fli
 
 export type PinResult = { ok: true; skipped?: string } | { ok: false; error: string; status: number };
 
+/**
+ * 📟 Alle Displays zurücksetzen: gemerkte Turniere aller Locations leeren (Eintrag bleibt mit leerer Liste,
+ * damit die Displays nicht "raten", sondern ihren Allzeit-Highscore zeigen – bis wieder ein Turnier gemeldet wird).
+ */
+export async function resetDisplayPins(sb: SupabaseClient): Promise<PinResult> {
+  const { data, error } = await sb.from("app_settings").select("key").like("key", "display_tournament%");
+  if (error) return { ok: false, error: error.message, status: 500 };
+  const at = new Date().toISOString();
+  const keys = Array.from(new Set([displayTournamentKey(null), ...((data ?? []) as { key: string }[]).map((r) => r.key)]));
+  const rows = keys.map((key) => ({ key, value: { code: null, at, list: [], resetAt: at }, updated_at: at }));
+  const { error: upErr } = await sb.from("app_settings").upsert(rows, { onConflict: "key" });
+  if (upErr) return { ok: false, error: `Zurücksetzen fehlgeschlagen: ${upErr.message}`, status: 500 };
+  return { ok: true };
+}
+
 export async function pinDisplayTournament(sb: SupabaseClient, codeRaw: string): Promise<PinResult> {
   const code = String(codeRaw ?? "").trim().toUpperCase();
   if (!code) return { ok: false, error: "Code fehlt", status: 400 };

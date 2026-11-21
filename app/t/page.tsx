@@ -90,6 +90,7 @@ import VersionBadge from "@/components/VersionBadge";
 import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
 import ThemeToggle from "@/components/ThemeToggle";
+import DisplayResetButton from "@/components/DisplayResetButton";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
 import ScoreFormWatcher from "@/components/ScoreFormWatcher";
@@ -10350,6 +10351,8 @@ if (joined)
       {isAdmin ? <EloCalculator /> : null}
       {/* 🔸 Dein Header oben rechts (wie in AdminHome) */}
       <div className="flex items-center justify-end gap-2">
+        {/* 📟 Notschalter ganz links: alle LED-Displays zurück auf Allzeit-Highscore */}
+        {isAdmin ? <DisplayResetButton className="mr-auto" /> : null}
         <ThemeToggle />
         <div className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 bg-white/60 text-xs text-neutral-600 shadow-sm">
           <span className="flex items-center gap-1 px-1">
@@ -10535,6 +10538,8 @@ if (joined)
 
             {/* 🔸 Neuer Header oben rechts mit Logout */}
 <div className="flex items-center justify-end gap-2">
+  {/* 📟 Notschalter ganz links: alle LED-Displays zurück auf Allzeit-Highscore */}
+  {isAdmin ? <DisplayResetButton className="mr-auto" /> : null}
   <ThemeToggle />
   <div className="inline-flex items-center gap-2 rounded-lg border px-2 py-1 bg-white/60 text-xs text-neutral-600 shadow-sm">
     <span className="flex items-center gap-1 px-1">
