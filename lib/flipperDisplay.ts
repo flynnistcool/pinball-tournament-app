@@ -142,8 +142,10 @@ export type MatchDisplayInput = {
   hasRounds: boolean;
   /** Match an diesem Flipper in der aktuellen Runde (null = Flipper diese Runde frei) */
   match: DisplayMatch | null;
-  /** aktuelle Runde komplett fertig → Tabelle */
+  /** aktuelle Runde komplett fertig → Sieger + Tabelle */
   roundDone: boolean;
+  /** alle Sieger der aktuellen Runde (Display-Text) */
+  roundWinners?: string[];
   roundNo: number;
   /** Tabelle (Platz, Name, Punkte) – Top 3 werden gezeigt */
   standings: RankingEntry[];
@@ -152,16 +154,47 @@ export type MatchDisplayInput = {
   allTime: DisplayRecord | null;
 };
 
+/**
+ * 🎉 Rekorde im Match an diesem Flipper (einmal einblenden):
+ *  - höchster Score im Match > Allzeit-Rekord der Location → "alltime"
+ *  - sonst > bisheriger Turnier-Highscore am Flipper (ohne dieses Match) → "tbest"
+ *    (beim allerersten Score im Turnier gibt es nichts zu brechen → kein Ereignis)
+ *  - jeder andere: > eigener bisheriger Bestwert an diesem Flipper → "personal"
+ */
+export function matchRecordEvents(input: {
+  matchId: string;
+  entries: { playerId: string; name: string; score: number | null; priorPersonal: number | null }[];
+  priorTournamentBest: number | null;
+  allTime: number | null;
+}): DisplayEvent[] {
+  const scored = input.entries
+    .filter((e): e is typeof e & { score: number } => e.score != null && e.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const out: DisplayEvent[] = [];
+  scored.forEach((e, i) => {
+    const key = (kind: string) => `${input.matchId}|${e.playerId}|${kind}|${e.score}`;
+    if (i === 0 && input.allTime != null && e.score > input.allTime) {
+      out.push({ key: key("alltime"), kind: "alltime", name: e.name, score: e.score });
+    } else if (i === 0 && input.priorTournamentBest != null && e.score > input.priorTournamentBest) {
+      out.push({ key: key("tbest"), kind: "tbest", name: e.name, score: e.score });
+    } else if (e.priorPersonal != null && e.score > e.priorPersonal) {
+      out.push({ key: key("personal"), kind: "personal", name: e.name, score: e.score });
+    }
+  });
+  return out;
+}
+
 export function matchSayingFor(flipper: string, player: string, round: number): string {
   return MATCH_SAYINGS[hash(`${flipper.toLowerCase()}|${player.toLowerCase()}|${round}`) % MATCH_SAYINGS.length];
 }
 
 /**
- * Matchplay / Swiss / Round Robin: was zeigt das Display an diesem Flipper?
+ * Matchplay / Swiss / Round Robin: was zeigt das Display an diesem Flipper? (Paarung im Fokus, keine Scores –
+ * Scores nur bei Rekorden, siehe matchRecordEvents)
  *   lobby  – noch keine Runde
- *   slides – Runde komplett fertig: Sieger hier + Tabelle Top 3 (Wechselanzeige mit Rahmen)
- *   mplay  – Match läuft: wer spielt + Spruch + pers. Bestwert, Runde + Paarung
- *   mwin   – Match hier fertig (andere spielen noch): Sieger
+ *   slides – Runde komplett fertig: alle Sieger der Runde + Tabelle Top 3 (Wechselanzeige mit Rahmen)
+ *   mplay  – Match hier noch ohne Plätze: oben "RUNDE 3", unten läuft die Paarung "GERALD - ANDRE"
+ *   mwin   – Match hier fertig (andere spielen noch): "SIEGER RUNDE 3" + Name
  *   highscore/alltime – Flipper diese Runde frei
  */
 export function matchDisplay(input: MatchDisplayInput): DisplayOutput & { slides?: DisplaySlide[] } {
@@ -176,37 +209,39 @@ export function matchDisplay(input: MatchDisplayInput): DisplayOutput & { slides
     };
   }
   const m = input.match;
+  // Runde komplett fertig: alle Sieger der Runde, dann Tabelle Top 3 (Wechselanzeige mit Rahmen)
   if (input.roundDone && input.standings.length) {
     const slides: DisplaySlide[] = [];
-    if (m?.winner) {
-      slides.push({
-        top: `RUNDE ${m.round} - SIEGER ${m.winner.name}!`,
-        bottom: m.winner.score != null ? displayScore(m.winner.score) : m.winner.name,
-      });
-    }
+    const winners = input.roundWinners?.length ? input.roundWinners : m?.winner ? [m.winner.name] : [];
+    if (winners.length) slides.push({ top: `SIEGER RUNDE ${input.roundNo}`, bottom: winners.join(" - ") });
     slides.push({ top: `TABELLE NACH RUNDE ${input.roundNo}`, bottom: "" });
     for (const e of input.standings.slice(0, 3)) {
       slides.push({ top: `${e.place}. ${e.name}`, bottom: `${e.points} PKT` });
     }
     return { mode: "slides", top: slides[0].top, bottom: slides[0].bottom, topColor: ORANGE, bottomColor: BLUE, slides };
   }
-  if (m && !m.finished && m.active) {
-    const best = m.activeBest != null ? `PERS. BESTWERT ${displayScore(m.activeBest)}` : "HIER NOCH KEIN BESTWERT";
+  // Runde erzeugt, Match hier noch ohne Plätze: oben fest "RUNDE 3", unten läuft die Paarung
+  if (m && !m.finished) {
     return {
       mode: "mplay",
-      top: `${matchSayingFor(input.flipper, m.active, m.round)} ${m.active}!  ${best}  -  RUNDE ${m.round}: ${m.players.join(" - ")}`,
-      bottom: m.active,
-      topColor: GREEN,
-      bottomColor: BLUE,
+      top: `RUNDE ${m.round}`,
+      bottom: m.players.join(" - "),
+      topColor: ORANGE,
+      bottomColor: GREEN,
+      topStatic: true,
+      bottomScroll: true,
     };
   }
+  // Match hier fertig (andere spielen noch): Sieger (Scores stehen nicht im Fokus)
   if (m && m.finished && m.winner) {
     return {
       mode: "mwin",
-      top: `SIEGER ${m.winner.name}!  -  RUNDE ${m.round}: ${m.players.join(" - ")}`,
-      bottom: m.winner.score != null ? displayScore(m.winner.score) : m.winner.name,
+      top: `SIEGER RUNDE ${m.round}`,
+      bottom: m.winner.name,
       topColor: YELLOW,
       bottomColor: YELLOW,
+      topStatic: true,
+      bottomScroll: true,
     };
   }
   // Flipper diese Runde frei → Turnier-Highscore (sonst Allzeit)
@@ -267,6 +302,18 @@ export type DisplayOutput = {
   /** Farben als Zahl (0xRRGGBB) – direkt in CircuitPython nutzbar */
   topColor: number;
   bottomColor: number;
+  /** obere Zeile fest (nicht laufend) */
+  topStatic?: boolean;
+  /** untere Zeile läuft durch, wenn sie nicht passt (z. B. Paarung) */
+  bottomScroll?: boolean;
+};
+
+/** 🎉 Rekord im laufenden Match (Display blendet ihn einmal ein) */
+export type DisplayEvent = {
+  key: string;
+  kind: "alltime" | "tbest" | "personal";
+  name: string;
+  score: number;
 };
 
 const ORANGE = 0xff6600;

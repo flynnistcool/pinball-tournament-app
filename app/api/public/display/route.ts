@@ -26,7 +26,8 @@ import { fetchAllIn } from "@/lib/supabaseChunks";
 import { loadMachineRecords } from "@/lib/feedContextServer";
 import { machineKey } from "@/lib/machineStats";
 import { rotationActiveMap, rotationBlocksFrom } from "@/lib/rotationTurn";
-import { finalRankingFromResults, loadMatchDisplay } from "@/lib/displayMatchServer";
+import { finalRankingFromResults, loadMatchDisplay, personalRecords } from "@/lib/displayMatchServer";
+import { personalKey } from "@/lib/recordWatch";
 import {
   displayText,
   displayPinList,
@@ -34,7 +35,9 @@ import {
   displayTournamentKey,
   flipperDisplay,
   matchDisplay,
+  matchRecordEvents,
   MATCH_DISPLAY_FORMATS,
+  type DisplayEvent,
   tournamentRanking,
   type BlockHighscore,
   type DisplayRecord,
@@ -208,6 +211,7 @@ export async function GET(req: Request) {
     let tournamentBest: DisplayRecord | null = null;
     let scores: { name: string; score: number }[] = [];
     let blocksDone: BlockHighscore[] | null = null;
+    const rtpEvents: DisplayEvent[] = [];
     let final: { name: string | null; ranking: RankingEntry[] } | null = null;
     let finalCode: string | null = null;
 
@@ -226,13 +230,19 @@ export async function GET(req: Request) {
 
       // 🎯 Matchplay / Swiss / Round Robin: eigener Weg (lib/displayMatchServer.ts) – Round the Pinball unten
       if (MATCH_DISPLAY_FORMATS.has(String(t.format ?? "")) && inTournament) {
-        const md = await loadMatchDisplay(sb, { id: t.id, location_id: t.location_id, format: t.format }, mine, flipper);
         const recLoc = t.location_id ? String(t.location_id) : locationId;
         let allTimeM: DisplayRecord | null = null;
         if (recLoc) {
           const r = (await allTimeRecords(sb, recLoc))[key];
           if (r) allTimeM = { score: Number(r.score), holder: r.holder ?? null };
         }
+        const md = await loadMatchDisplay(
+          sb,
+          { id: t.id, location_id: t.location_id, format: t.format },
+          mine,
+          flipper,
+          allTimeM?.score ?? null
+        );
         const iconM = recLoc ? (await machineIcons(sb, recLoc))[key] ?? null : null;
         const outM = matchDisplay({
           flipper,
@@ -241,6 +251,7 @@ export async function GET(req: Request) {
           hasRounds: md.hasRounds,
           match: md.match,
           roundDone: md.roundDone,
+          roundWinners: md.roundWinners,
           roundNo: md.roundNo,
           standings: md.standings,
           tournamentBest: md.tournamentBest,
@@ -255,7 +266,9 @@ export async function GET(req: Request) {
             timer: displayTimerInfo(null, 0),
             active: md.match?.active ?? null,
             scores: [],
-            best: md.tournamentBest?.score ?? null,
+            // Rekorde laufen bei Matchplay über events (kein Maskottchen nur wegen steigendem best)
+            best: null,
+            events: md.events,
             matchId: md.match?.matchId ?? null,
             slides: outM.slides ?? [],
             blocks: [],
@@ -308,7 +321,10 @@ export async function GET(req: Request) {
         const blockIdSet = new Set(matchIds);
         const mpRes = { data: mpAll.data.filter((mp) => blockIdSet.has(String(mp.match_id))) };
 
-        const { data: players, error: pErr } = await sb.from("players").select("id, name").eq("tournament_id", t.id);
+        const { data: players, error: pErr } = await sb
+          .from("players")
+          .select("id, name, profile_id")
+          .eq("tournament_id", t.id);
         if (pErr) return fail(`Spieler laden fehlgeschlagen: ${pErr.message}`, 500);
         const nameOf = new Map((players ?? []).map((p: { id: string; name: string | null }) => [String(p.id), p.name ?? null]));
 
@@ -366,6 +382,45 @@ export async function GET(req: Request) {
         scores = Array.from(bestOf.entries())
           .map(([pid, score]) => ({ name: displayText(nameOf.get(pid)), score }))
           .sort((a, b) => b.score - a.score);
+
+        // 🎉 Rekorde an diesem Flipper (wie Matchplay): Allzeit-Rekord + persönlicher Rekord.
+        //    Turnier-Highscore bleibt bei RtP die bisherige Rückmeldung nach der Score-Eingabe (kein doppelter Jubel).
+        if (myMatches.size && scores.length && t.location_id) {
+          const allRec = (await allTimeRecords(sb, String(t.location_id)))[key];
+          const personal = await personalRecords(sb, { id: t.id, location_id: t.location_id, format: t.format }).catch(
+            () => ({} as Record<string, number>)
+          );
+          const profileOf = new Map(
+            (players ?? []).map((p: { id: string; profile_id?: string | null }) => [String(p.id), p.profile_id ? String(p.profile_id) : null])
+          );
+          const mineAll = mRes.data.filter((m) => m.machine_id && mine.has(String(m.machine_id))).map((m) => String(m.id));
+          for (const mid of Array.from(myMatches)) {
+            const list = mpRes.data.filter((mp) => String(mp.match_id) === mid);
+            rtpEvents.push(
+              ...matchRecordEvents({
+                matchId: mid,
+                priorTournamentBest: null,
+                allTime: allRec ? Number(allRec.score) : null,
+                entries: list.map((x) => {
+                  const prof = profileOf.get(String(x.player_id));
+                  let prior: number | null = prof && personal[personalKey(prof, key)] != null ? Number(personal[personalKey(prof, key)]) : null;
+                  for (const mp of mpAll.data) {
+                    if (String(mp.player_id) !== String(x.player_id) || String(mp.match_id) === mid) continue;
+                    if (!mineAll.includes(String(mp.match_id))) continue;
+                    const s = toScore(mp.score);
+                    if (s != null && (prior == null || s > prior)) prior = s;
+                  }
+                  return {
+                    playerId: String(x.player_id),
+                    name: displayText(nameOf.get(String(x.player_id))) || "?",
+                    score: toScore(x.score),
+                    priorPersonal: prior,
+                  };
+                }),
+              })
+            );
+          }
+        }
       }
     }
 
@@ -470,6 +525,8 @@ export async function GET(req: Request) {
         scores: rtp ? scores : [],
         // 🏆 Turnier-Highscore an diesem Flipper (Zahl) – steigt er, fährt das Maskottchen
         best: rtp ? tournamentBest?.score ?? null : null,
+        // 🎉 Allzeit-/persönliche Rekorde an diesem Flipper (Display blendet jeden einmal ein)
+        events: rtp ? rtpEvents : [],
         // 🧱 alle Durchgänge fertig: Highscores je Block · 🏁 Turnier beendet: Siegerliste
         blocks: out.mode === "blockdone" ? blocksDone ?? [] : [],
         ranking: out.mode === "final" ? final?.ranking ?? [] : [],
