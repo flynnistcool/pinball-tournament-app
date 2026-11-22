@@ -28,6 +28,7 @@ import { machineKey } from "@/lib/machineStats";
 import { rotationActiveMap, rotationBlocksFrom } from "@/lib/rotationTurn";
 import { finalRankingFromResults, loadMatchDisplay, personalRecords } from "@/lib/displayMatchServer";
 import { personalKey } from "@/lib/recordWatch";
+import { loadStatsExclusions } from "@/lib/statsExclusions";
 import {
   displayText,
   displayPinList,
@@ -454,10 +455,15 @@ export async function GET(req: Request) {
       }
       if (ft && !final && (ft.format === "rotation" || MATCH_DISPLAY_FORMATS.has(String(ft.format ?? "")))) {
         const [{ data: fPlayers, error: fpErr }, { data: fRounds, error: frErr }] = await Promise.all([
-          sb.from("players").select("id, name").eq("tournament_id", ft.id),
+          sb.from("players").select("id, name, profile_id").eq("tournament_id", ft.id),
           sb.from("rounds").select("id, format").eq("tournament_id", ft.id),
         ]);
         if (fpErr || frErr) return fail("Turnierdaten laden fehlgeschlagen", 500);
+        // 🚫 Platzhalter / Ghosts nicht in der Siegerliste (Punkte der anderen bleiben, wie gespielt)
+        const exF = await loadStatsExclusions(sb);
+        const fPlayersShown = ((fPlayers ?? []) as { id: string; name: string | null; profile_id: string | null }[]).filter(
+          (p) => !(p.profile_id && exF.placeholderProfileIds.has(String(p.profile_id)) && !exF.botProfileIds.has(String(p.profile_id)))
+        );
         const fRoundIds = (fRounds ?? []).map((r: { id: string }) => String(r.id));
         const fm = await fetchAllIn<{ id: string; round_id: string }>(fRoundIds, (chunk) =>
           sb.from("matches").select("id, round_id").in("round_id", chunk).order("id")
@@ -475,7 +481,7 @@ export async function GET(req: Request) {
         );
         if (fmp.error) return fail(`Plätze laden fehlgeschlagen: ${fmp.error.message}`, 500);
         const ranking = tournamentRanking(
-          (fPlayers ?? []) as { id: string; name: string | null }[],
+          fPlayersShown,
           (fRounds ?? []) as { id: string; format: string | null }[],
           fm.data,
           fmp.data

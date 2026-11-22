@@ -939,6 +939,7 @@ function BoardTab({ data, meId }: { data: MmData; meId: string }) {
               key={r.id}
               className={
                 "relative flex items-center gap-2.5 border-t border-neutral-100 px-3 py-2 " +
+                (r.placeholder ? "opacity-40 " : "") + // 🚫 Platzhalter / Ghost: blass, ohne Platz
                 (medal ? `bg-gradient-to-r ${medal.row} to-transparent` : "")
               }
             >
@@ -949,7 +950,7 @@ function BoardTab({ data, meId }: { data: MmData; meId: string }) {
                   (medal ? medal.badge : "bg-neutral-100 text-neutral-500")
                 }
               >
-                {r.place}
+                {r.place > 0 ? r.place : "–"}
               </span>
               <Avatar name={r.name} icon={r.icon} color={r.color} />
               <div className="min-w-0 flex-1">

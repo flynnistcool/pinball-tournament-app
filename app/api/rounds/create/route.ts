@@ -1,5 +1,7 @@
 import { rotationStartOrder } from "@/lib/rotationPlan";
 import { eloAllowedInFormat } from "@/lib/botRules";
+import { loadStatsExclusions } from "@/lib/statsExclusions";
+import { dypCounts, dypPlanText, planDypRound, type DypHistoryMatch } from "@/lib/dypPlan";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 type StartOrderMode = "random" | "standings_asc" | "last_round_asc";
@@ -1008,25 +1010,28 @@ if (!machinesToValidate.length) {
   if (format === "elimination") {
     plannedGroups = [{ group: players as PlayerRow[] }];
   } else if (format === "dyp_round_robin") {
-    const idsAll = (players as PlayerRow[]).map((p) => p.id);
+    // 🤝 So viele echte 2-gegen-2 (4 Menschen) wie möglich; Rest 1–3 Spieler → Rest-Match mit Ghosts
+    //    (1 gegen 1 / 2 gegen 1) bzw. Aussetzen – gerecht nach bisherigen Zählern (lib/dypPlan.ts).
+    const ex = await loadStatsExclusions(sb);
+    const isGhost = (p: PlayerRow) =>
+      !!(p as any).profile_id &&
+      ex.placeholderProfileIds.has(String((p as any).profile_id)) &&
+      !ex.botProfileIds.has(String((p as any).profile_id));
+    const humanIds = (players as PlayerRow[]).filter((p) => !isGhost(p)).map((p) => p.id);
+    const ghostIdList = (players as PlayerRow[]).filter(isGhost).map((p) => p.id);
+    const ghostSet = new Set(ghostIdList);
 
-    let idsForPairing = idsAll.slice();
-    if (idsAll.length % 2 === 1) {
-      const scored = idsAll
-        .map((id) => ({
-          id,
-          matches: standingByPlayerId.get(id)?.matches ?? 0,
-          r: Math.random(),
-        }))
-        .sort((a, b) => (a.matches !== b.matches ? a.matches - b.matches : a.r - b.r));
-
-      const byeId = scored[0]?.id;
-      if (byeId) {
-        idsForPairing = idsAll.filter((x) => x !== byeId);
-        const byeName = byId.get(byeId)?.name ?? "?";
-        warnings.push(`Ein Spieler ohne Match: ${byeName} (setzt diese Runde aus)`);
-      }
-    }
+    const roundNoById = new Map((rounds ?? []).map((r: any) => [String(r.id), Number(r.number ?? 0)]));
+    const dypHistory: DypHistoryMatch[] = (matches ?? []).map((m: any) => ({
+      round: roundNoById.get(String(m.round_id)) ?? 0,
+      players: (mpByMatch[m.id] ?? []).map((x: any) => ({ id: String(x.player_id), team: x.team ?? null })),
+    }));
+    const dCounts = dypCounts(dypHistory, humanIds, ghostSet);
+    const dPlan = planDypRound(humanIds, ghostIdList, dCounts);
+    warnings.push(
+      dypPlanText(dPlan, nextRoundNumber, dPlan.full.length / 4, (id) => byId.get(id)?.name ?? "?", dCounts, ghostSet)
+    );
+    const idsForPairing = dPlan.full;
 
     const { partnerCounts, matchupCounts } = buildDypCountsFromHistory(mpByMatch);
 
@@ -1061,6 +1066,23 @@ if (!machinesToValidate.length) {
         return { group: [pA1, pA2, pB1, pB2], teamByPlayerId } as PlannedGroup;
       })
       .filter(Boolean) as PlannedGroup[];
+
+    // Rest-Match (1 gegen 1 / 2 gegen 1 mit Ghosts) – normales DYP-Match mit 4 Plätzen (gleiche Punkte)
+    if (dPlan.rest) {
+      const ids = [...dPlan.rest.team1, ...dPlan.rest.team2];
+      const ps = ids.map((id) => byId.get(id));
+      if (ps.every(Boolean)) {
+        plannedGroups.push({
+          group: ps as PlayerRow[],
+          teamByPlayerId: {
+            [dPlan.rest.team1[0]]: 1,
+            [dPlan.rest.team1[1]]: 1,
+            [dPlan.rest.team2[0]]: 2,
+            [dPlan.rest.team2[1]]: 2,
+          },
+        });
+      }
+    }
   } else {
     let groups: PlayerRow[][] = [];
 

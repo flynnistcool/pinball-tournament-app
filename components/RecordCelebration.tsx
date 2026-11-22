@@ -884,7 +884,7 @@ function RecordCelebrationInner({
       // 👑 alleiniger Führender im Live-Leaderboard (bei Gleichstand: niemand)
       let lead: { id: string | null; name: string | null; points: number } = { id: null, name: null, points: 0 };
       try {
-        const lr = liveLeaderboard(d as any).rows;
+        const lr = liveLeaderboard(d as any).rows.filter((r) => !r.placeholder); // 🚫 Ghosts führen nie
         if (lr[0] && lr[0].total > 0 && (!lr[1] || lr[0].total > lr[1].total))
           lead = { id: String(lr[0].id), name: lr[0].name, points: lr[0].total };
       } catch {

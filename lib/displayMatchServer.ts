@@ -8,6 +8,7 @@ import { fetchAllIn } from "@/lib/supabaseChunks";
 import { loadMachineRecords } from "@/lib/feedContextServer";
 import { machineKey } from "@/lib/machineStats";
 import { personalKey } from "@/lib/recordWatch";
+import { loadStatsExclusions } from "@/lib/statsExclusions";
 import {
   displayText,
   matchRecordEvents,
@@ -224,9 +225,17 @@ export async function finalRankingFromResults(sb: SupabaseClient, tournamentId: 
     .select("player_id, points, final_rank, super_final_rank")
     .eq("tournament_id", tournamentId);
   if (error || !data || !data.length) return null;
-  const { data: players } = await sb.from("players").select("id, name").eq("tournament_id", tournamentId);
-  const nameOf = new Map(((players ?? []) as { id: string; name: string | null }[]).map((p) => [String(p.id), displayText(p.name) || "?"]));
-  const rows = data as { player_id: string; points: number | null; final_rank: number | null; super_final_rank: number | null }[];
+  const { data: players } = await sb.from("players").select("id, name, profile_id").eq("tournament_id", tournamentId);
+  const ps = (players ?? []) as { id: string; name: string | null; profile_id: string | null }[];
+  const nameOf = new Map(ps.map((p) => [String(p.id), displayText(p.name) || "?"]));
+  // 🚫 Platzhalter / Ghosts nach Turnierende nicht in der Siegerliste
+  const ex = await loadStatsExclusions(sb as never);
+  const hidden = new Set(
+    ps.filter((p) => p.profile_id && ex.placeholderProfileIds.has(String(p.profile_id)) && !ex.botProfileIds.has(String(p.profile_id))).map((p) => String(p.id))
+  );
+  const rows = (data as { player_id: string; points: number | null; final_rank: number | null; super_final_rank: number | null }[]).filter(
+    (r) => !hidden.has(String(r.player_id))
+  );
   const finalists = rows.filter((r) => r.super_final_rank != null).sort((a, b) => Number(a.super_final_rank) - Number(b.super_final_rank));
   const rest = rows
     .filter((r) => r.super_final_rank == null)

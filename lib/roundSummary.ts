@@ -28,8 +28,9 @@ function names(data: AnyData) {
 
 /** Tabellenführer + größter Aufsteiger: Tabelle mit und ohne die betrachteten Einträge vergleichen */
 function leaderAndClimber(after: AnyData, before: AnyData): Pick<RoundSummary, "leader" | "climber"> {
-  const a = liveLeaderboard(after).rows;
-  const b = liveLeaderboard(before).rows;
+  // 🚫 Platzhalter / Ghosts sind nie Tabellenführer oder Aufsteiger
+  const a = liveLeaderboard(after).rows.filter((r) => !r.placeholder);
+  const b = liveLeaderboard(before).rows.filter((r) => !r.placeholder);
   const leader = a[0] ? { name: a[0].name, points: a[0].total } : null;
   const placeBefore = new Map(b.map((r) => [r.id, r.place]));
   let climber: RoundSummary["climber"] = null;

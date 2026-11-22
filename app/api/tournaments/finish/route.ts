@@ -274,6 +274,7 @@ export async function POST(req: Request) {
 
   // 👉 Anzahl Spieler im Turnier (für Punkteformel)
   const nPlayersTournament = (players ?? []).length;
+  let bonusForWinnerOuter = 0; // Superfinale-Bonus (auch für die Neuberechnung ohne Bots/Platzhalter unten)
 
   // final_rank + tournament_points setzen (Competition Ranking + tie-aware Punkte)
 // Regeln:
@@ -302,6 +303,7 @@ export async function POST(req: Request) {
   // 2) tournament_points setzen (tie-aware)
   const nFinalPlayers = Object.keys(superFinalRankByPlayer).length;
   const bonusForWinner = superFinalBonusPoints(nFinalPlayers);
+  bonusForWinnerOuter = bonusForWinner;
 
   let i = 0;
   while (i < resultRows.length) {
@@ -334,19 +336,36 @@ export async function POST(req: Request) {
   // - ≥ 2 Menschen: Bots "wegdenken" – Rang + Teilnehmerzahl nur unter Menschen
   //   (Bsp. Flo 9, Bot 7, Thomas 5 → Thomas bekommt die TP eines Zweiten von 2).
   // final_rank (echter Platz im Turnier) bleibt unverändert.
+  // 🚫 Platzhalter / Ghosts (profiles.exclude_from_stats) wie Bots "wegdenken" – sie bekommen aber GAR KEINE
+  //    Turnierpunkte (Nutzer-Entscheidung 2026-11-23).
   {
     const profileIds = Array.from(new Set((players ?? []).map((p: any) => p.profile_id).filter(Boolean)));
-    const { data: botProfiles } = profileIds.length
-      ? await sb.from("profiles").select("id").in("id", profileIds).eq("is_bot", true)
-      : { data: [] as any[] };
-    const botProfileIds = new Set((botProfiles ?? []).map((b: any) => String(b.id)));
-    const botPlayerIds = new Set(
-      (players ?? []).filter((p: any) => p.profile_id && botProfileIds.has(String(p.profile_id))).map((p: any) => String(p.id))
-    );
+    let flagRows: any[] = [];
+    if (profileIds.length) {
+      const r1 = await sb.from("profiles").select("id, is_bot, exclude_from_stats").in("id", profileIds);
+      if (!r1.error) flagRows = r1.data ?? [];
+      else {
+        // Spalte exclude_from_stats evtl. noch nicht angelegt → nur Bots
+        const r2 = await sb.from("profiles").select("id, is_bot").in("id", profileIds);
+        flagRows = r2.data ?? [];
+      }
+    }
+    const botProfileIds = new Set(flagRows.filter((b: any) => b.is_bot === true).map((b: any) => String(b.id)));
+    const phProfileIds = new Set(flagRows.filter((b: any) => b.exclude_from_stats === true && b.is_bot !== true).map((b: any) => String(b.id)));
+    const playerIdsOf = (set: Set<string>) =>
+      new Set((players ?? []).filter((p: any) => p.profile_id && set.has(String(p.profile_id))).map((p: any) => String(p.id)));
+    const botPlayerIds = playerIdsOf(botProfileIds);
+    const placeholderPlayerIds = playerIdsOf(phProfileIds);
 
-    if (botPlayerIds.size > 0) {
-      const humans = resultRows.filter((r) => !botPlayerIds.has(String(r.player_id))); // schon nach points sortiert
-      if (humans.length <= 1) {
+    for (const r of resultRows) {
+      if (placeholderPlayerIds.has(String(r.player_id))) r.tournament_points = 0; // 🚫 Platzhalter: keine TP
+    }
+
+    if (botPlayerIds.size > 0 || placeholderPlayerIds.size > 0) {
+      const humans = resultRows.filter(
+        (r) => !botPlayerIds.has(String(r.player_id)) && !placeholderPlayerIds.has(String(r.player_id))
+      ); // schon nach points sortiert
+      if (humans.length <= 1 && botPlayerIds.size > 0) {
         for (const r of humans) r.tournament_points = 0; // 🤖 Training
       } else {
         const nHumans = humans.length;
@@ -358,7 +377,11 @@ export async function POST(req: Request) {
           const rankStart = start + 1; // Competition Ranking unter Menschen
           // Gleichstand: alle bekommen die Punkte des besseren Platzes (wie oben)
           const tp = tournamentPointsForRank(rankStart, nHumans);
-          for (let j = start; j < k; j++) humans[j].tournament_points = tp; // kein Superfinale mit Bots
+          for (let j = start; j < k; j++) {
+            // Superfinale-Bonus bleibt (gibt es nur ohne Bots; mit Platzhaltern kann eins gespielt worden sein)
+            const bonus = humans[j].super_final_rank === 1 ? bonusForWinnerOuter : 0;
+            humans[j].tournament_points = tp + bonus;
+          }
         }
       }
     }

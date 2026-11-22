@@ -233,6 +233,8 @@ export type LiveRow = {
   eloNow: number | null;
   /** 🤖 KI-Bot (feste Elo) */
   isBot?: boolean;
+  /** 🚫 Platzhalter / Ghost: place = 0 (ohne Platz), nach Turnierende nicht in der Liste */
+  placeholder?: boolean;
   /** Punkte pro Runde (für die kleinen Balken) */
   history: { round: number; points: number }[];
 };
@@ -306,15 +308,26 @@ export function liveLeaderboard(data: MmData): { rows: LiveRow[]; roundPointsMax
       eloStart: p.profile_id ? startElo.get(String(p.profile_id)) ?? null : null,
       eloNow: now,
       isBot: prof?.is_bot === true,
+      placeholder: prof?.exclude_from_stats === true && prof?.is_bot !== true,
       history: history[p.id] ?? [],
     };
   });
   rows.sort((a, b) => b.total - a.total || b.real - a.real || a.name.localeCompare(b.name));
-  rows.forEach((r, i) => {
-    const prev = rows[i - 1];
-    r.place = prev && prev.total === r.total ? prev.place : i + 1;
-  });
-  return { rows, roundPointsMax, eloOn };
+  // 🚫 Platzhalter / Ghosts: nach Turnierende ausblenden; sonst ohne Platz (0 = "–"), Plätze nur unter echten Spielern
+  const finished = String(data.tournament?.status ?? "") === "finished";
+  const out = finished ? rows.filter((r) => !r.placeholder) : rows;
+  let n = 0;
+  let last: LiveRow | null = null;
+  for (const r of out) {
+    if (r.placeholder) {
+      r.place = 0;
+      continue;
+    }
+    n++;
+    r.place = last && last.total === r.total ? last.place : n;
+    last = r;
+  }
+  return { rows: out, roundPointsMax, eloOn };
 }
 
 /** 🤖 Elo eines Bots (Spieler-ID) – undefined = kein Bot */

@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { matchPoints, superFinalTpBonus } from "@/lib/points";
+import { loadStatsExclusions } from "@/lib/statsExclusions";
 
 type MPRow = {
   player_id: string;
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
   const sb = supabaseAdmin();
   const { data: t } = await sb
     .from("tournaments")
-    .select("id, format, match_size")
+    .select("id, format, match_size, status")
     .eq("code", code)
     .single();
   if (!t)
@@ -81,6 +82,9 @@ sb
   .eq("tournament_id", t.id),
     ]);
 
+
+  // 🚫 Bots/Platzhalter (verträgt fehlende Spalte exclude_from_stats)
+  const exclusions = await loadStatsExclusions(sb);
 
   const tournamentPointsByPlayer: Record<string, number> = {};
   const superFinalTpBonusByPlayer: Record<string, number> = {}; // Anteil Superfinale (für "6 TP + 2 🔥")
@@ -271,6 +275,9 @@ const rows = (players ?? []).map((p: any) => {
     eloStart,
     eloEnd,
     eloDelta,
+
+    // 🚫 Platzhalter / Ghost (profiles.exclude_from_stats): im Leaderboard blass, ohne Platz; nach Turnierende ausgeblendet
+    isPlaceholder: profileId ? exclusions.placeholderProfileIds.has(String(profileId)) && !exclusions.botProfileIds.has(String(profileId)) : false,
   };
 });
 
@@ -283,7 +290,7 @@ const rows = (players ?? []).map((p: any) => {
 
   return NextResponse.json({
     stats: rows,
-    tournament: { id: t.id, format: (t as any).format ?? null, match_size: (t as any).match_size ?? null },
+    tournament: { id: t.id, format: (t as any).format ?? null, match_size: (t as any).match_size ?? null, status: (t as any).status ?? null },
     playersCount: (players ?? []).length,
     rounds: (rounds ?? []),
   });

@@ -4322,7 +4322,9 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
       body: JSON.stringify({ code }),
     });
     const j = await res.json();
-    setRows(j.stats ?? []);
+    // 🚫 Platzhalter / Ghosts nach Turnierende ausblenden (im laufenden Turnier blass, ohne Platz)
+    const all = j.stats ?? [];
+    setRows(j?.tournament?.status === "finished" ? all.filter((r: any) => !r?.isPlaceholder) : all);
     const rs = Array.isArray(j?.rounds) ? j.rounds : [];
     setEloOff(rs.length > 0 && rs.every((r: any) => r?.elo_enabled === false));
 }
@@ -4353,10 +4355,13 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
     .map((r: any) => ({ label: r.name, value: Math.round(r.winrate) }));
 
   // Competition-Ranking Plätze (1,1,1,4 ...) für die Anzeige im Leaderboard
-  const competitionPlaces = useMemo(
-    () => computeCompetitionPlaces(rows, (r: any) => Number(r?.points ?? 0)),
-    [rows]
-  );
+  const competitionPlaces = useMemo(() => {
+    // Plätze nur unter echten Spielern – 🚫 Platzhalter/Ghosts bekommen keinen (null → "–")
+    const humans = rows.filter((r: any) => !r?.isPlaceholder);
+    const hp = computeCompetitionPlaces(humans, (r: any) => Number(r?.points ?? 0));
+    const placeOf = new Map(humans.map((r: any, i: number) => [r, hp[i]]));
+    return rows.map((r: any) => (r?.isPlaceholder ? null : placeOf.get(r) ?? null));
+  }, [rows]);
 
   return (
     <div className="space-y-4">
@@ -4456,15 +4461,20 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
 
             {rows.map((r: any, index: number) => {
               const hist = (r.history ?? []).map((x: any) => x.points);
-              const place = competitionPlaces[index] ?? index + 1;
+              const ph = !!r.isPlaceholder; // 🚫 Platzhalter / Ghost
+              const place = ph ? 0 : competitionPlaces[index] ?? index + 1;
 
-              const medal = medalForPlace(place);
+              const medal = ph ? "" : medalForPlace(place);
               const medalClass =
                 place === 1 ? "text-lg leaderboard-glow" : "text-lg";
               const hasMedal = medal !== "";
 
               return (
-                <div key={r.id} className="relative min-w-0 border-b last:border-b-0">
+                <div
+                  key={r.id}
+                  className={"relative min-w-0 border-b last:border-b-0" + (ph ? " opacity-40" : "")}
+                  title={ph ? "🚫 Platzhalter / Ghost – zählt nicht (kein Platz, keine Turnierpunkte)" : undefined}
+                >
                   <button
                     className={`w-full grid grid-cols-12 gap-2 sm:gap-4 px-2 py-3 items-center text-left hover:bg-neutral-50 ${
                       place === 1 ? "leaderboard-first" : ""
@@ -4474,7 +4484,7 @@ function Stats({ code, tournamentName }: { code: string; tournamentName: string 
                     {/* Platz-Spalte: Medaille (1–3) oder Platz-Zahl (ab 4) */}
                     <div className="col-span-2 sm:col-span-1 flex flex-col items-center justify-center text-xs tabular-nums">
                       {hasMedal && <span className={medalClass}>{medal}</span>}
-                      {!hasMedal && <span className="font-semibold">{place}.</span>}
+                      {!hasMedal && <span className="font-semibold">{ph ? "–" : `${place}.`}</span>}
                     </div>
 
                     {/* Badge schwebend */}
@@ -4772,9 +4782,12 @@ function MiniLeaderboard({
 
   // Rotation: alle Spieler, sortiert nach vorläufigem Gesamtstand (echt + vorl.)
   // Sonst: wie bisher Top 8 nach echten Punkten
+  // 🚫 Platzhalter/Ghosts: nach Turnierende ganz ausblenden (im laufenden Turnier blass, ohne Platz – siehe unten)
+  const lbFinished = tournament?.status === "finished";
   const top = useMemo(() => {
-    if (!rotation) return rows.slice(0, 8);
-    return rows
+    const base = lbFinished ? rows.filter((r: any) => !r?.isPlaceholder) : rows;
+    if (!rotation) return base.slice(0, 8);
+    return base
       .map((r: any) => {
         const pts = Number(r?.points ?? 0);
         const extra = Number(provisional[r?.id] ?? 0);
@@ -4786,13 +4799,19 @@ function MiniLeaderboard({
           Number(b.points ?? 0) - Number(a.points ?? 0) ||
           String(a.name ?? "").localeCompare(String(b.name ?? ""))
       );
-  }, [rows, rotation, provisional]);
+  }, [rows, rotation, provisional, lbFinished]);
 
   const valueOf = (r: any) =>
     rotation ? Number(r?.provTotal ?? 0) : Number(r?.points ?? 0);
 
+  // Plätze nur unter echten Spielern (Platzhalter bekommen keinen Platz → "–")
   const topPlaces = useMemo(
-    () => computeCompetitionPlaces(top, valueOf),
+    () => {
+      const humans = top.filter((r: any) => !r?.isPlaceholder);
+      const hp = computeCompetitionPlaces(humans, valueOf);
+      const placeOf = new Map(humans.map((r: any, i: number) => [r, hp[i]]));
+      return top.map((r: any) => (r?.isPlaceholder ? null : placeOf.get(r) ?? null));
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [top, rotation]
   );
@@ -4834,10 +4853,12 @@ function MiniLeaderboard({
               return (
                 <div
                   key={r.id ?? r.player_id ?? index}
-                  className="flex items-start gap-1.5 text-sm"
+                  className={"flex items-start gap-1.5 text-sm" + (r.isPlaceholder ? " opacity-40" : "")}
+                  title={r.isPlaceholder ? "🚫 Platzhalter / Ghost – zählt nicht (kein Platz, keine Turnierpunkte)" : undefined}
                 >
                   <div className="w-5 shrink-0 text-right tabular-nums text-neutral-500 pt-0.5">
                     {(() => {
+                      if (r.isPlaceholder) return <span className="font-semibold">–</span>;
                       const place = topPlaces[index] ?? index + 1;
                       // Medaille erst ab > 0 Punkten (sonst hat zu Beginn jeder Gold)
                       const medal = valueOf(r) > 0 ? medalForPlace(place) : null;
@@ -12507,8 +12528,10 @@ async function reload() {
       });
       const jStats = await resStats.json().catch(() => ({}));
 
-      if (resStats.ok && Array.isArray(jStats.stats) && jStats.stats.length > 0) {
-        setTournamentChampion(jStats.stats[0].name ?? null);
+      // 🚫 Platzhalter / Ghosts sind nie Turniersieger
+      const realStats = Array.isArray(jStats.stats) ? jStats.stats.filter((s: any) => !s?.isPlaceholder) : [];
+      if (resStats.ok && realStats.length > 0) {
+        setTournamentChampion(realStats[0].name ?? null);
       } else {
         setTournamentChampion(null);
       }

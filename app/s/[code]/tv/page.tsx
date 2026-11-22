@@ -269,6 +269,7 @@ type Row = {
   eloStart: number | null; // Elo vor dem Turnier (tournament_ratings)
   eloNow: number | null; // aktuelle Elo im Profil (wird nach jeder fertigen Runde neu berechnet)
   isBot?: boolean; // 🤖 KI-Bot (feste Elo)
+  placeholder?: boolean; // 🚫 Platzhalter / Ghost: blass, ohne Platz, nach Turnierende ausgeblendet
   tp?: number | null; // Turnierpunkte heute (erst nach "Turnier beenden"), inkl. Superfinale-Bonus
   tpBonus?: number; // davon Superfinale-Bonus (für "+6 TP +2 🔥")
   streak?: number; // 🔥 Serie (nur laufendes Turnier, siehe lib/winStreaks.ts)
@@ -484,15 +485,26 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
         eloNow:
           prof?.rating != null && Number.isFinite(Number(prof.rating)) ? Number(prof.rating) : null,
         isBot: prof?.is_bot === true,
+        // 🚫 Platzhalter / Ghost: blass, ohne Platz (0 = "–"); nach Turnierende ausgeblendet
+        placeholder: prof?.exclude_from_stats === true && prof?.is_bot !== true,
       };
     });
     rowsUnsorted.sort((a, b) => b.total - a.total || b.real - a.real || a.name.localeCompare(b.name));
     const rows: Row[] = [];
-    rowsUnsorted.forEach((r, i) => {
-      const prev = rows[i - 1];
-      const place = prev && prev.total === r.total ? prev.place : i + 1;
-      rows.push({ ...r, place });
-    });
+    let humanIdx = 0;
+    let lastHuman: Row | null = null;
+    for (const r of rowsUnsorted) {
+      if (r.placeholder) {
+        if (!isFinished) rows.push({ ...r, place: 0 });
+        continue;
+      }
+      // Plätze nur unter echten Spielern (Competition Ranking 1, 1, 3 …)
+      humanIdx++;
+      const place: number = lastHuman && lastHuman.total === r.total ? lastHuman.place : humanIdx;
+      const row: Row = { ...r, place };
+      rows.push(row);
+      lastHuman = row;
+    }
 
     // Spalten pro Flipper (nur Rotation), sortiert nach Rundennummer
     const columns: Column[] = [];
@@ -1802,14 +1814,15 @@ function EloLine({ row, eloOn }: { row: Row; eloOn: boolean }) {
 }
 
 function PlaceBadge({ place, total }: { place: number; total: number }) {
-  const p = total > 0 ? podium(place) : null;
+  // place 0 = 🚫 Platzhalter / Ghost (kein Platz)
+  const p = total > 0 && place > 0 ? podium(place) : null;
   return (
     <span
       className={`inline-flex h-10 w-10 items-center justify-center rounded-full text-lg font-extrabold tabular-nums ${
         p ? p.badge : "bg-white/10 text-white/70"
       }`}
     >
-      {place}
+      {place > 0 ? place : "–"}
     </span>
   );
 }
@@ -2005,7 +2018,7 @@ function RotationTable({
             return (
               <tr
                 key={r.id}
-                className={`group border-t border-white/[0.07] transition-colors hover:bg-indigo-500/30 hover:outline hover:outline-[3px] hover:-outline-offset-[3px] hover:outline-indigo-300 ${
+                className={`group border-t border-white/[0.07] transition-colors hover:bg-indigo-500/30 hover:outline hover:outline-[3px] hover:-outline-offset-[3px] hover:outline-indigo-300 ${r.placeholder ? "opacity-40 " : ""}${
                   p ? `bg-gradient-to-r ${p.row} to-transparent` : ""
                 }`}
               >
@@ -2305,7 +2318,7 @@ function MatchTvView({
             return (
               <div
                 key={r.id}
-                className={`relative flex items-center gap-3 border-t border-white/[0.07] px-4 py-1 ${
+                className={`relative flex items-center gap-3 border-t border-white/[0.07] px-4 py-1 ${r.placeholder ? "opacity-40 " : ""}${
                   p ? `bg-gradient-to-r ${p.row} to-transparent` : ""
                 }`}
               >
@@ -3414,7 +3427,7 @@ function LeaderboardOnly({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
             return (
               <tr
                 key={r.id}
-                className={`border-t border-white/[0.07] ${p ? `bg-gradient-to-r ${p.row} to-transparent` : ""}`}
+                className={`border-t border-white/[0.07] ${r.placeholder ? "opacity-40 " : ""}${p ? `bg-gradient-to-r ${p.row} to-transparent` : ""}`}
               >
                 <td className="relative py-2.5 pl-5 pr-2">
                   {p ? <span className={`absolute inset-y-1 left-0 w-1.5 rounded-r ${p.bar}`} /> : null}
