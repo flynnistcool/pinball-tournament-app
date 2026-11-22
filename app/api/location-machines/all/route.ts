@@ -22,15 +22,21 @@ export async function GET() {
     );
 
     // location_machines + join locations(name)
-    const { data, error } = await supabase
-      .from("location_machines")
-      .select("id, location_id, name, active, sort_order, locations:location_id(name)")
-      .order("location_id", { ascending: true })
-      .order("sort_order", { ascending: true });
+    // 🎱 Single Play: nur Flipper (is_pinball; fehlt die Spalte noch → alle wie bisher)
+    const load = (cols: string) =>
+      supabase
+        .from("location_machines")
+        .select(cols)
+        .order("location_id", { ascending: true })
+        .order("sort_order", { ascending: true });
+    let { data, error } = await load("id, location_id, name, active, sort_order, is_pinball, locations:location_id(name)");
+    if (error && /is_pinball/i.test(error.message)) {
+      ({ data, error } = await load("id, location_id, name, active, sort_order, locations:location_id(name)"));
+    }
 
     if (error) return noStoreJson({ error: error.message }, 500);
 
-    const machines = (data ?? []).map((r: any) => ({
+    const machines = ((data ?? []) as any[]).filter((r: any) => r.is_pinball !== false).map((r: any) => ({
       id: r.id,
       location_id: r.location_id,
       machine_name: r.name,

@@ -83,11 +83,30 @@ if (format === "dyp_round_robin") match_size = 4;
 
   // --- Maschinenkopie ---
   // Priorität: templateTournamentId > locationId
+  // 🎱 Nur DYP bekommt auch Nicht-Flipper (Arcade, Kicker …: location_machines.is_pinball = false);
+  //    alle anderen Modi nur Flipper. Fehlt die Spalte noch (SQL nicht ausgeführt) → alles wie bisher.
+  const onlyPinball = format !== "dyp_round_robin";
+  const notPinball = new Set<string>(); // Namen (klein) der Nicht-Flipper an der Location
+  const flagLocation = String((data as any).location_id ?? locationId ?? "");
+  if (onlyPinball && flagLocation) {
+    const { data: flags, error: flErr } = await sb
+      .from("location_machines")
+      .select("name, is_pinball")
+      .eq("location_id", flagLocation);
+    if (!flErr) {
+      for (const f of (flags ?? []) as { name: string | null; is_pinball: boolean | null }[]) {
+        if (f.is_pinball === false) notPinball.add(String(f.name ?? "").trim().toLowerCase());
+      }
+    }
+  }
+  const keep = (m: any) => !notPinball.has(String(m?.name ?? "").trim().toLowerCase());
+
   if (templateTournamentId) {
-    const { data: ms } = await sb
+    const { data: msAll } = await sb
       .from("machines")
       .select("name, active, icon_emoji")
       .eq("tournament_id", templateTournamentId);
+    const ms = (msAll ?? []).filter(keep);
 
     if (ms?.length) {
       await sb.from("machines").insert(
@@ -100,11 +119,12 @@ if (format === "dyp_round_robin") match_size = 4;
       );
     }
   } else if (locationId) {
-    const { data: ms } = await sb
+    const { data: msAll } = await sb
       .from("location_machines")
       .select("name, active, icon_emoji")
       .eq("location_id", locationId)
       .order("sort_order");
+    const ms = (msAll ?? []).filter(keep);
 
     if (ms?.length) {
       await sb.from("machines").insert(

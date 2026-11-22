@@ -12,6 +12,8 @@ type LocationMachine = {
   active: boolean;
   sort_order?: number | null;
   icon_emoji?: string | null;
+  /** 🎱 Flipper? false = Arcade/Kicker/… → kommt nur in DYP-Turniere (und nicht in Single Play) */
+  is_pinball?: boolean;
 };
 
 function suggestEmojiForMachine(name: string): string {
@@ -106,6 +108,7 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
         active: m.active !== false,
         sort_order: m.sort_order ?? idx,
         icon_emoji: m.icon_emoji ?? "", // <-- Emoji aus Backend übernehmen
+        is_pinball: m.is_pinball !== false,
       }));
       setMachines(list);
     } finally {
@@ -127,6 +130,7 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
             active: m.active !== false,
             sort_order: typeof m.sort_order === "number" ? m.sort_order : idx,
             icon_emoji: m.icon_emoji ?? null, // <-- Emoji mit speichern
+            is_pinball: m.is_pinball !== false,
           })),
         }),
       });
@@ -465,6 +469,7 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                         active: true,
                         sort_order: machines.length,
                         icon_emoji: "",
+                        is_pinball: true,
                       },
                     ];
                     setMachineNewName("");
@@ -476,17 +481,22 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                 </Button>
               </div>
 
-              {/* Maschinen Liste */}
+              {/* Maschinen Liste – nach Beliebtheit sortiert (Platz 1 oben; ohne Platz ans Ende in bisheriger
+                  Reihenfolge – nicht nach Name, sonst springt die Zeile beim Umbenennen).
+                  idx = Position in `machines` (für Bearbeiten/Löschen), pos = angezeigte Reihenfolge */}
               <div className="space-y-2">
-                {machines.map((m, idx) => {
+                {machines
+                  .map((m, idx) => ({ m, idx, rank: m.id ? machineStats[m.id]?.rank ?? null : null }))
+                  .sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999) || a.idx - b.idx)
+                  .map(({ m, idx }, pos) => {
                   // kleine, einheitliche Knöpfe in der Kopfzeile
                   const iconBtn =
                     "inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-neutral-100 px-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-200 disabled:opacity-35 disabled:cursor-not-allowed";
                   return (
-                  <div key={idx} className="space-y-3 rounded-2xl border bg-white p-3 shadow-sm">
-                    {/* Kopfzeile: Nr · Name · Icon · Status · Sortieren · Löschen */}
+                  <div key={m.id ?? `neu-${idx}`} className="space-y-3 rounded-2xl border bg-white p-3 shadow-sm">
+                    {/* Kopfzeile: Nr · Name · Icon · Status · Flipper? · Löschen */}
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="w-7 text-xs text-neutral-400">#{idx + 1}</span>
+                      <span className="w-7 text-xs text-neutral-400">#{pos + 1}</span>
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-xl">
                         {(m.icon_emoji ?? "").trim() || "🎰"}
                       </span>
@@ -546,37 +556,27 @@ const [newTaskDifficulty, setNewTaskDifficulty] = useState<TaskDifficulty>("easy
                         <option value="1">● aktiv</option>
                         <option value="0">○ inaktiv</option>
                       </select>
+                      {/* 🎱 Flipper oder nicht (Arcade, Kicker … → nur in DYP-Turnieren) */}
                       <button
                         type="button"
-                        className={iconBtn}
-                        title="nach oben"
-                        disabled={machinesBusy || idx === 0}
-                        onClick={async () => {
+                        className={
+                          "h-9 rounded-lg border px-2 text-sm font-medium " +
+                          (m.is_pinball !== false
+                            ? "bg-sky-50 text-sky-800 border-sky-200"
+                            : "bg-amber-50 text-amber-800 border-amber-300")
+                        }
+                        title={
+                          m.is_pinball !== false
+                            ? "Flipper – kommt in alle Turniere. Klicken: kein Flipper (Arcade/Kicker → nur DYP)"
+                            : "Kein Flipper – kommt nur in DYP-Turniere (nicht Single Play). Klicken: wieder Flipper"
+                        }
+                        onClick={() => {
                           const next = machines.slice();
-                          const tmp = next[idx - 1];
-                          next[idx - 1] = next[idx];
-                          next[idx] = tmp;
+                          next[idx] = { ...next[idx], is_pinball: next[idx].is_pinball === false };
                           setMachines(next);
-                          await saveMachines(openLocation.id, next);
                         }}
                       >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        className={iconBtn}
-                        title="nach unten"
-                        disabled={machinesBusy || idx === machines.length - 1}
-                        onClick={async () => {
-                          const next = machines.slice();
-                          const tmp = next[idx + 1];
-                          next[idx + 1] = next[idx];
-                          next[idx] = tmp;
-                          setMachines(next);
-                          await saveMachines(openLocation.id, next);
-                        }}
-                      >
-                        ↓
+                        {m.is_pinball !== false ? "🎱 Flipper" : "🕹️ kein Flipper"}
                       </button>
                       <button
                         type="button"

@@ -20,12 +20,11 @@ export async function GET(req: Request) {
   if (!locationId) return noStoreJson({ error: "locationId fehlt" }, 400);
 
   const sb = supabaseAdmin();
-  const { data, error } = await sb
-    .from("location_machines")
-    .select("id, name, active, sort_order, icon_emoji")
-    .eq("location_id", locationId)
-    .order("sort_order")
-    .order("created_at");
+  const load = (cols: string) =>
+    sb.from("location_machines").select(cols).eq("location_id", locationId).order("sort_order").order("created_at");
+  // 🎱 is_pinball (supabase_location_machines_is_pinball.sql) – fehlt die Spalte noch: ohne laden (= alle Flipper)
+  let { data, error } = await load("id, name, active, sort_order, icon_emoji, is_pinball");
+  if (error && /is_pinball/i.test(error.message)) ({ data, error } = await load("id, name, active, sort_order, icon_emoji"));
 
   if (error) return noStoreJson({ error: error.message }, 500);
   return noStoreJson({ machines: data ?? [] });
@@ -66,9 +65,17 @@ export async function POST(req: Request) {
         active: m?.active !== false,
         sort_order: Number.isFinite(m?.sort_order) ? Number(m.sort_order) : idx,
         icon_emoji: m?.icon_emoji ? String(m.icon_emoji).trim() : null,
+        // 🎱 Flipper? (Arcade/Kicker = false → nur in DYP-Turnieren)
+        is_pinball: m?.is_pinball !== false,
       };
     })
     .filter((x: any) => x.name);
+
+  // Spalte is_pinball noch nicht angelegt (SQL nicht ausgeführt) → ohne sie speichern
+  const { error: colErr } = await sb.from("location_machines").select("is_pinball").limit(1);
+  if (colErr && /is_pinball/i.test(colErr.message)) {
+    for (const m of normalized) delete (m as any).is_pinball;
+  }
 
   const toUpsert = normalized.filter((m: any) => m.id); // bestehende + ggf. editierte
   const toInsert = normalized.filter((m: any) => !m.id); // neue
