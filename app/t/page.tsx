@@ -6248,10 +6248,11 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
           const runFrac = b.total > 0 ? Math.min(1 - frac, b.running / b.total) : 0;
           return (
             <div key={idx}>
-              <div className={`flex items-center justify-between ${compact ? "text-[12px]" : "text-[13px]"} text-neutral-700`}>
+              <div className={`flex flex-wrap items-center justify-between gap-x-2 ${compact ? "text-[12px]" : "text-[13px]"} text-neutral-700`}>
                 <div className="font-medium">{b.label}</div>
                 <div className="tabular-nums">
-                  {b.done}/{b.total}{" "}
+                  {/* "3 von 15" statt "3/15" – sonst liest es sich direkt hinter "Hauptrunde 1" wie "Hauptrunde 13/15" */}
+                  {b.done} von {b.total}{" "}
                   {b.runningNo != null ? (
                     <span className="text-neutral-500">· Runde {b.runningNo} läuft</span>
                   ) : (

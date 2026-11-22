@@ -1026,8 +1026,17 @@ if (!machinesToValidate.length) {
       round: roundNoById.get(String(m.round_id)) ?? 0,
       players: (mpByMatch[m.id] ?? []).map((x: any) => ({ id: String(x.player_id), team: x.team ?? null })),
     }));
-    const dCounts = dypCounts(dypHistory, humanIds, ghostSet);
-    const dPlan = planDypRound(humanIds, ghostIdList, dCounts);
+    let dCounts = dypCounts(dypHistory, humanIds, ghostSet);
+    let dPlan = planDypRound(humanIds, ghostIdList, dCounts);
+    // 🧪 Testmodus: ergibt die Ghost-Regel kein einziges Match (z. B. nur Test-/Platzhalter-Profile),
+    //    spielen alle ganz normal mit – Platzhalter zählen dann wie echte Spieler fürs Paaren.
+    if (dPlan.full.length === 0 && !dPlan.rest) {
+      const allIds = (players as PlayerRow[]).map((p) => p.id);
+      ghostSet.clear();
+      dCounts = dypCounts(dypHistory, allIds, ghostSet);
+      dPlan = planDypRound(allIds, [], dCounts);
+      warnings.push("🧪 Testmodus: zu wenige echte Spieler – Platzhalter spielen diese Runde normal mit.");
+    }
     warnings.push(
       dypPlanText(dPlan, nextRoundNumber, dPlan.full.length / 4, (id) => byId.get(id)?.name ?? "?", dCounts, ghostSet)
     );
