@@ -6127,6 +6127,7 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
 
   let byeName: string | null = null;
   let byeRoundLabel: string | null = null;
+  let currentByeIds = new Set<string>(); // wer in der aktuellen Runde aussetzt
 
   // ✅ Aktuelle Runde (Scope-safe): open-Runde bevorzugen, sonst letzte vorhandene Runde
   const currentRound = (Array.isArray(rounds) && rounds.length > 0)
@@ -6173,8 +6174,31 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
         // Wenn wir es nicht sauber ableiten können, lieber "—" anzeigen.
         byeName = null;
       }
+      currentByeIds = new Set(byeIds.map(String));
     }
   }
+
+  // 📋 Kontrolle: alle aktiven Spieler + wie oft schon ausgesetzt (Runden ohne eigenes Match)
+  const byeCountRows = (() => {
+    if (!hasBye) return [] as { id: string; name: string; count: number; now: boolean }[];
+    const inRound = new Map<string, Set<string>>();
+    const roundOfMatch = new Map((matches ?? []).map((m: any) => [String(m.id), String(m.round_id)]));
+    for (const mp of matchPlayers ?? []) {
+      const rid = roundOfMatch.get(String(mp.match_id));
+      if (!rid) continue;
+      const set = inRound.get(rid) ?? new Set<string>();
+      set.add(String(mp.player_id));
+      inRound.set(rid, set);
+    }
+    const roundIds = (rounds ?? []).map((r: any) => String(r.id)).filter((rid: string) => inRound.has(rid));
+    return activePlayers
+      .map((p: any) => {
+        const id = String(p.id);
+        const count = roundIds.filter((rid: string) => !inRound.get(rid)?.has(id)).length;
+        return { id, name: String(playersById?.[id]?.name ?? p.name ?? "?"), count, now: currentByeIds.has(id) };
+      })
+      .sort((a: any, b: any) => a.name.localeCompare(b.name, "de"));
+  })();
 
   // ◯ Paarungen, die in der AKTUELLEN Hauptrunde noch fehlen (leerer Kreis in der Farbe der Hauptrunde)
   const openPairing = (() => {
@@ -6301,8 +6325,27 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
       {hasBye && (
         <div className={"mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm"}>
           <div className="px-2.5 pt-4 pb-2.5 border-b text-gray-900 text-sm font-semibold">Aussetzer<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
-          <div className="px-2.5 py-3 text-sm text-gray-800">
-            <span className="text-[13px] text-gray-900">{(byeName && String(byeName).toLowerCase() !== "ghost") ? byeName : "Ghost"}</span>
+          {/* 📋 alle Spieler: wer jetzt aussetzt (blass) + rechts, wie oft schon ausgesetzt */}
+          <div className="px-2.5 py-2 text-[13px] text-gray-900">
+            {byeCountRows.length ? (
+              <div className="space-y-0.5">
+                {byeCountRows.map((r) => (
+                  <div
+                    key={r.id}
+                    className={"flex items-center justify-between gap-2 rounded-md px-1.5 py-0.5 " + (r.now ? "bg-neutral-100 text-neutral-400" : "")}
+                    title={r.now ? "setzt diese Runde aus" : undefined}
+                  >
+                    <span className="truncate">
+                      {r.name}
+                      {r.now ? <span className="ml-1.5 text-[11px] font-semibold">setzt aus</span> : null}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-[12px] text-neutral-500">{r.count}×</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span>{(byeName && String(byeName).toLowerCase() !== "ghost") ? byeName : "Ghost"}</span>
+            )}
           </div>
         </div>
       )}
