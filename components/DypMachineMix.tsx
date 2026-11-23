@@ -9,6 +9,22 @@ import { clampPinballWeight, DYP_PINBALL_WEIGHT_DEFAULT } from "@/lib/dypMachine
 export default function DypMachineMix({ code, weight }: { code: string; weight: unknown }) {
   const [value, setValue] = useState<number>(clampPinballWeight(weight ?? DYP_PINBALL_WEIGHT_DEFAULT));
   const [busy, setBusy] = useState(false);
+  // auf-/zuklappen (wie die anderen Blöcke, bleibt nach Neuladen)
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("pb_open_dyp_mix");
+      if (v != null) setOpen(v === "1");
+    } catch {}
+  }, []);
+  function toggle() {
+    setOpen((v) => {
+      try {
+        localStorage.setItem("pb_open_dyp_mix", v ? "0" : "1");
+      } catch {}
+      return !v;
+    });
+  }
 
   // nur nachziehen, wenn sich der Wert vom Server wirklich ändert (nicht nach eigenem Speichern zurückspringen)
   useEffect(() => {
@@ -43,9 +59,26 @@ export default function DypMachineMix({ code, weight }: { code: string; weight: 
 
   return (
     <div className="mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-2 px-2.5 pt-4 pb-2.5">
-        <span className="text-sm font-semibold text-gray-900">Geräte-Mix</span>
-        <span className="flex items-center gap-1.5">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+        className={"flex cursor-pointer select-none items-center justify-between gap-2 px-2.5 pt-4 pb-2.5 " + (open ? "border-b" : "")}
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+          <span>Geräte-Mix</span>
+          <span className="text-xs text-neutral-400">{open ? "▾" : "▸"}</span>
+        </span>
+        {!open ? (
+          <span className="text-[12px] font-semibold text-gray-700">Flipper {value}×</span>
+        ) : (
+        <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <button type="button" className={btn} disabled={busy || value <= 0} onClick={() => save(value - 1)} aria-label="weniger Flipper">
             −
           </button>
@@ -54,11 +87,14 @@ export default function DypMachineMix({ code, weight }: { code: string; weight: 
             +
           </button>
         </span>
+        )}
       </div>
-      <div className="border-t px-2.5 py-2 text-[12px] leading-snug text-gray-500">
+      {open ? (
+      <div className="px-2.5 py-2 text-[12px] leading-snug text-gray-500">
         Jedes andere Gerät (Kicker, Arcade …) kommt 1× dran, <b className="text-gray-700">alle Flipper zusammen {value}×</b> –
         dabei immer der am seltensten gespielte Flipper. Gilt ab der nächsten Runde.
       </div>
+      ) : null}
     </div>
   );
 }
