@@ -90,6 +90,9 @@ import VersionBadge from "@/components/VersionBadge";
 import LiveTvButton from "@/components/LiveTvButton";
 import HomeTiles from "@/components/HomeTiles";
 import ThemeToggle from "@/components/ThemeToggle";
+import DypMachineMix from "@/components/DypMachineMix";
+import DypDeviceCounts from "@/components/DypDeviceCounts";
+import DypMixDialog from "@/components/DypMixDialog";
 import DisplayResetButton from "@/components/DisplayResetButton";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
@@ -5808,6 +5811,7 @@ function MatchplayProgressStack({
 
   const [openProgress, setOpenProgress] = usePersistentOpen("pb_open_progress"); // 📌 bleibt nach Neuladen
   const [pairingsOpen, setPairingsOpen] = usePersistentOpen("pb_open_pairings");
+  const [byeOpen, setByeOpen] = usePersistentOpen("pb_open_byes"); // 📋 Aussetzer-Block auf/zu
   // nur die neuesten 7 Hauptrunden zeigen, Rest per "mehr anzeigen" (wie am TV)
   const [showAllBars, setShowAllBars] = useState(false);
 
@@ -6324,31 +6328,66 @@ const matchSize = Math.max(2, Number(tournament?.match_size ?? 2) || 2);
       {/* Info-Block unter Fortschritt Hauptrunden */}
       {hasBye && (
         <div className={"mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm"}>
-          <div className="px-2.5 pt-4 pb-2.5 border-b text-gray-900 text-sm font-semibold">Aussetzer<span className="mx-1 text-gray-500 text-[12px]"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span></div>
-          {/* 📋 alle Spieler: wer jetzt aussetzt (blass) + rechts, wie oft schon ausgesetzt */}
-          <div className="px-2.5 py-2 text-[13px] text-gray-900">
-            {byeCountRows.length ? (
-              <div className="space-y-0.5">
-                {byeCountRows.map((r) => (
-                  <div
-                    key={r.id}
-                    className={"flex items-center justify-between gap-2 rounded-md px-1.5 py-0.5 " + (r.now ? "bg-neutral-100 text-neutral-400" : "")}
-                    title={r.now ? "setzt diese Runde aus" : undefined}
-                  >
-                    <span className="truncate">
-                      {r.name}
-                      {r.now ? <span className="ml-1.5 text-[11px] font-semibold">setzt aus</span> : null}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-[12px] text-neutral-500">{r.count}×</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <span>{(byeName && String(byeName).toLowerCase() !== "ghost") ? byeName : "Ghost"}</span>
-            )}
+          {/* Kopf zum Auf-/Zuklappen (wie Paarungen, bleibt nach Neuladen) – zugeklappt steht der Aussetzer im Kopf */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setByeOpen((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setByeOpen((v) => !v);
+              }
+            }}
+            className={"px-2.5 pt-4 pb-2.5 text-gray-900 text-sm font-semibold flex items-center justify-between gap-2 cursor-pointer select-none " + (byeOpen ? "border-b" : "")}
+          >
+            <span className="flex items-center gap-2">
+              <span>Aussetzer</span>
+              <span className="text-gray-500 text-[12px] font-normal"># {currentRound?.number ?? currentRound?.round_no ?? "—"}</span>
+              <span className="text-neutral-400 text-xs">{byeOpen ? "▾" : "▸"}</span>
+            </span>
+            {!byeOpen ? (
+              <span className="truncate text-[12px] font-semibold text-amber-700">
+                {byeCountRows.filter((r) => r.now).map((r) => r.name).join(", ") || byeName || ""}
+              </span>
+            ) : null}
           </div>
+          {/* 📋 alle Spieler: der Aussetzer hervorgehoben, alle anderen blass; rechts wie oft schon ausgesetzt */}
+          {byeOpen ? (
+            <div className="px-2.5 py-2 text-[13px] text-gray-900">
+              {byeCountRows.length ? (
+                <div className="space-y-0.5">
+                  {byeCountRows.map((r) => (
+                    <div
+                      key={r.id}
+                      className={
+                        "flex items-center justify-between gap-2 rounded-md px-1.5 py-0.5 " +
+                        (r.now ? "bg-amber-100 font-semibold text-amber-900 ring-1 ring-amber-300" : "text-neutral-400")
+                      }
+                      title={r.now ? "setzt diese Runde aus" : undefined}
+                    >
+                      <span className="truncate">
+                        {r.name}
+                        {r.now ? <span className="ml-1.5 text-[11px] font-bold">setzt aus</span> : null}
+                      </span>
+                      <span className={"shrink-0 tabular-nums text-[12px] " + (r.now ? "text-amber-800" : "text-neutral-400")}>
+                        {r.count}×
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span>{(byeName && String(byeName).toLowerCase() !== "ghost") ? byeName : "Ghost"}</span>
+              )}
+            </div>
+          ) : null}
         </div>
       )}
+
+      {/* 🎱 DYP: Geräte-Mix (Flipper-Gewicht) */}
+      {(formatRaw === "dyp_round_robin" || formatRaw === "dyp round robin") && tournament?.code ? (
+        <DypMachineMix code={String(tournament.code)} weight={tournament?.dyp_pinball_weight} />
+      ) : null}
 
 {/* Paarungen (gesamt im Turnier) */}
 <div className={"mt-2 overflow-hidden rounded-2xl border bg-white shadow-sm"}>
@@ -14123,6 +14162,12 @@ if (rotEndTimeoutRef.current != null) {
   //    sonst ist der Knopf kurz wieder frei, während die Seite die neue Runde noch nicht kennt → zweite Runde.
   const createRoundLockRef = useRef(false);
 
+  // 🎱 DYP: vor der 1. Runde Geräte-Mix abfragen (nur wenn Flipper UND andere Geräte aktiv sind)
+  const [dypMixOpen, setDypMixOpen] = useState(false);
+  const dypActiveMachines = (data?.machines ?? []).filter((m: any) => m?.active);
+  const dypMixPins = dypActiveMachines.filter((m: any) => m?.is_pinball !== false).length;
+  const dypMixOthers = dypActiveMachines.filter((m: any) => m?.is_pinball === false).map((m: any) => String(m?.name ?? "?"));
+
   // opts kommt nur vom Rotation-Fenster; beim Klick auf den Knopf ist das erste Argument das Klick-Ereignis
   async function createRound(opts?: any) {
     if (locked) return;
@@ -14151,6 +14196,19 @@ if (rotEndTimeoutRef.current != null) {
       setNotice(
         "Es läuft noch eine aktive Runde. Bitte erst alle Runden auf Finished bringen, dann eine neue Runde erzeugen."
       );
+      return;
+    }
+
+    // 🎱 DYP: vor der 1. Runde Geräte-Mix abfragen (Fenster ruft createRound danach mit dem Gewicht auf)
+    const dypWeight: number | null = typeof opts?.dypWeight === "number" ? opts.dypWeight : null;
+    if (
+      String(data?.tournament?.format ?? "") === "dyp_round_robin" &&
+      (rounds ?? []).length === 0 &&
+      dypWeight == null &&
+      dypMixPins > 0 &&
+      dypMixOthers.length > 0
+    ) {
+      setDypMixOpen(true);
       return;
     }
 
@@ -14188,6 +14246,8 @@ if (rotEndTimeoutRef.current != null) {
         useElo,      // Elo-Flag für die Runde
         // 🎰 Round the Pinball: gewählte Anzahl Flipper
         rotationMachineCount: isRotationFormat ? rotationMachineCount : undefined,
+        // 🎱 DYP: Gewicht aus dem Geräte-Mix-Fenster
+        dypPinballWeight: dypWeight ?? undefined,
 
         // ✅ Timeplay: Difficulty-Filter für Tasks/Maschinen
         taskDifficulties: isTimeplayFormat ? taskDifficulties : undefined,
@@ -14589,6 +14649,24 @@ const tasksById = useMemo(() => {
         }}
       />
 
+      <DypMixDialog
+        open={dypMixOpen}
+        initialWeight={data?.tournament?.dyp_pinball_weight}
+        otherNames={dypMixOthers}
+        pinballCount={dypMixPins}
+        onCancel={() => setDypMixOpen(false)}
+        onConfirm={(w) => {
+          setDypMixOpen(false);
+          // speichern (für spätere Runden + Block rechts); Runde bekommt das Gewicht direkt mit
+          void fetch("/api/tournaments/set-dyp-weight", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+            body: JSON.stringify({ code, weight: w }),
+          }).catch(() => {});
+          void createRound({ dypWeight: w });
+        }}
+      />
       <RotationRoundsDialog
         open={rotRoundsDialogOpen}
         players={rotDialogPlayers}
@@ -15421,6 +15499,15 @@ const tasksById = useMemo(() => {
       playersById={playersById}
       compact
     />
+    {/* 🎱 DYP: Kontrolle – wie oft war jeder an welchem Gerät */}
+    {String((data as any)?.tournament?.format ?? "") === "dyp_round_robin" ? (
+      <DypDeviceCounts
+        players={(data as any)?.players ?? []}
+        machines={(data as any)?.machines ?? []}
+        matches={matches ?? []}
+        matchPlayers={matchPlayers ?? []}
+      />
+    ) : null}
 {isRotationFormat ? (
   (() => {
     const preLeftMs = rotPrestartLeftMs();

@@ -2,6 +2,7 @@ import { rotationStartOrder } from "@/lib/rotationPlan";
 import { eloAllowedInFormat } from "@/lib/botRules";
 import { loadStatsExclusions } from "@/lib/statsExclusions";
 import { dypCounts, dypPlanText, planDypRound, type DypHistoryMatch } from "@/lib/dypPlan";
+import { clampPinballWeight, DYP_PINBALL_WEIGHT_DEFAULT, pickDypMachine, type DypMachine } from "@/lib/dypMachinePick";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 type StartOrderMode = "random" | "standings_asc" | "last_round_asc";
@@ -384,6 +385,11 @@ export async function POST(req: Request) {
 
   // ✅ Preview-Mode: UI will nur wissen, welche Maschinen "eligible" sind
   const previewOnly = Boolean(body.previewOnly);
+  // 🎱 DYP: Flipper-Gewicht direkt aus dem Geräte-Mix-Fenster (vor der 1. Runde) – sonst aus der DB
+  const dypWeightFromBody =
+    body.dypPinballWeight != null && Number.isFinite(Number(body.dypPinballWeight))
+      ? clampPinballWeight(body.dypPinballWeight)
+      : null;
   // 🎰 Round the Pinball: gewünschte Anzahl Flipper (leer = wie früher: so viele wie Spieler)
   const rotationMachineCountRaw = Number(body.rotationMachineCount);
   const rotationMachineCount =
@@ -1237,6 +1243,41 @@ if (!machinesToValidate.length) {
 
   const usedMachinesInRound = new Set<string>();
 
+  // 🎱 DYP: Geräte gewichtet verteilen (jedes Nicht-Flipper-Gerät 1, alle Flipper zusammen = einstellbar, Standard 3)
+  //    Fehlen Spalten (SQL nicht ausgeführt) → Standard 3 bzw. alles Flipper = wie bisher.
+  let dypMachines: DypMachine[] | null = null;
+  let dypPinWeight = DYP_PINBALL_WEIGHT_DEFAULT;
+  const dypMachineCount: Record<string, number> = {};
+  if (format === "dyp_round_robin") {
+    const { data: wRow, error: wErr } = await sb
+      .from("tournaments")
+      .select("dyp_pinball_weight")
+      .eq("id", t.id)
+      .maybeSingle();
+    if (!wErr && wRow && (wRow as any).dyp_pinball_weight != null) {
+      dypPinWeight = clampPinballWeight((wRow as any).dyp_pinball_weight);
+    }
+    if (dypWeightFromBody != null) dypPinWeight = dypWeightFromBody;
+    const notPinball = new Set<string>();
+    if (locationId) {
+      const { data: flags, error: flErr } = await sb
+        .from("location_machines")
+        .select("name, is_pinball")
+        .eq("location_id", locationId);
+      if (!flErr) {
+        for (const f of (flags ?? []) as any[]) {
+          if (f.is_pinball === false) notPinball.add(String(f.name ?? "").trim().toLowerCase());
+        }
+      }
+    }
+    dypMachines = (machinesForThisRound as any[])
+      .filter((m: any) => m.active)
+      .map((m: any) => ({ id: String(m.id), isPinball: !notPinball.has(String(m.name ?? "").trim().toLowerCase()) }));
+    for (const m of (matches ?? []) as any[]) {
+      if (m.machine_id) dypMachineCount[String(m.machine_id)] = (dypMachineCount[String(m.machine_id)] ?? 0) + 1;
+    }
+  }
+
   const { data: newRound, error: roundErr } = await sb
     .from("rounds")
     .insert({
@@ -1283,12 +1324,19 @@ if (!machinesToValidate.length) {
       .map((p: any) => p.profile_id)
       .filter(Boolean);
 
-    const machine = pickMachine(
-      machinesForThisRound,
-      usedByPlayer,
-      playerIds,
-      usedMachinesInRound
-    );
+    const dypPick = dypMachines
+      ? pickDypMachine(dypMachines, dypMachineCount, usedMachinesInRound, dypPinWeight, (mid) =>
+          playerIds.reduce((s: number, pid: string) => s + (usedByPlayer[pid]?.[mid] ?? 0), 0)
+        )
+      : null;
+    const machine = dypPick
+      ? (machinesForThisRound as any[]).find((m: any) => String(m.id) === dypPick.id)
+      : pickMachine(
+          machinesForThisRound,
+          usedByPlayer,
+          playerIds,
+          usedMachinesInRound
+        );
 
     if (!machine) {
       warnings.push(
@@ -1298,6 +1346,7 @@ if (!machinesToValidate.length) {
     }
 
     usedMachinesInRound.add(machine.id);
+    if (dypMachines) dypMachineCount[String(machine.id)] = (dypMachineCount[String(machine.id)] ?? 0) + 1;
 
     for (const pid of playerIds) {
       if (!usedByPlayer[pid]) usedByPlayer[pid] = {};

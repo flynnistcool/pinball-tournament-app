@@ -31,6 +31,9 @@ async function handle(codeRaw: string) {
   //    (supabase_speech_lang.sql noch nicht ausgeführt) funktioniert → dann "en"
   const { data: sl } = await sb.from("tournaments").select("speech_lang").eq("id", t.id).maybeSingle();
   (t as any).speech_lang = (sl as any)?.speech_lang === "de" ? "de" : "en";
+  // 🎱 DYP-Flipper-Gewicht (supabase_dyp_pinball_weight.sql) – fehlt die Spalte: Standard 3
+  const { data: pw } = await sb.from("tournaments").select("dyp_pinball_weight").eq("id", t.id).maybeSingle();
+  (t as any).dyp_pinball_weight = (pw as any)?.dyp_pinball_weight ?? 3;
 
   // 2) Runden laden
   const { data: rounds, error: rErr } = await sb
@@ -148,11 +151,31 @@ async function handle(codeRaw: string) {
   const mpDbErr = realDbError(mpErr, "Scores/Plätze laden");
   if (mpDbErr) return NextResponse.json({ error: mpDbErr }, { status: 500 });
 
+  // 🎱 DYP: Flipper / Nicht-Flipper je Gerät (Name ↔ location_machines.is_pinball) – für den Geräte-Zähler.
+  //    Fehlt die Spalte noch → alle Flipper.
+  let machinesOut: any[] = machines ?? [];
+  if ((t as any).format === "dyp_round_robin" && (t as any).location_id) {
+    const { data: flags, error: flErr } = await sb
+      .from("location_machines")
+      .select("name, is_pinball")
+      .eq("location_id", (t as any).location_id);
+    const notPinball = new Set<string>();
+    if (!flErr) {
+      for (const f of (flags ?? []) as any[]) {
+        if (f.is_pinball === false) notPinball.add(String(f.name ?? "").trim().toLowerCase());
+      }
+    }
+    machinesOut = machinesOut.map((m: any) => ({
+      ...m,
+      is_pinball: !notPinball.has(String(m?.name ?? "").trim().toLowerCase()),
+    }));
+  }
+
   // 6) Response in der Struktur, die deine page.tsx erwartet
   return NextResponse.json({
     tournament: t,
     players: playersWithProfile ?? [],
-    machines: machines ?? [],
+    machines: machinesOut,
     rounds: rounds ?? [],
     matches: matches ?? [],
     match_players: match_players ?? [],
