@@ -7,6 +7,8 @@
 // 1) Screen Wake Lock API (navigator.wakeLock) – moderne Browser; wird nach Tab-Wechsel neu angefordert.
 // 2) Ersatz: ein winziges, stummes, laufendes Video (aus einer Zeichenfläche erzeugt, keine Datei).
 //    Solange ein Video läuft, starten viele TV-Systeme den Schoner nicht.
+// 3) Ersatz für einfache TV-Browser (kein captureStream): echte Mini-Videodatei
+//    public/sounds/keepawake.mp4 (schwarz, 64×64, stumm, 2 KB, Dauerschleife; /sounds/ ist ohne Login frei).
 //
 // Browser erlauben manches erst nach einer Berührung/Klick → beim ersten Klick/Tastendruck
 // irgendwo auf der Seite wird alles (erneut) gestartet.
@@ -16,14 +18,16 @@ import { useEffect, useRef, useState } from "react";
 type Status = {
   wakeLock: "aktiv" | "aus" | "nicht unterstützt";
   video: "läuft" | "aus" | "nicht unterstützt";
+  file: "läuft" | "aus" | "blockiert";
 };
 
 type WakeLockSentinelLike = { released: boolean; release: () => Promise<void>; addEventListener?: (t: string, cb: () => void) => void };
 
 export default function KeepAwake() {
-  const [status, setStatus] = useState<Status>({ wakeLock: "aus", video: "aus" });
+  const [status, setStatus] = useState<Status>({ wakeLock: "aus", video: "aus", file: "aus" });
   const lockRef = useRef<WakeLockSentinelLike | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileVideoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamStartedRef = useRef(false);
   // für den Knopf (Fernbedienung): alles erneut starten
@@ -89,9 +93,27 @@ export default function KeepAwake() {
       }
     }
 
+    // ── 3) echte Mini-Videodatei ─────────────────────────────────
+    async function startFileVideo() {
+      const v = fileVideoRef.current;
+      if (!v) return;
+      if (!v.paused && !v.ended) {
+        setPart({ file: "läuft" });
+        return;
+      }
+      try {
+        v.muted = true;
+        await v.play();
+        setPart({ file: "läuft" });
+      } catch {
+        setPart({ file: "blockiert" });
+      }
+    }
+
     const startAll = () => {
       void requestWakeLock();
       void startVideo();
+      void startFileVideo();
     };
     startAllRef.current = startAll;
 
@@ -123,7 +145,13 @@ export default function KeepAwake() {
     };
   }, []);
 
-  const awake = status.wakeLock === "aktiv" || status.video === "läuft";
+  const awake = status.wakeLock === "aktiv" || status.video === "läuft" || status.file === "läuft";
+  // Kurzdiagnose direkt auf dem Knopf (auf dem TV gibt es kein Maus-Darüberfahren)
+  const mark = (ok: boolean, no: boolean) => (ok ? "✓" : no ? "–" : "✗");
+  const diag =
+    "WL " + mark(status.wakeLock === "aktiv", status.wakeLock === "nicht unterstützt") +
+    " · Video " + mark(status.video === "läuft", status.video === "nicht unterstützt") +
+    " · Datei " + mark(status.file === "läuft", false);
 
   return (
     <>
@@ -137,6 +165,19 @@ export default function KeepAwake() {
         aria-hidden="true"
         style={{ position: "fixed", right: 0, bottom: 0, width: 16, height: 16, opacity: 0.01, pointerEvents: "none" }}
       />
+      <video
+        ref={fileVideoRef}
+        src="/sounds/keepawake.mp4"
+        muted
+        playsInline
+        loop
+        autoPlay
+        preload="auto"
+        aria-hidden="true"
+        onPlaying={() => setStatus((s) => ({ ...s, file: "läuft" }))}
+        onPause={() => setStatus((s) => ({ ...s, file: "aus" }))}
+        style={{ position: "fixed", right: 16, bottom: 0, width: 16, height: 16, opacity: 0.01, pointerEvents: "none" }}
+      />
       <button
         type="button"
         onClick={() => startAllRef.current()}
@@ -146,14 +187,10 @@ export default function KeepAwake() {
             ? "bg-sky-400/10 text-sky-300/80 ring-sky-300/30 hover:bg-sky-400/20"
             : "animate-pulse bg-amber-400/15 text-amber-300 ring-amber-300/50 hover:bg-amber-400/25")
         }
-        title={`Bildschirm wach halten – Wake Lock: ${status.wakeLock}, Video: ${status.video}`}
+        title={`Bildschirm wach halten – Wake Lock: ${status.wakeLock}, Video: ${status.video}, Datei: ${status.file}`}
       >
         {awake ? "☀️ bleibt an" : "☀️ einmal tippen"}
-        <span className="ml-1.5 opacity-60">
-          {status.wakeLock === "aktiv" ? "WL" : ""}
-          {status.wakeLock === "aktiv" && status.video === "läuft" ? "+" : ""}
-          {status.video === "läuft" ? "V" : ""}
-        </span>
+        <span className="ml-1.5 opacity-70">{diag}</span>
       </button>
     </>
   );
