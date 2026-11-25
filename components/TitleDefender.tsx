@@ -38,11 +38,14 @@ export function DefenderBadge({
   at,
   machine,
   variant = "light",
+  compact = false,
   className = "",
 }: {
   at?: string | null;
   machine?: string | null;
   variant?: "light" | "tv";
+  /** nur das Schild (Admin: Namenszeile ist schmal) – Text im Mouseover */
+  compact?: boolean;
   className?: string;
 }) {
   const when = defenderDate(at ?? null);
@@ -53,9 +56,10 @@ export function DefenderBadge({
   return (
     <span
       className={`inline-flex shrink-0 items-center rounded-full py-0.5 font-bold ring-1 ${style} ${className}`}
-      title={`Hat in genau dieser Besetzung${machine ? ` an ${machine}` : ""} zuletzt gewonnen${when ? ` (${when})` : ""}`}
+      title={`Titelverteidiger – hat in genau dieser Besetzung${machine ? ` an ${machine}` : ""} zuletzt gewonnen${when ? ` (${when})` : ""}`}
+      aria-label="Titelverteidiger"
     >
-      🛡️ Titelverteidiger
+      {compact ? "🛡️" : "🛡️ Titelverteidiger"}
     </span>
   );
 }
@@ -214,6 +218,7 @@ export function TitleDefenderWatcher({
                     defenderName: name.get(a.defenderId) ?? "?",
                     winnerId,
                     winnerName: name.get(winnerId) ?? "?",
+                    playerIds: mps.map((x) => String(x.player_id)),
                   })
                 );
               }
@@ -265,6 +270,7 @@ export function TitleDefenderWatcher({
                 defenderId: def.playerId,
                 defenderName: name.get(def.playerId) ?? "?",
                 at: def.at,
+                playerIds: mps.map((x) => String(x.player_id)),
               })
             );
           }

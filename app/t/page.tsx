@@ -9279,6 +9279,7 @@ disabled={
     String((m as any)?.status ?? "").toLowerCase() !== "finished" &&
     defenderFor(rivFavData, m?.id, m?.machine_id)?.playerId === String(mp.player_id) ? (
       <DefenderBadge
+        compact
         at={defenderFor(rivFavData, m?.id, m?.machine_id)?.at}
         machine={machinesInfoById?.[String(m?.machine_id ?? "")]?.name ?? null}
       />

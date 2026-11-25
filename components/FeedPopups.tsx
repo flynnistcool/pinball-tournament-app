@@ -18,9 +18,9 @@ import { useNotificationSettings } from "@/components/useNotificationSettings";
 import { fmtScore, posLabel, shortLines, type ShortMatchLine, type ShortWaveLine } from "@/lib/shortNews";
 
 /** Arten, die als Karte aus dem Ticker kommen */
-const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm", "closeMatch", "scoreHelper"]);
+const FROM_FEED = new Set(["superfinalGame", "superfinalChampion", "tournamentEnd", "matchShort", "waveShort", "scoreForm", "closeMatch", "scoreHelper", "titleDefender"]);
 /** 📰 Shortnews: kleine Karte unten links, eigene Warteschlange (hält die großen Karten nicht auf) */
-const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm", "closeMatch", "scoreHelper"]);
+const SMALL_KINDS = new Set(["matchShort", "waveShort", "scoreForm", "closeMatch", "scoreHelper", "titleDefender"]);
 /** 📊 Score-Form im Admin rechts unten (stört dort nicht), sonst links unten */
 const RIGHT_IN_ADMIN = new Set(["scoreForm"]);
 /** große Karte in der Mitte mit Effekten */

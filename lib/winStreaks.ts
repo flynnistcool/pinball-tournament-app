@@ -10,7 +10,7 @@
 // - "leads" (Round the Pinball / rotation): Plätze gibt es dort erst am Ende, deshalb live nach
 //   SCORES: Anzahl Flipper, an denen der Spieler AKTUELL den besten (oder gleich besten) Score hat –
 //   egal in welcher Reihenfolge. Wird er überboten, sinkt die Zahl wieder.
-//   🔥 ab 2 (mehr Mitspieler pro Flipper → Vorne-Sein ist seltener).
+//   🔥 ab 3 (wie bei Siegen; früher ab 2 – erschien zu früh, z. B. wer an einem Flipper als Erster spielt).
 // Reihenfolge jeweils nach Rundennummer (bei gleicher Runde: Match-Reihenfolge der Daten).
 // 🔥🔥 ab 5.
 
@@ -27,7 +27,7 @@ export function streakMode(format: string | null | undefined): StreakMode {
 
 /** Ab welcher Serie 🔥 angezeigt und gemeldet wird */
 export function streakMin(mode: StreakMode): number {
-  return mode === "leads" ? 2 : 3;
+  return 3; // Round the Pinball auch erst ab 3 (vorher 2 – kam zu früh)
 }
 
 /** Text für die Serie, z. B. "3 Siege in Folge" */

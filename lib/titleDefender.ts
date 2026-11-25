@@ -152,8 +152,11 @@ export function defenderAnnounceItem(opts: {
   defenderId: string;
   defenderName: string;
   at: string | null;
+  /** alle Spieler des Matches (Handy-Karte für jeden im Match) */
+  playerIds?: string[];
 }): FeedItem {
   const { matchId, machineId, machine, machineIcon, defenderId, defenderName, at } = opts;
+  const players = Array.from(new Set([defenderId, ...(opts.playerIds ?? [])]));
   const when = defenderDate(at);
   return {
     key: `${defenderAnnouncePrefix(matchId)}${machineId}|${defenderId}`,
@@ -163,8 +166,8 @@ export function defenderAnnounceItem(opts: {
     body: `Auf ${onMachine(machine, machineIcon)} hat in genau dieser Besetzung zuletzt ${defenderName} gewonnen${
       when ? ` (${when})` : ""
     }. Gelingt die Titelverteidigung – oder wird ${defenderName} gestoppt?`,
-    players: [defenderId],
-    data: { player: defenderName, machine, machineIcon, at, matchId },
+    players,
+    data: { player: defenderName, machine, machineIcon, at, matchId, defenderId, phase: "announce" },
   };
 }
 
@@ -178,21 +181,24 @@ export function defenderResultItem(opts: {
   defenderName: string;
   winnerId: string;
   winnerName: string;
+  /** alle Spieler des Matches (Handy-Karte für jeden im Match) */
+  playerIds?: string[];
 }): FeedItem {
   const { matchId, machineId, machine, machineIcon, defenderId, defenderName, winnerId, winnerName } = opts;
+  const players = Array.from(new Set([winnerId, defenderId, ...(opts.playerIds ?? [])]));
   const m = onMachine(machine, machineIcon);
   const defended = winnerId === defenderId;
   return {
     key: `defenderResult|${matchId}|${machineId}`,
     kind: "titleDefender",
-    icon: defended ? "🛡️" : "⚔️",
+    icon: "🛡️",
     title: defended ? "Titel verteidigt" : "Titelverteidiger gestoppt",
     body: defended
       ? `${defenderName} verteidigt den Sieg auf ${m} – auch diesmal in dieser Besetzung vorn!`
       : `${winnerName} stoppt Titelverteidiger ${defenderName} auf ${m}!`,
-    players: defended ? [defenderId] : [winnerId, defenderId],
+    players,
     data: defended
-      ? { player: defenderName, machine, machineIcon, defended }
-      : { player: winnerName, other: defenderName, machine, machineIcon, defended },
+      ? { player: defenderName, machine, machineIcon, defended, matchId, defenderId, winnerId, phase: "result" }
+      : { player: winnerName, other: defenderName, machine, machineIcon, defended, matchId, defenderId, winnerId, phase: "result" },
   };
 }

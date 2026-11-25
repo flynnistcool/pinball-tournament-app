@@ -339,9 +339,12 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "titleDefender",
     icon: "🛡️",
     title: "Titelverteidiger",
-    when: "Genau dieselbe Besetzung schon einmal am selben Flipper (Matchplay/Swiss/Round Robin zusammen, Round the Pinball nur RtP): beim Erzeugen der Runde bzw. beim Start des Durchgangs am Flipper „zuletzt hat X gewonnen – schafft er es wieder?“; nach dem Match „verteidigt“ oder „gestoppt“. Flipper geändert → alte Meldung wird ausgeblendet",
+    when: "Genau dieselbe Besetzung schon einmal am selben Flipper (Matchplay/Swiss/Round Robin zusammen, Round the Pinball nur RtP): beim Erzeugen der Runde bzw. beim Start des Durchgangs am Flipper „zuletzt hat X gewonnen – gelingt die Titelverteidigung?“; nach dem Match „verteidigt“ oder „gestoppt“. Flipper geändert → alte Meldung wird ausgeblendet",
     devices: {
+      phone: { ...PHONE_ME, note: "alle Spieler im Match · bleibt bis Antippen" },
       ticker: TICKER,
+      tv: { where: "kleine Karte unten links", seconds: 7, sound: SILENT },
+      admin: { where: "kleine Karte unten links", seconds: 5, sound: SILENT, note: "Antippen schließt" },
     },
   },
   {
@@ -567,7 +570,7 @@ export const BADGES: readonly NotificationDef[] = [
     id: "badge:onFire",
     icon: "🔥",
     title: "On-fire-Badge",
-    when: "Siegesserie im Turnier (ab 3, 🔥🔥 ab 5) am Spielernamen",
+    when: "Siegesserie im Turnier (ab 3, 🔥🔥 ab 5) am Spielernamen – Round the Pinball: an 3 Flippern gerade den besten Score",
     devices: { tv: BADGE("am Namen"), admin: BADGE("am Namen"), phone: BADGE("am Namen") },
   },
   {

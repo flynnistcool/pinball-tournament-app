@@ -17,7 +17,7 @@ import { closeChancesOf } from "@/lib/closeMatch";
 import { splitFormLine } from "@/lib/scoreForm";
 
 const FOR_ALL = new Set(["record", "month", "flawless"]);
-const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark", "closeMatch", "scoreThanks", "scoreHelper", "scoreTip"]);
+const FOR_ME = new Set(["scoreForm", "personal", "wins", "streak", "streakEnd", "unbeaten", "unbeatenEnd", "leader", "upset", "photo", "blowout", "revenge", "premiere", "premiereWin", "eloMark", "closeMatch", "scoreThanks", "scoreHelper", "scoreTip", "titleDefender"]);
 
 const fmt = (n: unknown) => (typeof n === "number" ? n.toLocaleString("de-DE") : String(n ?? ""));
 
@@ -41,6 +41,7 @@ const TONE: Record<string, string> = {
   eloMark: "border-emerald-200 bg-emerald-50 text-emerald-900",
   scoreForm: "border-indigo-200 bg-indigo-50 text-indigo-900",
   closeMatch: "border-amber-200 bg-amber-50 text-amber-900",
+  titleDefender: "border-indigo-200 bg-indigo-50 text-indigo-900",
   // 🤝 Team (Türkis)
   scoreThanks: "border-teal-200 bg-teal-50 text-teal-900",
   scoreHelper: "border-teal-300 bg-gradient-to-r from-teal-50 to-cyan-50 text-teal-900",
@@ -48,7 +49,7 @@ const TONE: Record<string, string> = {
 };
 
 /** persönlicher Text (falls Angaben da sind), sonst der Ticker-Text */
-function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
+function cardText(x: FeedItem, me: boolean, meId?: string): { title: string; text: string } {
   const d = (x.data ?? {}) as Record<string, unknown>;
   const machine = String(d.machine ?? "?");
   switch (x.kind) {
@@ -162,6 +163,30 @@ function cardText(x: FeedItem, me: boolean): { title: string; text: string } {
       }
       return { title: me ? "Auf Messers Schneide! ⚖️" : x.title, text: x.body };
     }
+    case "titleDefender": {
+      // 🛡️ Titelverteidiger (Du-Form für die Spieler im Match)
+      if (!me || !meId) return { title: x.title, text: x.body };
+      const m = d.machine != null ? `${d.machineIcon ? `${String(d.machineIcon)} ` : ""}${machine}` : "diesem Flipper";
+      const isDef = String(d.defenderId ?? "") === meId;
+      const defName = String(d.phase === "result" && d.defended !== true ? d.other ?? "?" : d.player ?? "?");
+      if (d.phase === "result") {
+        if (d.defended === true) {
+          return isDef
+            ? { title: "Titel verteidigt! 🛡️", text: `Du verteidigst deinen Sieg auf ${m} – auch diesmal in dieser Besetzung vorn!` }
+            : { title: x.title, text: x.body };
+        }
+        if (String(d.winnerId ?? "") === meId) {
+          return { title: "Titelverteidiger gestoppt! 🛡️", text: `Du stoppst ${defName} auf ${m}!` };
+        }
+        if (isDef) {
+          return { title: "Titel verloren 🛡️", text: `${String(d.player ?? "?")} hat dich auf ${m} gestoppt – nächstes Mal!` };
+        }
+        return { title: x.title, text: x.body };
+      }
+      return isDef
+        ? { title: "Du bist Titelverteidiger! 🛡️", text: `Auf ${m} hast du in genau dieser Besetzung zuletzt gewonnen. Verteidige deinen Titel!` }
+        : { title: "Titelverteidiger! 🛡️", text: `${defName} hat auf ${m} in genau dieser Besetzung zuletzt gewonnen. Kannst du ${defName} stoppen?` };
+    }
     case "scoreThanks":
       return d.n === 1
         ? { title: "Danke für deinen Score! 📊", text: "Damit zählt er für Highscores, Bestwerte & Score-Form. Weiter so!" }
@@ -234,7 +259,12 @@ export default function PhoneFeedCards({
               .filter((x) => x.kind === "matchShort" || (x.kind === "closeMatch" && String(x.key).endsWith("|result")))
               .map((x) => String(x.key).split("|")[1])
           );
+          // 🛡️ Titelverteidiger-Ankündigung ist überholt, sobald das Ergebnis da ist (defenderResult|<mid>|…)
+          const defDone = new Set(
+            list.filter((x) => String(x.key).startsWith("defenderResult|")).map((x) => String(x.key).split("|")[1])
+          );
           const stale = (x: FeedItem) => {
+            if (x.kind === "titleDefender" && String(x.key).startsWith("defender|")) return defDone.has(String(x.key).split("|")[1]);
             if (x.kind !== "closeMatch") return false;
             const parts = String(x.key).split("|");
             return parts.length === 2 && doneMids.has(parts[1]); // closeMatch|<mid> = Ankündigung (RtP-Folge: |result)
@@ -259,7 +289,7 @@ export default function PhoneFeedCards({
   const x = queue[0];
   if (!x || paused) return null;
   const me = (x.players ?? []).includes(String(meId));
-  const t = cardText(x, me);
+  const t = cardText(x, me, String(meId));
   // 🧊 Favoritensturz mit Balken (nur für den Sieger selbst und nur, wenn der Text lesbar ist)
   const up = x.kind === "upset" && me ? parseUpsetBody(x.body) : null;
   const upset = up && up.winnerPct != null && up.loserPct != null ? up : null;
