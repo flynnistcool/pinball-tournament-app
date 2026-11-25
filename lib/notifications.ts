@@ -336,6 +336,15 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     },
   },
   {
+    id: "titleDefender",
+    icon: "🛡️",
+    title: "Titelverteidiger",
+    when: "Genau dieselbe Besetzung schon einmal am selben Flipper (Matchplay/Swiss/Round Robin zusammen, Round the Pinball nur RtP): beim Erzeugen der Runde bzw. beim Start des Durchgangs am Flipper „zuletzt hat X gewonnen – schafft er es wieder?“; nach dem Match „verteidigt“ oder „gestoppt“. Flipper geändert → alte Meldung wird ausgeblendet",
+    devices: {
+      ticker: TICKER,
+    },
+  },
+  {
     id: "jubilee",
     icon: "🤝",
     title: "Duell-Jubiläum",
@@ -531,6 +540,13 @@ export const BADGES: readonly NotificationDef[] = [
     icon: "★",
     title: "Favorit-Abzeichen",
     when: "Favorit im laufenden Match: höchste Siegchance (Elo + Flipper-Winrate + Turnierform + Bilanz am Flipper) mit mindestens 10 Prozentpunkten Vorsprung",
+    devices: { tv: BADGE("Matchkarte am Namen"), admin: BADGE("am Namen im Match"), phone: BADGE("Mein Match am Namen") },
+  },
+  {
+    id: "badge:defender",
+    icon: "🛡️",
+    title: "Titelverteidiger-Badge",
+    when: "Hat in genau dieser Besetzung am selben Flipper zuletzt gewonnen – nur solange das Match läuft",
     devices: { tv: BADGE("Matchkarte am Namen"), admin: BADGE("am Namen im Match"), phone: BADGE("Mein Match am Namen") },
   },
   {
@@ -744,6 +760,7 @@ const SCOPE_OF: Record<string, NotifScope> = {
   evenReached: "duell",
   jubilee: "duell",
   rivalryInsight: "duell",
+  titleDefender: "duell",
   closeMatch: "spieler",
   matchShort: "short",
   waveShort: "short",

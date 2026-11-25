@@ -14,10 +14,14 @@ export type RivalryData = {
   insights: Insights;
   pairs: Record<string, PairState>;
   pairMachine: Record<string, Record<string, PairMachineStat>>;
+  /** 🛡️ laufendes Match → Titelverteidiger (players.id) + Flipper, für den gerechnet wurde (lib/titleDefender.ts) */
+  defenders: Record<string, { playerId: string; at: string | null; machineId: string | null }>;
+  /** für welche laufenden Matches/Flipper die Titelverteidiger gerechnet wurden (liveMachineSig) – null = unbekannt */
+  defendersSig: string | null;
   /** true, sobald einmal geladen (auch wenn leer/fehlgeschlagen) – z. B. für das Einfrieren der Siegchancen */
   loaded?: boolean;
 };
-const EMPTY: RivalryData = { insights: {}, pairs: {}, pairMachine: {} };
+const EMPTY: RivalryData = { insights: {}, pairs: {}, pairMachine: {}, defenders: {}, defendersSig: null };
 
 const store = new Map<string, { key: string; data: RivalryData | null; promise: Promise<RivalryData> | null }>();
 
@@ -30,7 +34,16 @@ function load(code: string, refreshKey: string): Promise<RivalryData> {
   const promise = fetch(`/api/public/rivalry?code=${encodeURIComponent(code)}&ts=${Date.now()}`, { cache: "no-store" })
     .then((r) => r.json())
     .then((j): RivalryData =>
-      j?.ok ? { insights: j.insights ?? {}, pairs: j.pairs ?? {}, pairMachine: j.pairMachine ?? {}, loaded: true } : { ...EMPTY, loaded: true }
+      j?.ok
+        ? {
+            insights: j.insights ?? {},
+            pairs: j.pairs ?? {},
+            pairMachine: j.pairMachine ?? {},
+            defenders: j.defenders ?? {},
+            defendersSig: typeof j.defendersSig === "string" ? j.defendersSig : null,
+            loaded: true,
+          }
+        : { ...EMPTY, loaded: true }
     )
     .catch(() => ({ ...EMPTY, loaded: true }))
     .then((data) => {

@@ -93,6 +93,8 @@ import ThemeToggle from "@/components/ThemeToggle";
 import DypMachineMix from "@/components/DypMachineMix";
 import DypDeviceCounts from "@/components/DypDeviceCounts";
 import DypMixDialog from "@/components/DypMixDialog";
+import { liveMachineSigFromData } from "@/lib/titleDefender";
+import { DefenderBadge, TitleDefenderWatcher, defenderFor } from "@/components/TitleDefender";
 import DisplayResetButton from "@/components/DisplayResetButton";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
@@ -6556,7 +6558,8 @@ function RoundMatchesCard({
   const rivalryOn =
     tournament?.status !== "finished" &&
     !["rotation", "timeplay", "dyp_round_robin"].includes(String(tournament?.format ?? ""));
-  const rivalryInsights = useRivalry(code, String((rounds ?? []).length), rivalryOn);
+  // 🛡️ Schlüssel enthält die Flipper der laufenden Matches → Flipper geändert = neu laden (gleich wie im Dashboard)
+  const rivalryInsights = useRivalry(code, `${(rounds ?? []).length}|${liveMachineSigFromData({ rounds, matches })}`, rivalryOn);
   // ★ Favorit: direkte Bilanz am Flipper (pairMachine) – geteilte Duell-Daten, kein zusätzliches Laden
   const rivFavData = useRivalryDataShared(code, tournament?.status !== "finished");
   // 📊 aufgeklappte Match-Analysen (Klick auf den Match-Kopf)
@@ -6581,6 +6584,7 @@ function RoundMatchesCard({
   }, [rivalryInsights, matches, matchPlayers, rivalryOn, locked, code]);
   // 🏷️ ★ Favorit-Abzeichen an/aus (🔔 Meldungen & Sounds → Dauerhafte Anzeigen)
   const favBadgeOn = useBadgeOn("badge:favorite");
+  const defenderBadgeOn = useBadgeOn("badge:defender"); // 🛡️ Titelverteidiger-Abzeichen
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance-Schildchen
 
   // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
@@ -9269,6 +9273,15 @@ disabled={
       >
         ★ Favorit
       </span>
+    ) : null}
+    {/* 🛡️ Titelverteidiger (gleiche Besetzung am gleichen Flipper zuletzt gewonnen) – nur solange das Match läuft */}
+    {defenderBadgeOn &&
+    String((m as any)?.status ?? "").toLowerCase() !== "finished" &&
+    defenderFor(rivFavData, m?.id, m?.machine_id)?.playerId === String(mp.player_id) ? (
+      <DefenderBadge
+        at={defenderFor(rivFavData, m?.id, m?.machine_id)?.at}
+        machine={machinesInfoById?.[String(m?.machine_id ?? "")]?.name ?? null}
+      />
     ) : null}
     {isActiveAtMachine ? (
       // ▶ nur das Symbol (spart Platz in der Namenszeile) – Text im Mouseover
@@ -12975,7 +12988,8 @@ async function reloadAll() {
     !["timeplay", "dyp_round_robin"].includes(String(data?.tournament?.format ?? ""));
   const rivData = useRivalryData(
     code,
-    isRotationFormat ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0),
+    // 🛡️ + Flipper der laufenden Matches (Flipper geändert → Titelverteidiger neu rechnen)
+    `${isRotationFormat ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0)}|${liveMachineSigFromData(data as any)}`,
     rivEventsOn
   );
   const rtpRivalry = rivData.insights;
@@ -14602,6 +14616,15 @@ const tasksById = useMemo(() => {
       {/* ⚖️ Round the Pinball: die beiden Favoriten am Flipper eng beieinander – einer legt vor, kontert der andere? */}
       {isRotationFormat && isAdmin ? (
         <RotationCloseWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} />
+      ) : null}
+      {/* 🛡️ Titelverteidiger: Ankündigung / Flipper-Wechsel / Ergebnis im Ticker (nur Admin trägt ein) */}
+      {isAdmin && rivEventsOn ? (
+        <TitleDefenderWatcher
+          code={code}
+          data={data as any}
+          riv={rivData}
+          onFeed={(items) => afterPendingDone(() => postFeedItems(code, items), AFTER_ROUND_START_MS)}
+        />
       ) : null}
       {/* 📊 Score-Form: jeder Score im Vergleich zum eigenen Schnitt (alle Formate außer Timeplay/DYP) */}
       {isAdmin ? <ScoreFormWatcher code={code} data={data} onFeed={(items) => postFeedItems(code, items)} /> : null}

@@ -30,6 +30,7 @@ import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import BotEloBadge from "@/components/BotEloBadge";
 import { botEloOf } from "@/lib/myMatch";
 import { rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
+import { liveMachineSigFromData } from "@/lib/titleDefender";
 import { useFeedSync } from "@/components/useFeedSync";
 import { RivalryEventPhone, useRivalryEvents } from "@/components/RivalryEvents";
 import LiveTicker from "@/components/LiveTicker";
@@ -110,7 +111,7 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
     !!data && !!me && String(data?.tournament?.status ?? "") !== "finished" && !["timeplay", "dyp_round_robin"].includes(phFormat);
   const phRivData = useRivalryData(
     code,
-    phFormat === "rotation" ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0),
+    `${phFormat === "rotation" ? rtpRefreshKey(data as any) : String(data?.rounds?.length ?? 0)}|${liveMachineSigFromData(data as any)}`,
     phRivOn
   );
   const phRivEvents = useRivalryEvents({
