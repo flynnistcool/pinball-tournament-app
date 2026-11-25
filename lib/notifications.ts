@@ -339,7 +339,7 @@ export const NOTIFICATIONS: readonly NotificationDef[] = [
     id: "titleDefender",
     icon: "🛡️",
     title: "Titelverteidiger",
-    when: "Genau dieselbe Besetzung schon einmal am selben Flipper (Matchplay/Swiss/Round Robin zusammen, Round the Pinball nur RtP): beim Erzeugen der Runde bzw. beim Start des Durchgangs am Flipper „zuletzt hat X gewonnen – gelingt die Titelverteidigung?“; nach dem Match „verteidigt“ oder „gestoppt“. Flipper geändert → alte Meldung wird ausgeblendet",
+    when: "Genau dieselbe Besetzung schon einmal am selben Flipper (Matchplay/Swiss/Round Robin zusammen, Round the Pinball nur RtP): beim Erzeugen der Runde bzw. beim Start des Durchgangs am Flipper „zuletzt hat X gewonnen – gelingt die Titelverteidigung?“, zusammengefasst mit dem Sieger des letzten Aufeinandertreffens (egal welcher Flipper, 🏅); nach dem Match „verteidigt“ / „gestoppt“ / „Spieß umgedreht“. Flipper geändert → alte Meldung wird ausgeblendet",
     devices: {
       phone: { ...PHONE_ME, note: "alle Spieler im Match · bleibt bis Antippen" },
       ticker: TICKER,
@@ -551,6 +551,13 @@ export const BADGES: readonly NotificationDef[] = [
     title: "Titelverteidiger-Badge",
     when: "Hat in genau dieser Besetzung am selben Flipper zuletzt gewonnen – nur solange das Match läuft",
     devices: { tv: BADGE("Matchkarte am Namen"), admin: BADGE("am Namen im Match"), phone: BADGE("Mein Match am Namen") },
+  },
+  {
+    id: "badge:lastWinner",
+    icon: "🏅",
+    title: "Letzter-Sieger-Badge",
+    when: "Hat das letzte Aufeinandertreffen in genau dieser Besetzung gewonnen (egal an welchem Flipper) – war das auch das 🛡️-Match, stehen beide Symbole da; Admin nur Symbol",
+    devices: { tv: BADGE("Matchkarte am Namen"), admin: BADGE("am Namen im Match (nur 🏅)"), phone: BADGE("Mein Match am Namen") },
   },
   {
     id: "badge:chance",

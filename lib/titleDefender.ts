@@ -1,8 +1,11 @@
-// 🛡️ Titelverteidiger – reine Logik.
-// Gab es GENAU DIESELBE Besetzung (gleiche Profile, Reihenfolge egal) schon einmal am selben Flipper
-// (gleicher Name an derselben Location)? Dann ist der damalige Sieger (Platz 1) "Titelverteidiger".
+// 🛡️ Titelverteidiger + 🏅 Letzter Sieger – reine Logik.
+// Gab es GENAU DIESELBE Besetzung (gleiche Profile, Reihenfolge egal) schon einmal …
+//  - 🛡️ am selben Flipper (gleicher Name an derselben Location)? → damaliger Sieger = "Titelverteidiger"
+//  - 🏅 irgendwo (egal welcher Flipper)? → Sieger des LETZTEN Aufeinandertreffens = "Letzter Sieger"
+//    Badge immer (auch wenn es dasselbe Match wie beim Titelverteidiger war → dann 🛡️ + 🏅);
+//    in der Meldung nur erwähnt, wenn es ein ANDERES Match war (sameAsFlipper = false)
 // Formatgruppen: Matchplay / Swiss / Round Robin zählen zusammen, Round the Pinball nur mit RtP.
-// DYP (Teams), Elimination, Timeplay: keine Titelverteidiger.
+// DYP (Teams), Elimination, Timeplay: nichts.
 
 export type DefenderGroup = "mp" | "rtp";
 
@@ -19,7 +22,10 @@ export type DefenderHistRow = {
   position: number | null;
   format: string | null;
   at?: string | null;
+  /** Flipper-Schlüssel an der Location des Turniers (null = andere Location/unbekannt) */
   machineKey: string | null;
+  /** Flipper-Name (auch andere Locations) – für "auf Elvira" */
+  machineName?: string | null;
 };
 
 export type DefenderCurrent = {
@@ -35,17 +41,24 @@ export type Defender = {
   profileId: string;
   /** Zeitpunkt des damaligen Matches */
   at?: string | null;
+  /** damaliges Match */
+  matchId: string;
+  /** damaliger Flipper */
+  machineName?: string | null;
+  /** 🏅: dasselbe Match wie beim Titelverteidiger (Meldung erwähnt es dann nicht extra) */
+  sameAsFlipper?: boolean;
 };
 
-const lineupKey = (group: DefenderGroup, machineKey: string, profiles: string[]) =>
-  `${group}|${machineKey}|${profiles.slice().sort().join(",")}`;
+export type DefenderFound = { flipper?: Defender; last?: Defender };
+
+const lineupOf = (group: DefenderGroup, profiles: string[]) => `${group}|${profiles.slice().sort().join(",")}`;
 
 /**
  * @param history  Teilnahmen früherer Matches (alle Spieler je Match)
  * @param current  laufende Matches
- * @returns matchId → Titelverteidiger (nur wenn es die Besetzung schon gab und es genau einen Sieger gab)
+ * @returns matchId → { flipper: Titelverteidiger, last: letzter Sieger allgemein (+ sameAsFlipper) }
  */
-export function findDefenders(history: DefenderHistRow[], current: DefenderCurrent[]): Record<string, Defender> {
+export function findDefenders(history: DefenderHistRow[], current: DefenderCurrent[]): Record<string, DefenderFound> {
   const currentIds = new Set(current.map((c) => String(c.matchId)));
 
   const byMatch = new Map<string, DefenderHistRow[]>();
@@ -57,32 +70,51 @@ export function findDefenders(history: DefenderHistRow[], current: DefenderCurre
     else byMatch.set(id, [r]);
   }
 
-  // letzte fertige Partie je Besetzung
-  const last = new Map<string, Defender & { t: number }>();
-  for (const rows of Array.from(byMatch.values())) {
+  type Hit = Defender & { t: number };
+  const lastOnMachine = new Map<string, Hit>(); // Besetzung + Flipper
+  const lastAnywhere = new Map<string, Hit>(); // nur Besetzung
+  for (const [mid, rows] of Array.from(byMatch.entries())) {
     const first = rows[0];
     const group = defenderGroup(first.format);
-    if (!group || !first.machineKey) continue;
+    if (!group) continue;
     if (rows.some((r) => !r.profile_id || r.position == null)) continue; // unvollständig / Gast
     const profiles = rows.map((r) => String(r.profile_id));
     if (new Set(profiles).size !== profiles.length || profiles.length < 2) continue;
     const winners = rows.filter((r) => r.position === 1);
     if (winners.length !== 1) continue; // Gleichstand → kein eindeutiger Sieger
-    const key = lineupKey(group, first.machineKey, profiles);
-    const t = first.at ? Date.parse(first.at) : 0;
-    const prev = last.get(key);
-    if (!prev || t > prev.t) last.set(key, { profileId: String(winners[0].profile_id), at: first.at, t: Number.isFinite(t) ? t : 0 });
+    const t0 = first.at ? Date.parse(first.at) : 0;
+    const hit: Hit = {
+      profileId: String(winners[0].profile_id),
+      at: first.at ?? null,
+      matchId: mid,
+      machineName: first.machineName ?? null,
+      t: Number.isFinite(t0) ? t0 : 0,
+    };
+    const lineup = lineupOf(group, profiles);
+    const pa = lastAnywhere.get(lineup);
+    if (!pa || hit.t > pa.t) lastAnywhere.set(lineup, hit);
+    if (first.machineKey) {
+      const k = `${lineup}|${first.machineKey}`;
+      const pm = lastOnMachine.get(k);
+      if (!pm || hit.t > pm.t) lastOnMachine.set(k, hit);
+    }
   }
 
-  const out: Record<string, Defender> = {};
+  const strip = (h: Hit): Defender => ({ profileId: h.profileId, at: h.at, matchId: h.matchId, machineName: h.machineName });
+  const out: Record<string, DefenderFound> = {};
   for (const c of current) {
     const group = defenderGroup(c.format);
-    if (!group || !c.machineKey) continue;
+    if (!group) continue;
     if (c.profileIds.length < 2 || c.profileIds.some((p) => !p)) continue;
     const profiles = c.profileIds.map(String);
     if (new Set(profiles).size !== profiles.length) continue;
-    const hit = last.get(lineupKey(group, c.machineKey, profiles));
-    if (hit) out[String(c.matchId)] = { profileId: hit.profileId, at: hit.at };
+    const lineup = lineupOf(group, profiles);
+    const onMachine = c.machineKey ? lastOnMachine.get(`${lineup}|${c.machineKey}`) : undefined;
+    const anywhere = lastAnywhere.get(lineup);
+    const found: DefenderFound = {};
+    if (onMachine) found.flipper = strip(onMachine);
+    if (anywhere) found.last = { ...strip(anywhere), sameAsFlipper: !!onMachine && anywhere.matchId === onMachine.matchId };
+    if (found.flipper || found.last) out[String(c.matchId)] = found;
   }
   return out;
 }
@@ -125,10 +157,12 @@ export function liveMachineSigFromData(
   return liveMachineSig((data?.matches ?? []).filter((m) => open.has(String(m.round_id))));
 }
 
-// ── 📣 Ticker-Meldungen ─────────────────────────────────────────────────────
+// ── 📣 Ticker-Meldungen (Titelverteidiger + letzter Sieger in EINER Meldung) ──────
 
 /** Ankündigungen eines Matches beginnen mit dieser Kennung (Flipper geändert → alle ausblenden außer der neuen) */
 export const defenderAnnouncePrefix = (matchId: string) => `defender|${matchId}|`;
+
+export type DefenderPerson = { id: string; name: string; at: string | null; machine?: string | null };
 
 type FeedItem = {
   key: string;
@@ -143,62 +177,157 @@ type FeedItem = {
 const onMachine = (machine: string | null, icon: string | null) =>
   machine ? `${icon ? `${icon} ` : ""}${machine}` : "diesem Flipper";
 
-/** vor dem Spiel: "Auf Jaws hat in dieser Besetzung zuletzt Marcus gewonnen …" */
+/** "(auf Elvira, 20.11.)" */
+function lastWhere(l: DefenderPerson): string {
+  const parts = [l.machine ? `auf ${l.machine}` : "", defenderDate(l.at)].filter(Boolean);
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
+/** Kennung der Ankündigung (ändert sich mit Flipper oder Personen → alte wird ausgeblendet) */
+export function defenderAnnounceKey(matchId: string, machineId: string, flipperId: string | null, lastId: string | null) {
+  return `${defenderAnnouncePrefix(matchId)}${machineId}|${flipperId ?? "-"}|${lastId ?? "-"}`;
+}
+
+/** vor dem Spiel */
 export function defenderAnnounceItem(opts: {
   matchId: string;
   machineId: string;
   machine: string | null;
   machineIcon: string | null;
-  defenderId: string;
-  defenderName: string;
-  at: string | null;
+  /** 🛡️ Titelverteidiger auf diesem Flipper */
+  flipper?: DefenderPerson | null;
+  /** 🏅 Sieger des letzten Aufeinandertreffens (anderes Match) */
+  last?: DefenderPerson | null;
   /** alle Spieler des Matches (Handy-Karte für jeden im Match) */
   playerIds?: string[];
-}): FeedItem {
-  const { matchId, machineId, machine, machineIcon, defenderId, defenderName, at } = opts;
-  const players = Array.from(new Set([defenderId, ...(opts.playerIds ?? [])]));
-  const when = defenderDate(at);
+}): FeedItem | null {
+  const { matchId, machineId, machine, machineIcon } = opts;
+  const f = opts.flipper ?? null;
+  const l = opts.last ?? null;
+  if (!f && !l) return null;
+  const players = Array.from(new Set([...(f ? [f.id] : []), ...(l ? [l.id] : []), ...(opts.playerIds ?? [])]));
+  const duel = (opts.playerIds?.length ?? 2) <= 2 ? "Duell" : "Aufeinandertreffen";
+  const m = onMachine(machine, machineIcon);
+  let title: string;
+  let body: string;
+  if (f && !l) {
+    const when = defenderDate(f.at);
+    title = "Titelverteidiger";
+    body = `Auf ${m} hat in genau dieser Besetzung zuletzt ${f.name} gewonnen${when ? ` (${when})` : ""}. Gelingt die Titelverteidigung – oder wird ${f.name} gestoppt?`;
+  } else if (!f && l) {
+    title = "Letzter Sieger";
+    body = `Das letzte ${duel} in genau dieser Besetzung hat ${l.name} gewonnen${lastWhere(l)}. Wiederholt sich das?`;
+  } else if (f!.id === l!.id) {
+    title = "Titelverteidiger";
+    body = `Auf ${m} hat in genau dieser Besetzung zuletzt ${f!.name} gewonnen – und auch das letzte ${duel} überhaupt${lastWhere(l!)}. Gelingt die Titelverteidigung?`;
+  } else {
+    title = "Titelverteidiger";
+    body = `Auf ${m} hat in genau dieser Besetzung zuletzt ${f!.name} gewonnen – das letzte ${duel} überhaupt ging aber an ${l!.name}${lastWhere(l!)}. Wer setzt sich durch?`;
+  }
   return {
-    key: `${defenderAnnouncePrefix(matchId)}${machineId}|${defenderId}`,
+    key: defenderAnnounceKey(matchId, machineId, f?.id ?? null, l?.id ?? null),
     kind: "titleDefender",
     icon: "🛡️",
-    title: "Titelverteidiger",
-    body: `Auf ${onMachine(machine, machineIcon)} hat in genau dieser Besetzung zuletzt ${defenderName} gewonnen${
-      when ? ` (${when})` : ""
-    }. Gelingt die Titelverteidigung – oder wird ${defenderName} gestoppt?`,
+    title,
+    body,
     players,
-    data: { player: defenderName, machine, machineIcon, at, matchId, defenderId, phase: "announce" },
+    data: {
+      player: (f ?? l)!.name,
+      other: f && l && f.id !== l.id ? l.name : undefined,
+      machine,
+      machineIcon,
+      matchId,
+      defenderId: f?.id ?? null,
+      lastId: l?.id ?? null,
+      phase: "announce",
+    },
   };
 }
 
-/** nach dem Spiel: verteidigt oder gestoppt */
+/** nach dem Spiel */
 export function defenderResultItem(opts: {
   matchId: string;
   machineId: string;
   machine: string | null;
   machineIcon: string | null;
-  defenderId: string;
-  defenderName: string;
+  flipper?: { id: string; name: string } | null;
+  last?: { id: string; name: string } | null;
   winnerId: string;
   winnerName: string;
   /** alle Spieler des Matches (Handy-Karte für jeden im Match) */
   playerIds?: string[];
-}): FeedItem {
-  const { matchId, machineId, machine, machineIcon, defenderId, defenderName, winnerId, winnerName } = opts;
-  const players = Array.from(new Set([winnerId, defenderId, ...(opts.playerIds ?? [])]));
+}): FeedItem | null {
+  const { matchId, machineId, machine, machineIcon, winnerId, winnerName } = opts;
+  const f = opts.flipper ?? null;
+  const l = opts.last ?? null;
+  if (!f && !l) return null;
+  const players = Array.from(
+    new Set([winnerId, ...(f ? [f.id] : []), ...(l ? [l.id] : []), ...(opts.playerIds ?? [])])
+  );
+  const duel = (opts.playerIds?.length ?? 2) <= 2 ? "Duell" : "Aufeinandertreffen";
   const m = onMachine(machine, machineIcon);
-  const defended = winnerId === defenderId;
+  const W = winnerName;
+  let title: string;
+  let body: string;
+  let other: string | undefined;
+  if (f && !l) {
+    if (winnerId === f.id) {
+      title = "Titel verteidigt";
+      body = `${f.name} verteidigt den Sieg auf ${m} – auch diesmal in dieser Besetzung vorn!`;
+    } else {
+      title = "Titelverteidiger gestoppt";
+      body = `${W} stoppt Titelverteidiger ${f.name} auf ${m}!`;
+      other = f.name;
+    }
+  } else if (!f && l) {
+    if (winnerId === l.id) {
+      title = "Wieder gewonnen";
+      body = `${l.name} gewinnt auch dieses ${duel} – wie beim letzten Mal!`;
+    } else {
+      title = "Spieß umgedreht";
+      body = `${W} dreht den Spieß um – beim letzten ${duel} hatte noch ${l.name} gewonnen!`;
+      other = l.name;
+    }
+  } else if (f!.id === l!.id) {
+    if (winnerId === f!.id) {
+      title = "Titel verteidigt";
+      body = `${f!.name} verteidigt ${m} – und gewinnt auch das ${duel} erneut!`;
+    } else {
+      title = "Titelverteidiger gestoppt";
+      body = `${W} stoppt Titelverteidiger ${f!.name} auf ${m}!`;
+      other = f!.name;
+    }
+  } else if (winnerId === f!.id) {
+    title = "Titel verteidigt";
+    body = `${f!.name} verteidigt ${m} – und holt sich das ${duel} von ${l!.name} zurück!`;
+    other = l!.name;
+  } else if (winnerId === l!.id) {
+    title = "Titelverteidiger gestoppt";
+    body = `${l!.name} stoppt Titelverteidiger ${f!.name} auf ${m} und gewinnt das ${duel} zum zweiten Mal in Folge!`;
+    other = f!.name;
+  } else {
+    title = "Titelverteidiger gestoppt";
+    body = `${W} stoppt Titelverteidiger ${f!.name} auf ${m}!`;
+    other = f!.name;
+  }
   return {
     key: `defenderResult|${matchId}|${machineId}`,
     kind: "titleDefender",
     icon: "🛡️",
-    title: defended ? "Titel verteidigt" : "Titelverteidiger gestoppt",
-    body: defended
-      ? `${defenderName} verteidigt den Sieg auf ${m} – auch diesmal in dieser Besetzung vorn!`
-      : `${winnerName} stoppt Titelverteidiger ${defenderName} auf ${m}!`,
+    title,
+    body,
     players,
-    data: defended
-      ? { player: defenderName, machine, machineIcon, defended, matchId, defenderId, winnerId, phase: "result" }
-      : { player: winnerName, other: defenderName, machine, machineIcon, defended, matchId, defenderId, winnerId, phase: "result" },
+    data: {
+      player: W,
+      other,
+      machine,
+      machineIcon,
+      matchId,
+      defenderId: f?.id ?? null,
+      lastId: l?.id ?? null,
+      winnerId,
+      defended: f ? winnerId === f.id : undefined,
+      phase: "result",
+    },
   };
 }

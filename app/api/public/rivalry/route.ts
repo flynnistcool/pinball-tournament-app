@@ -24,6 +24,11 @@ const CACHE_MS = 60_000;
 type PairMachine = Record<string, Record<string, PairMachineStat>>;
 /** 🛡️ laufendes Match → Titelverteidiger (players.id dieses Turniers) */
 type Defenders = Record<string, { playerId: string; at: string | null; machineId: string | null }>;
+/** 🏅 laufendes Match → Sieger des letzten Aufeinandertreffens (anderes Match als der Titelverteidiger) */
+type LastWinners = Record<
+  string,
+  { playerId: string; at: string | null; machineId: string | null; machine: string | null; same: boolean }
+>;
 const cache = new Map<
   string,
   {
@@ -33,6 +38,7 @@ const cache = new Map<
     pairs: Record<string, PairState>;
     pairMachine: PairMachine;
     defenders: Defenders;
+    lastWinners: LastWinners;
     defendersSig: string | null;
   }
 >();
@@ -82,7 +88,7 @@ export async function GET(req: Request) {
   const hit = cache.get(code);
   if (hit && hit.key === key && Date.now() - hit.at < CACHE_MS) {
     return NextResponse.json(
-      { ok: true, insights: hit.insights, pairs: hit.pairs, pairMachine: hit.pairMachine, defenders: hit.defenders, defendersSig: hit.defendersSig, cached: true },
+      { ok: true, insights: hit.insights, pairs: hit.pairs, pairMachine: hit.pairMachine, defenders: hit.defenders, lastWinners: hit.lastWinners, defendersSig: hit.defendersSig, cached: true },
       { headers: NO_STORE }
     );
   }
@@ -140,24 +146,45 @@ export async function GET(req: Request) {
   const pairs = buildPairStates(players, statsByProfile);
   // ⚔️ Bilanz je Paar an jedem Flipper DIESER Location (Admin: aufgeklappter Spieler) – Fehler → leer
   const locationId = t.location_id ? String(t.location_id) : null;
-  const keyOfMatch = await loadMatchMachineKeys(sb, locationId, matchIds).catch(() => null);
-  const rowsWithMachine = rows.map((r) => ({ ...r, machineKey: keyOfMatch?.get(r.match_id) ?? null }));
+  const mk = await loadMatchMachineKeys(sb, locationId, matchIds).catch(() => null);
+  const keyOfMatch = mk?.keyOfMatch ?? null;
+  const rowsWithMachine = rows.map((r) => ({
+    ...r,
+    machineKey: keyOfMatch?.get(r.match_id) ?? null,
+    machineName: mk?.nameOfMatch.get(r.match_id) ?? null,
+  }));
   const pairMachine: PairMachine = keyOfMatch ? pairMachineStats(rowsWithMachine, players, ex.excludedProfileIds) : {};
 
   // 🛡️ Titelverteidiger: gleiche Besetzung am gleichen Flipper (Location) schon einmal → letzter Sieger
+  // 🏅 Letzter Sieger: gleiche Besetzung irgendwo (anderes Match) → Sieger des letzten Aufeinandertreffens
   const defenders: Defenders = {};
+  const lastWinners: LastWinners = {};
   if (keyOfMatch && current && current.list.length) {
     const found = findDefenders(rowsWithMachine, current.list);
     for (const [mid, d] of Object.entries(found)) {
-      const pid = current.playerOfProfile.get(`${mid}|${d.profileId}`);
-      if (pid) defenders[mid] = { playerId: pid, at: d.at ?? null, machineId: current.machineOf.get(mid) ?? null };
+      const machineId = current.machineOf.get(mid) ?? null;
+      if (d.flipper) {
+        const pid = current.playerOfProfile.get(`${mid}|${d.flipper.profileId}`);
+        if (pid) defenders[mid] = { playerId: pid, at: d.flipper.at ?? null, machineId };
+      }
+      if (d.last) {
+        const pid = current.playerOfProfile.get(`${mid}|${d.last.profileId}`);
+        if (pid)
+          lastWinners[mid] = {
+            playerId: pid,
+            at: d.last.at ?? null,
+            machineId,
+            machine: d.last.machineName ?? null,
+            same: d.last.sameAsFlipper === true,
+          };
+      }
     }
   }
 
   // defendersSig = für welche laufenden Matches/Flipper gerechnet wurde (Seite erkennt veraltete Daten nach Flipper-Wechsel)
   const defendersSig = current?.sig ?? null;
-  cache.set(code, { at: Date.now(), key, insights, pairs, pairMachine, defenders, defendersSig });
-  return NextResponse.json({ ok: true, insights, pairs, pairMachine, defenders, defendersSig }, { headers: NO_STORE });
+  cache.set(code, { at: Date.now(), key, insights, pairs, pairMachine, defenders, lastWinners, defendersSig });
+  return NextResponse.json({ ok: true, insights, pairs, pairMachine, defenders, lastWinners, defendersSig }, { headers: NO_STORE });
 }
 
 /** 🛡️ laufende Matches (Runde offen, Match nicht fertig) mit Besetzung (Profile) und Flipper-Schlüssel */
@@ -204,12 +231,15 @@ async function loadCurrentMatches(
   return { list, playerOfProfile, machineOf, sig };
 }
 
-/** Flipper-Schlüssel (Name) je Match – nur Matches an der Location des Turniers (sonst null) */
+/**
+ * Flipper je Match: keyOfMatch = Schlüssel nur an der Location des Turniers (sonst null),
+ * nameOfMatch = Flipper-Name überall (für "auf Elvira")
+ */
 async function loadMatchMachineKeys(
   sb: ReturnType<typeof supabaseAdmin>,
   locationId: string | null,
   matchIds: string[]
-): Promise<Map<string, string | null> | null> {
+): Promise<{ keyOfMatch: Map<string, string | null>; nameOfMatch: Map<string, string | null> } | null> {
   if (!locationId || !matchIds.length) return null;
   const ma = await fetchAllIn<{ id: string; machine_id: string | null }>(matchIds, (chunk) =>
     sb.from("matches").select("id, machine_id").in("id", chunk).order("id")
@@ -229,5 +259,9 @@ async function loadMatchMachineKeys(
   const keyOfMachine = new Map(
     mc.data.filter((m) => m.tournament_id && here.has(String(m.tournament_id))).map((m) => [String(m.id), machineKey(m.name)])
   );
-  return new Map(ma.data.map((m) => [String(m.id), m.machine_id ? keyOfMachine.get(String(m.machine_id)) ?? null : null]));
+  const nameOfMachine = new Map(mc.data.map((m) => [String(m.id), m.name ?? null]));
+  return {
+    keyOfMatch: new Map(ma.data.map((m) => [String(m.id), m.machine_id ? keyOfMachine.get(String(m.machine_id)) ?? null : null])),
+    nameOfMatch: new Map(ma.data.map((m) => [String(m.id), m.machine_id ? nameOfMachine.get(String(m.machine_id)) ?? null : null])),
+  };
 }

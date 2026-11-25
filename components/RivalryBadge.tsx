@@ -18,10 +18,13 @@ export type RivalryData = {
   defenders: Record<string, { playerId: string; at: string | null; machineId: string | null }>;
   /** für welche laufenden Matches/Flipper die Titelverteidiger gerechnet wurden (liveMachineSig) – null = unbekannt */
   defendersSig: string | null;
+  /** 🏅 laufendes Match → Sieger des letzten Aufeinandertreffens in dieser Besetzung (egal welcher Flipper);
+   *  same = dasselbe Match wie beim 🛡️ Titelverteidiger */
+  lastWinners: Record<string, { playerId: string; at: string | null; machineId: string | null; machine: string | null; same?: boolean }>;
   /** true, sobald einmal geladen (auch wenn leer/fehlgeschlagen) – z. B. für das Einfrieren der Siegchancen */
   loaded?: boolean;
 };
-const EMPTY: RivalryData = { insights: {}, pairs: {}, pairMachine: {}, defenders: {}, defendersSig: null };
+const EMPTY: RivalryData = { insights: {}, pairs: {}, pairMachine: {}, defenders: {}, lastWinners: {}, defendersSig: null };
 
 const store = new Map<string, { key: string; data: RivalryData | null; promise: Promise<RivalryData> | null }>();
 
@@ -40,6 +43,7 @@ function load(code: string, refreshKey: string): Promise<RivalryData> {
             pairs: j.pairs ?? {},
             pairMachine: j.pairMachine ?? {},
             defenders: j.defenders ?? {},
+            lastWinners: j.lastWinners ?? {},
             defendersSig: typeof j.defendersSig === "string" ? j.defendersSig : null,
             loaded: true,
           }

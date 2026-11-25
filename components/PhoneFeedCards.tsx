@@ -164,8 +164,21 @@ function cardText(x: FeedItem, me: boolean, meId?: string): { title: string; tex
       return { title: me ? "Auf Messers Schneide! ⚖️" : x.title, text: x.body };
     }
     case "titleDefender": {
-      // 🛡️ Titelverteidiger (Du-Form für die Spieler im Match)
+      // 🛡️ Titelverteidiger / 🏅 letzter Sieger (Du-Form für die Spieler im Match)
       if (!me || !meId) return { title: x.title, text: x.body };
+      if (d.lastId) {
+        // zusammengefasste Meldung (Flipper + letztes Aufeinandertreffen): eigener Titel, Text wie im Ticker
+        const isF = String(d.defenderId ?? "") === meId;
+        const isL = String(d.lastId ?? "") === meId;
+        if (d.phase === "result") {
+          if (String(d.winnerId ?? "") === meId) return { title: isF ? "Titel verteidigt! 🛡️" : isL ? "Wieder gewonnen! 🏅" : "Gewonnen! 🛡️", text: x.body };
+          if (isF || isL) return { title: "Diesmal nicht … 🛡️", text: x.body };
+          return { title: x.title, text: x.body };
+        }
+        if (isF) return { title: "Du bist Titelverteidiger! 🛡️", text: x.body };
+        if (isL) return { title: "Du hast das letzte Mal gewonnen! 🏅", text: x.body };
+        return { title: `${x.title}! 🛡️`, text: x.body };
+      }
       const m = d.machine != null ? `${d.machineIcon ? `${String(d.machineIcon)} ` : ""}${machine}` : "diesem Flipper";
       const isDef = String(d.defenderId ?? "") === meId;
       const defName = String(d.phase === "result" && d.defended !== true ? d.other ?? "?" : d.player ?? "?");

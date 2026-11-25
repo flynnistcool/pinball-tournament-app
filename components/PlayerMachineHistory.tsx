@@ -201,6 +201,7 @@ export function OpponentBalance({
   machineName,
   format,
   title = "⚔️ Bilanz gegen",
+  accent = false,
 }: {
   code: string;
   playerId: string;
@@ -209,6 +210,8 @@ export function OpponentBalance({
   format: string | null;
   /** Überschrift der ersten Spalte */
   title?: string;
+  /** dezent hervorgehoben (Handy: geht sonst unter) – leichter Violett-Ton, kräftigere Überschrift */
+  accent?: boolean;
 }) {
   const fmtKey = String(format ?? "").toLowerCase();
   const riv = useRivalryDataShared(code);
@@ -226,11 +229,23 @@ export function OpponentBalance({
     };
   });
   return (
-    <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
+    <div
+      className={
+        "overflow-x-auto rounded-lg border " +
+        (accent ? "border-violet-200 bg-violet-50/60 shadow-sm ring-1 ring-violet-100" : "border-neutral-200 bg-white")
+      }
+    >
       <table className="w-full text-[11px] tabular-nums">
         <thead>
-          <tr className="border-b border-neutral-100 align-bottom text-neutral-400">
-            <th className="px-2 py-1 text-left font-semibold text-neutral-700">{title}</th>
+          <tr
+            className={
+              "border-b align-bottom " +
+              (accent ? "border-violet-200 bg-violet-100/70 text-violet-500" : "border-neutral-100 text-neutral-400")
+            }
+          >
+            <th className={"px-2 py-1 text-left " + (accent ? "font-bold text-violet-900" : "font-semibold text-neutral-700")}>
+              {title}
+            </th>
             <th className="px-2 py-1 text-left font-normal">
               Allzeit
               <span className="block text-[10px] leading-tight">alle Matches</span>
@@ -249,8 +264,8 @@ export function OpponentBalance({
         </thead>
         <tbody>
           {rows.map(({ o, all, here, hereFmt }) => (
-            <tr key={o.id} className="border-b border-neutral-100 last:border-0">
-              <td className="px-2 py-1 text-neutral-700">{o.name}</td>
+            <tr key={o.id} className={"border-b last:border-0 " + (accent ? "border-violet-100" : "border-neutral-100")}>
+              <td className={"px-2 py-1 " + (accent ? "font-semibold text-violet-900" : "text-neutral-700")}>{o.name}</td>
               <td className="px-2 py-1">
                 <BalanceCell b={all} />
               </td>

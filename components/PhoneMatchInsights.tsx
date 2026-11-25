@@ -20,7 +20,7 @@ import StreakFire from "@/components/StreakFire";
 import { useBadgeOn } from "@/components/DisplayDevice";
 import RivalryBadge, { rtpRefreshKey, useRivalry, useRivalryDataShared } from "@/components/RivalryBadge";
 import { liveMachineSigFromData } from "@/lib/titleDefender";
-import { DefenderBadge, defenderFor } from "@/components/TitleDefender";
+import { DefenderBadge, LastWinnerBadge, defenderFor, lastWinnerFor } from "@/components/TitleDefender";
 import { pairKey, type RivalryInsight } from "@/lib/rivalryInsights";
 import BotEloBadge from "@/components/BotEloBadge";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite, type FavoriteResult } from "@/lib/favorite";
@@ -205,6 +205,8 @@ export default function PhoneMatchInsights({
   const premiereOn = useBadgeOn("badge:premiere"); // 🎰
   const defenderOn = useBadgeOn("badge:defender"); // 🛡️ Titelverteidiger
   const defender = showCompare ? defenderFor(rivFav, info.match?.id, info.match?.machine_id) : null;
+  const lastWinnerOn = useBadgeOn("badge:lastWinner"); // 🏅 Letzter Sieger
+  const lastWinner = showCompare ? lastWinnerFor(rivFav, info.match?.id, info.match?.machine_id) : null;
 
   const recs = records?.enabled && machineName ? recordsForMachine(machineName, records.prior, live) : null;
   // 🔥 On fire – dieselbe Rechnung wie im Handy-Leaderboard (aus den ohnehin geladenen Daten)
@@ -313,6 +315,9 @@ export default function PhoneMatchInsights({
                 ) : null}
                 {defenderOn && defender?.playerId === pid ? (
                   <DefenderBadge at={defender.at} machine={machineName ?? null} />
+                ) : null}
+                {lastWinnerOn && lastWinner?.playerId === pid ? (
+                  <LastWinnerBadge at={lastWinner.at} machine={lastWinner.machine} />
                 ) : null}
               </div>
               {/* 📈 Siegchance als Balken (wie im Admin) */}
@@ -432,6 +437,7 @@ export default function PhoneMatchInsights({
                     machineName={machineName}
                     format={format}
                     title="⚔️ Deine Bilanz gegen"
+                    accent
                   />
                 </div>
               ) : null}

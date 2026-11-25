@@ -1,7 +1,8 @@
 "use client";
 
-// 🛡️ Titelverteidiger (lib/titleDefender.ts):
-//  - DefenderBadge: Abzeichen am Namen (Admin, TV, Handy) – nur solange das Match läuft
+// 🛡️ Titelverteidiger + 🏅 Letzter Sieger (lib/titleDefender.ts):
+//  - DefenderBadge / LastWinnerBadge: Abzeichen am Namen (Admin nur Symbol, TV/Handy ausgeschrieben) – solange das Match läuft
+//  - Meldungen: Titelverteidiger (Flipper) und letzter Sieger (allgemein) in EINER Ticker-Meldung
 //  - defenderFor: Titelverteidiger eines Matches, aber nur wenn die Daten zum aktuellen Flipper passen
 //  - TitleDefenderWatcher (nur Admin-Seite): Ticker-Meldungen
 //      1) Ankündigung: Matchplay & Co. sobald die Runde da ist, Round the Pinball sobald am Flipper jemand blau ist
@@ -16,6 +17,7 @@ import { rotationActiveMap } from "@/lib/rotationTurn";
 import type { FeedItemInput } from "@/lib/feed";
 import {
   defenderAnnounceItem,
+  defenderAnnounceKey,
   defenderAnnouncePrefix,
   defenderDate,
   defenderResultItem,
@@ -64,12 +66,59 @@ export function DefenderBadge({
   );
 }
 
+/** 🏅 Sieger des letzten Aufeinandertreffens in dieser Besetzung – nur wenn für genau diesen Flipper gerechnet */
+export function lastWinnerFor(
+  riv: Pick<RivalryData, "lastWinners"> | null | undefined,
+  matchId: unknown,
+  machineId: unknown
+): { playerId: string; at: string | null; machine: string | null; same: boolean } | null {
+  const d = riv?.lastWinners?.[String(matchId ?? "")];
+  if (!d) return null;
+  if (String(d.machineId ?? "") !== String(machineId ?? "")) return null;
+  return { playerId: d.playerId, at: d.at, machine: d.machine, same: d.same === true };
+}
+
+export function LastWinnerBadge({
+  at,
+  machine,
+  variant = "light",
+  compact = false,
+  className = "",
+}: {
+  at?: string | null;
+  /** Flipper des letzten Aufeinandertreffens */
+  machine?: string | null;
+  variant?: "light" | "tv";
+  /** nur das Symbol (Admin) – Text im Mouseover */
+  compact?: boolean;
+  className?: string;
+}) {
+  const when = defenderDate(at ?? null);
+  const where = [machine ? `auf ${machine}` : "", when].filter(Boolean).join(", ");
+  const style =
+    variant === "tv"
+      ? "bg-teal-400/20 px-2.5 text-sm text-teal-100 ring-teal-300/50"
+      : "bg-teal-50 px-2 text-[11px] text-teal-800 ring-teal-200";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded-full py-0.5 font-bold ring-1 ${style} ${className}`}
+      title={`Letzter Sieger – hat das letzte Aufeinandertreffen in genau dieser Besetzung gewonnen${where ? ` (${where})` : ""}`}
+      aria-label="Letzter Sieger"
+    >
+      {compact ? "🏅" : "🏅 Letzter Sieger"}
+    </span>
+  );
+}
+
 // ── Wächter für den Ticker ─────────────────────────────────────────────────
 
 const STABLE_MS = 10_000;
 const TICK_MS = 2_000;
 
-type Announced = Record<string, { key: string; defenderId: string; machineId: string; done?: boolean }>;
+type Announced = Record<
+  string,
+  { key: string; defenderId: string | null; lastId?: string | null; lastMachine?: string | null; machineId: string; done?: boolean }
+>;
 const LS_KEY = (code: string) => `pb_defender_${String(code).toUpperCase()}`;
 
 function loadAnnounced(code: string): Announced {
@@ -208,19 +257,18 @@ export function TitleDefenderWatcher({
               announced[mid] = { ...a, done: true };
               changed = true;
               if (winnerId && a.machineId === machineId) {
-                ready.push(
-                  defenderResultItem({
-                    matchId: mid,
-                    machineId,
-                    machine: machineName,
-                    machineIcon,
-                    defenderId: a.defenderId,
-                    defenderName: name.get(a.defenderId) ?? "?",
-                    winnerId,
-                    winnerName: name.get(winnerId) ?? "?",
-                    playerIds: mps.map((x) => String(x.player_id)),
-                  })
-                );
+                const item = defenderResultItem({
+                  matchId: mid,
+                  machineId,
+                  machine: machineName,
+                  machineIcon,
+                  flipper: a.defenderId ? { id: a.defenderId, name: name.get(a.defenderId) ?? "?" } : null,
+                  last: a.lastId ? { id: a.lastId, name: name.get(a.lastId) ?? "?" } : null,
+                  winnerId,
+                  winnerName: name.get(winnerId) ?? "?",
+                  playerIds: mps.map((x) => String(x.player_id)),
+                });
+                if (item) ready.push(item);
               }
             }
             continue;
@@ -247,32 +295,39 @@ export function TitleDefenderWatcher({
             }
           }
 
-          // 1) + 2) Titelverteidiger
+          // 1) + 2) Titelverteidiger (Flipper) + letzter Sieger (allgemein) – eine Meldung
           if (!fresh) continue; // Daten noch nicht zum aktuellen Flipper gerechnet → warten
           const def = defenderFor(riv, mid, machineId);
-          const expectedKey = def ? `${defenderAnnouncePrefix(mid)}${machineId}|${def.playerId}` : null;
+          // 🏅 in der Meldung nur, wenn es ein ANDERES Match als das Titelverteidiger-Match war (Badge kommt trotzdem)
+          const lwAll = lastWinnerFor(riv, mid, machineId);
+          const lw = lwAll && !lwAll.same ? lwAll : null;
+          const expectedKey = def || lw ? defenderAnnounceKey(mid, machineId, def?.playerId ?? null, lw?.playerId ?? null) : null;
           if (a && !a.done && a.key !== expectedKey) {
             // Flipper (oder Besetzung) geändert → alte Ankündigung weg
             await hideByPrefix(code, defenderAnnouncePrefix(mid), expectedKey);
             delete announced[mid];
             changed = true;
           }
-          if (def && expectedKey && announced[mid]?.key !== expectedKey) {
+          if (expectedKey && announced[mid]?.key !== expectedKey) {
             if (rtp && !active[mid]) continue; // RtP: erst wenn am Flipper jemand blau ist
-            announced[mid] = { key: expectedKey, defenderId: def.playerId, machineId };
+            announced[mid] = {
+              key: expectedKey,
+              defenderId: def?.playerId ?? null,
+              lastId: lw?.playerId ?? null,
+              lastMachine: lw?.machine ?? null,
+              machineId,
+            };
             changed = true;
-            ready.push(
-              defenderAnnounceItem({
-                matchId: mid,
-                machineId,
-                machine: machineName,
-                machineIcon,
-                defenderId: def.playerId,
-                defenderName: name.get(def.playerId) ?? "?",
-                at: def.at,
-                playerIds: mps.map((x) => String(x.player_id)),
-              })
-            );
+            const item = defenderAnnounceItem({
+              matchId: mid,
+              machineId,
+              machine: machineName,
+              machineIcon,
+              flipper: def ? { id: def.playerId, name: name.get(def.playerId) ?? "?", at: def.at } : null,
+              last: lw ? { id: lw.playerId, name: name.get(lw.playerId) ?? "?", at: lw.at, machine: lw.machine } : null,
+              playerIds: mps.map((x) => String(x.player_id)),
+            });
+            if (item) ready.push(item);
           }
         }
         if (changed) saveAnnounced(code, announced);

@@ -94,7 +94,7 @@ import DypMachineMix from "@/components/DypMachineMix";
 import DypDeviceCounts from "@/components/DypDeviceCounts";
 import DypMixDialog from "@/components/DypMixDialog";
 import { liveMachineSigFromData } from "@/lib/titleDefender";
-import { DefenderBadge, TitleDefenderWatcher, defenderFor } from "@/components/TitleDefender";
+import { DefenderBadge, LastWinnerBadge, TitleDefenderWatcher, defenderFor, lastWinnerFor } from "@/components/TitleDefender";
 import DisplayResetButton from "@/components/DisplayResetButton";
 import MatchRecordsLine, { PersonalBestLine } from "@/components/MatchRecordsLine";
 import PlayerMachineHistory from "@/components/PlayerMachineHistory";
@@ -6585,6 +6585,7 @@ function RoundMatchesCard({
   // 🏷️ ★ Favorit-Abzeichen an/aus (🔔 Meldungen & Sounds → Dauerhafte Anzeigen)
   const favBadgeOn = useBadgeOn("badge:favorite");
   const defenderBadgeOn = useBadgeOn("badge:defender"); // 🛡️ Titelverteidiger-Abzeichen
+  const lastWinnerBadgeOn = useBadgeOn("badge:lastWinner"); // 🏅 Letzter Sieger
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance-Schildchen
 
   // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
@@ -9282,6 +9283,16 @@ disabled={
         compact
         at={defenderFor(rivFavData, m?.id, m?.machine_id)?.at}
         machine={machinesInfoById?.[String(m?.machine_id ?? "")]?.name ?? null}
+      />
+    ) : null}
+    {/* 🏅 Letzter Sieger (gleiche Besetzung, letztes Aufeinandertreffen egal wo) – Admin nur Symbol */}
+    {lastWinnerBadgeOn &&
+    String((m as any)?.status ?? "").toLowerCase() !== "finished" &&
+    lastWinnerFor(rivFavData, m?.id, m?.machine_id)?.playerId === String(mp.player_id) ? (
+      <LastWinnerBadge
+        compact
+        at={lastWinnerFor(rivFavData, m?.id, m?.machine_id)?.at}
+        machine={lastWinnerFor(rivFavData, m?.id, m?.machine_id)?.machine}
       />
     ) : null}
     {isActiveAtMachine ? (

@@ -28,7 +28,7 @@ import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData, useRivalryDataShared } from "@/components/RivalryBadge";
 import { liveMachineSigFromData } from "@/lib/titleDefender";
-import { DefenderBadge } from "@/components/TitleDefender";
+import { DefenderBadge, LastWinnerBadge } from "@/components/TitleDefender";
 import { RivalryEventTv, useRivalryEvents } from "@/components/RivalryEvents";
 import LiveTicker from "@/components/LiveTicker";
 import RoundSplash from "@/components/RoundSplash";
@@ -957,8 +957,10 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   );
   const rivalry = rivData.insights;
   // 🛡️ Titelverteidiger je laufendem Match – nur wenn für die aktuellen Flipper gerechnet (sonst nach Flipper-Wechsel falsch)
-  const tvDefenders =
-    rivData.defendersSig != null && rivData.defendersSig === liveMachineSigFromData(data as any) ? rivData.defenders : {};
+  const tvFresh = rivData.defendersSig != null && rivData.defendersSig === liveMachineSigFromData(data as any);
+  const tvDefenders = tvFresh ? rivData.defenders : {};
+  // 🏅 Letzter Sieger (gleiche Besetzung, egal welcher Flipper)
+  const tvLastWinners = tvFresh ? rivData.lastWinners : {};
   // 📡 Ticker über den Server (falls eingeschaltet): der TV klopft regelmäßig an
   useFeedSync(code, { rotation: format === "rotation", active: !!data });
   // 🎉 Gegner-Ereignisse nach Matches: groß in der Mitte
@@ -1662,6 +1664,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             <MatchTvView
               rivalry={rivalryOn ? rivalry : null}
               defenders={tvDefenders}
+              lastWinners={tvLastWinners}
               ticker={
                 <LiveTicker code={code} variant="tv" maxItems={30} scrollMaxPx={matchTickerSide ? 860 : 430} refreshMs={8000} soundOn={soundOn} />
               }
@@ -2159,6 +2162,7 @@ const pctFmt = (v: number | null) =>
 function MatchTvView({
   rivalry,
   defenders,
+  lastWinners,
   ticker,
   recLookup,
   pbLookup,
@@ -2179,6 +2183,8 @@ function MatchTvView({
   rivalry?: Record<string, RivalryInsight> | null;
   /** 🛡️ laufendes Match → Titelverteidiger */
   defenders?: Record<string, { playerId: string; at: string | null }>;
+  /** 🏅 laufendes Match → Sieger des letzten Aufeinandertreffens */
+  lastWinners?: Record<string, { playerId: string; at: string | null; machine: string | null }>;
   /** 📣 Live-Ticker (rechte Spalte unter dem Rundenfortschritt) */
   ticker?: React.ReactNode;
   recLookup: RecLookup;
@@ -2289,6 +2295,7 @@ function MatchTvView({
                   m={m}
                   rivalry={rivalry && !m.finished ? bestInsightForMatch(m.players.map((p) => p.id), rivalry) : null}
                   defender={!m.finished ? defenders?.[m.matchId] ?? null : null}
+                  lastWinner={!m.finished ? lastWinners?.[m.matchId] ?? null : null}
                   rowById={rowById}
                   rec={recLookup(m.machineName)}
                   pb={(playerId) => pbLookup(playerId, m.machineName, m.matchId)}
@@ -2479,6 +2486,7 @@ function MatchCardView({
   m,
   rivalry,
   defender,
+  lastWinner,
   rowById,
   rec,
   pb,
@@ -2488,6 +2496,8 @@ function MatchCardView({
   rivalry?: RivalryInsight | null;
   /** 🛡️ Titelverteidiger dieses Matches */
   defender?: { playerId: string; at: string | null } | null;
+  /** 🏅 Sieger des letzten Aufeinandertreffens */
+  lastWinner?: { playerId: string; at: string | null; machine: string | null } | null;
   rowById: Record<string, Row>;
   rec: ReturnType<RecLookup>;
   pb: (playerId: string) => ReturnType<PbLookup>;
@@ -2498,6 +2508,7 @@ function MatchCardView({
   const favOn = useBadgeOn("badge:favorite");
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance
   const defenderOn = useBadgeOn("badge:defender"); // 🛡️ Titelverteidiger
+  const lastWinnerOn = useBadgeOn("badge:lastWinner"); // 🏅 Letzter Sieger
   return (
     <div
       className={`overflow-hidden rounded-3xl ${
@@ -2577,6 +2588,9 @@ function MatchCardView({
                   ) : null}
                   {defenderOn && defender && defender.playerId === String(p.id) ? (
                     <DefenderBadge variant="tv" at={defender.at} machine={m.machineName} />
+                  ) : null}
+                  {lastWinnerOn && lastWinner && lastWinner.playerId === String(p.id) ? (
+                    <LastWinnerBadge variant="tv" at={lastWinner.at} machine={lastWinner.machine} />
                   ) : null}
                   {/* 🎰 Premiere in der Namenszeile (in der Bestwert-Zeile hat es die Zeile verschoben) */}
                   {myPb?.premiere && premiereOn ? (
