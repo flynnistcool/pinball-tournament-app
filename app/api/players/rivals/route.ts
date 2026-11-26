@@ -1,5 +1,6 @@
 // ⚔️ Erzfeind & Lieblingsgegner eines Profils (nur lesen).
-// GET ?profileId=… → { ok, minDuels, minStreak, frequent[], even[], nemesis[], favorite[], streak[], qualified, profiles }
+// GET ?profileId=… → { ok, minDuels, minStreak, frequent[], even[], nemesis[], favorite[], streak[], qualified, profiles, overall }
+//   overall = Form (letzte 10) + längste Sieges-/Niederlagenserie über alle Gegner (lib/matchStreaks.ts)
 // Rechnung: lib/rivals.ts
 
 import { NextResponse } from "next/server";
@@ -7,6 +8,7 @@ import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn, fetchAllRows } from "@/lib/supabaseChunks";
 import { loadStatsExclusions } from "@/lib/statsExclusions";
 import { computeRivalStats, duelLog, pickRivals, RIVAL_MIN_DUELS, RIVAL_MIN_STREAK, type RivalRow } from "@/lib/rivals";
+import { computeOverallForm } from "@/lib/matchStreaks";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -36,7 +38,7 @@ export async function GET(req: Request) {
   );
   if (pErr) return fail(`Spieler laden fehlgeschlagen: ${pErr.message}`, 500);
   const myPlayerIds = myPlayers.map((p) => String(p.id));
-  const empty = { ok: true, minDuels: RIVAL_MIN_DUELS, minStreak: RIVAL_MIN_STREAK, frequent: [], even: [], nemesis: [], favorite: [], streak: [], qualified: 0, profiles: {} };
+  const empty = { ok: true, minDuels: RIVAL_MIN_DUELS, minStreak: RIVAL_MIN_STREAK, frequent: [], even: [], nemesis: [], favorite: [], streak: [], lossStreak: [], qualified: 0, profiles: {}, overall: null };
   if (!myPlayerIds.length) return NextResponse.json(empty, { headers: NO_STORE });
 
   // 2) eigene Matches (nur mit Platz)
@@ -93,11 +95,23 @@ export async function GET(req: Request) {
 
   // 4) rechnen (Bots + Platzhalter zählen nicht)
   const ex = await loadStatsExclusions(sb);
-  const result = pickRivals(computeRivalStats(profileId, rows, ex.excludedProfileIds));
+  const allStats = computeRivalStats(profileId, rows, ex.excludedProfileIds);
+  const result = pickRivals(allStats);
+  // 🥶 längste Niederlagenserie gegen einen Gegner (Top 3, ab RIVAL_MIN_STREAK am Stück – wie Siegesserie)
+  const lossStreak = allStats
+    .filter((s) => (s.worstLossStreak ?? 0) >= RIVAL_MIN_STREAK)
+    .sort((a, b) => (b.worstLossStreak ?? 0) - (a.worstLossStreak ?? 0) || b.duels - a.duels)
+    .slice(0, 3);
+  // 📊 Form + Gesamt-Serien (alle Gegner zusammen)
+  const overall = computeOverallForm(profileId, rows, ex.excludedProfileIds);
 
   // 5) Namen/Farben der genannten Gegner
   const ids = Array.from(
-    new Set([...result.frequent, ...result.even, ...result.nemesis, ...result.favorite, ...result.streak].map((s) => s.profileId))
+    new Set(
+      [...result.frequent, ...result.even, ...result.nemesis, ...result.favorite, ...result.streak, ...lossStreak].map(
+        (s) => s.profileId
+      )
+    )
   );
   const profiles: Record<string, { name: string; icon: string | null; color: string | null }> = {};
   if (ids.length) {
@@ -108,5 +122,8 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, minDuels: RIVAL_MIN_DUELS, minStreak: RIVAL_MIN_STREAK, ...result, profiles }, { headers: NO_STORE });
+  return NextResponse.json(
+    { ok: true, minDuels: RIVAL_MIN_DUELS, minStreak: RIVAL_MIN_STREAK, ...result, lossStreak, profiles, overall },
+    { headers: NO_STORE }
+  );
 }

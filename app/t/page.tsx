@@ -9267,21 +9267,11 @@ disabled={
     {pos ? <Pill><span className="text-[11px]">#{pos}</span></Pill> : <Pill>—</Pill>}
     {isWinner ? <Pill><span className="text-[11px]">🏆 Sieger</span> </Pill>: null}
     <StreakFire n={winStreaks[String(mp.player_id)]} mode={winStreakMode} />
-    {/* ★ Favorit (Siegchance, lib/favorite.ts – berechnet oben als favInfo) */}
-    {favInfo?.isFav && favInfo.favRes && favBadgeOn ? (
-      <span
-        className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
-        title={favoriteTitle(favInfo.favRes)}
-      >
-        ★ Favorit
-      </span>
-    ) : null}
     {/* 🛡️ Titelverteidiger (gleiche Besetzung am gleichen Flipper zuletzt gewonnen) – nur solange das Match läuft */}
     {defenderBadgeOn &&
     String((m as any)?.status ?? "").toLowerCase() !== "finished" &&
     defenderFor(rivFavData, m?.id, m?.machine_id)?.playerId === String(mp.player_id) ? (
       <DefenderBadge
-        compact
         at={defenderFor(rivFavData, m?.id, m?.machine_id)?.at}
         machine={machinesInfoById?.[String(m?.machine_id ?? "")]?.name ?? null}
       />
@@ -9291,10 +9281,18 @@ disabled={
     String((m as any)?.status ?? "").toLowerCase() !== "finished" &&
     lastWinnerFor(rivFavData, m?.id, m?.machine_id)?.playerId === String(mp.player_id) ? (
       <LastWinnerBadge
-        compact
         at={lastWinnerFor(rivFavData, m?.id, m?.machine_id)?.at}
         machine={lastWinnerFor(rivFavData, m?.id, m?.machine_id)?.machine}
       />
+    ) : null}
+    {/* ★ Favorit (Siegchance, lib/favorite.ts – berechnet oben als favInfo) */}
+    {favInfo?.isFav && favInfo.favRes && favBadgeOn ? (
+      <span
+        className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
+        title={favoriteTitle(favInfo.favRes)}
+      >
+        ★ Favorit
+      </span>
     ) : null}
     {isActiveAtMachine ? (
       // ▶ nur das Symbol (spart Platz in der Namenszeile) – Text im Mouseover

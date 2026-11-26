@@ -44,6 +44,11 @@ export type RivalStat = {
   streakTournaments: number;
   /** laufende Serie: so viele Duelle zuletzt am Stück gewonnen (0 = letztes Duell nicht gewonnen) */
   currentStreak: number;
+  /** 🥶 längste Serie VERLORENER Duelle am Stück (+ wann, über wie viele Turniere) */
+  worstLossStreak?: number;
+  lossStreakFrom?: string | null;
+  lossStreakTo?: string | null;
+  lossStreakTournaments?: number;
 };
 
 export type RivalKind = "frequent" | "even" | "nemesis" | "favorite" | "streak";
@@ -84,6 +89,14 @@ export function computeRivalStats(
     bestFrom: string | null;
     bestTo: string | null;
     bestTids: number;
+    // 🥶 Niederlagenserie
+    lrun: number;
+    lrunFrom: string | null;
+    lrunTids: Set<string>;
+    lbest: number;
+    lbestFrom: string | null;
+    lbestTo: string | null;
+    lbestTids: number;
   };
   const stats = new Map<string, Acc>();
   for (const [, list] of groups) {
@@ -107,7 +120,31 @@ export function computeRivalStats(
         bestFrom: null,
         bestTo: null,
         bestTids: 0,
+        lrun: 0,
+        lrunFrom: null,
+        lrunTids: new Set<string>(),
+        lbest: 0,
+        lbestFrom: null,
+        lbestTo: null,
+        lbestTids: 0,
       };
+      // 🥶 Niederlagenserie (Sieg oder Gleichstand beendet sie)
+      if (me.position > o.position) {
+        if (s.lrun === 0) {
+          s.lrunFrom = me.at ?? null;
+          s.lrunTids = new Set<string>();
+        }
+        s.lrun += 1;
+        if (me.tournamentId) s.lrunTids.add(String(me.tournamentId));
+        if (s.lrun > s.lbest) {
+          s.lbest = s.lrun;
+          s.lbestFrom = s.lrunFrom;
+          s.lbestTo = me.at ?? null;
+          s.lbestTids = s.lrunTids.size;
+        }
+      } else {
+        s.lrun = 0;
+      }
       if (me.position < o.position) {
         s.wins += 1;
         if (s.run === 0) {
@@ -146,6 +183,10 @@ export function computeRivalStats(
       streakTo: s.bestTo,
       streakTournaments: s.bestTids,
       currentStreak: s.run,
+      worstLossStreak: s.lbest,
+      lossStreakFrom: s.lbestFrom,
+      lossStreakTo: s.lbestTo,
+      lossStreakTournaments: s.lbestTids,
     });
   });
   return out;

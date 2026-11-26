@@ -2578,14 +2578,6 @@ function MatchCardView({
                     </span>
                   ) : null}
                   <StreakFire n={r.streak} mode={r.streakMode} variant="tv" />
-                  {p.favorite && favOn ? (
-                    <span
-                      className="inline-flex shrink-0 items-center rounded-full bg-amber-400/20 px-2.5 py-0.5 text-sm font-bold text-amber-200 ring-1 ring-amber-300/60 drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]"
-                      title={p.favoriteTitle ?? "Favorit"}
-                    >
-                      ★ Favorit
-                    </span>
-                  ) : null}
                   {defenderOn && defender && defender.playerId === String(p.id) ? (
                     <DefenderBadge variant="tv" at={defender.at} machine={m.machineName} />
                   ) : null}
@@ -2596,6 +2588,14 @@ function MatchCardView({
                   {myPb?.premiere && premiereOn ? (
                     <span className="inline-flex shrink-0 items-center rounded-full bg-pink-500/25 px-2.5 py-0.5 text-sm font-semibold text-pink-200 ring-1 ring-pink-300/40">
                       🎰 Premiere
+                    </span>
+                  ) : null}
+                  {p.favorite && favOn ? (
+                    <span
+                      className="inline-flex shrink-0 items-center rounded-full bg-amber-400/20 px-2.5 py-0.5 text-sm font-bold text-amber-200 ring-1 ring-amber-300/60 drop-shadow-[0_0_6px_rgba(251,191,36,0.45)]"
+                      title={p.favoriteTitle ?? "Favorit"}
+                    >
+                      ★ Favorit
                     </span>
                   ) : null}
                 </div>

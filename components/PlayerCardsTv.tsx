@@ -228,6 +228,21 @@ export function PlayerTradingCard({ card, light = false }: { card: PlayerCard; l
         />
       </div>
 
+      {/* 📊 Form: letzte 10 Matches (alt → neu) */}
+      {card.form && card.form.length ? (
+        <div className={`relative mt-2 flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${t.box}`}>
+          <span className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>📊 Form</span>
+          <span className="flex items-center gap-1" title="letzte Matches, alt → neu (● Sieg, ○ Niederlage)">
+            {card.form.map((w, i) => (
+              <span
+                key={i}
+                className={"inline-block h-3.5 w-3.5 rounded-full " + (w ? "bg-emerald-500" : "border-2 border-red-400")}
+              />
+            ))}
+          </span>
+        </div>
+      ) : null}
+
       <div className={`relative mt-2 rounded-xl px-3 py-2 ${t.box}`}>
         <div className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>❤️ Lieblingsflipper<Here on={!!card.localScope} t={t} /></div>
         <div className="truncate text-lg font-bold">

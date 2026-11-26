@@ -57,7 +57,7 @@ export function DefenderBadge({
       : "bg-indigo-50 px-2 text-[11px] text-indigo-800 ring-indigo-200";
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-full py-0.5 font-bold ring-1 ${style} ${className}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full py-0.5 font-bold ring-1 ${style} ${className}`}
       title={`Titelverteidiger – hat in genau dieser Besetzung${machine ? ` an ${machine}` : ""} zuletzt gewonnen${when ? ` (${when})` : ""}`}
       aria-label="Titelverteidiger"
     >
@@ -101,7 +101,7 @@ export function LastWinnerBadge({
       : "bg-teal-50 px-2 text-[11px] text-teal-800 ring-teal-200";
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-full py-0.5 font-bold ring-1 ${style} ${className}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full py-0.5 font-bold ring-1 ${style} ${className}`}
       title={`Letzter Sieger – hat das letzte Aufeinandertreffen in genau dieser Besetzung gewonnen${where ? ` (${where})` : ""}`}
       aria-label="Letzter Sieger"
     >

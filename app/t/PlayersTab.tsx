@@ -198,6 +198,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Card, CardBody, CardHeader, Input, Select } from "@/components/ui";
 import { EloSparkline, WinrateSparkline } from "@/components/charts";
 import RivalsPanel from "@/components/RivalsPanel";
+import PlayerOverviewCard from "@/components/PlayerOverviewCard";
 import AchievementsPanel from "@/components/AchievementsPanel";
 import { SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { joinTournamentByCode } from "@/lib/joinTournament";
@@ -5648,6 +5649,30 @@ return (
 
                     {currentDetailTab === "stats" && !p.is_bot && (
                       <div className="space-y-3">
+                        {/* 📊 Überblick: das Wichtigste aus allen Blöcken darunter */}
+                        {!p.exclude_from_stats ? (
+                          <PlayerOverviewCard
+                            profileId={String(p.id)}
+                            name={p.name}
+                            rating={typeof p.rating === "number" ? p.rating : null}
+                            rank={(() => {
+                              const ranked = profiles
+                                .filter((x) => !x.is_bot && !x.exclude_from_stats && typeof x.rating === "number")
+                                .sort((a, b) => (b.rating as number) - (a.rating as number));
+                              const i = ranked.findIndex((x) => x.id === p.id);
+                              return i >= 0 ? { pos: i + 1, total: ranked.length } : null;
+                            })()}
+                            peak={peakPoint ? peakPoint.rating : null}
+                            sinceStart={trendDelta}
+                            lastDelta={
+                              withDelta.length > 1 && typeof withDelta[withDelta.length - 1].delta === "number"
+                                ? (withDelta[withDelta.length - 1].delta as number)
+                                : null
+                            }
+                            stats={stats}
+                            machineStats={machineStatsArray}
+                          />
+                        ) : null}
                         {/* 🤖 Bilanz gegen die KI-Bots */}
                         <BotStatsCard profileId={p.id} />
                         {/* Performance-Blöcke: Matches, Turniere, Super-Finale */}

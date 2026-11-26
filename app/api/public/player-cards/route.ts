@@ -144,7 +144,7 @@ export async function GET(req: Request) {
 
       const matchIds = Array.from(new Set(matchPlayers.map((m) => String(m.match_id))));
       const mRes = await fetchAllIn<CardInput["matches"][number]>(matchIds, (chunk) =>
-        sb.from("matches").select("id, machine_id").in("id", chunk).order("id")
+        sb.from("matches").select("id, machine_id, created_at").in("id", chunk).order("id")
       );
       if (mRes.error) return fail(`Matches laden fehlgeschlagen: ${mRes.error.message}`, 500);
       matches = mRes.data;

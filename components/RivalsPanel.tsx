@@ -7,7 +7,9 @@ import { useEffect, useState } from "react";
 import type { DuelLogEntry, RivalKind, RivalStat } from "@/lib/rivals";
 
 type ProfileInfo = { name: string; icon: string | null; color: string | null };
-type Resp = Record<RivalKind, RivalStat[]> & {
+// + 🥶 Niederlagenserie (kommt als "lossStreak" aus der API, kein eigener RivalKind in lib/rivals.ts)
+type PanelKind = RivalKind | "lossStreak";
+type Resp = Record<PanelKind, RivalStat[]> & {
   ok: boolean;
   error?: string;
   minDuels: number;
@@ -40,7 +42,7 @@ function Avatar({ p, size = 36 }: { p: ProfileInfo; size?: number }) {
 const pct = (n: number) => `${Math.round(n)} %`;
 const day = (s: string | null) => (s ? new Date(s).toLocaleDateString("de-DE", { dateStyle: "medium" }) : "?");
 
-const ROWS: { kind: RivalKind; title: string; hint: string; box: string; head: string; text: string; empty: string; rankBox: [string, string] }[] = [
+const ROWS: { kind: PanelKind; title: string; hint: string; box: string; head: string; text: string; empty: string; rankBox: [string, string] }[] = [
   {
     kind: "frequent",
     title: "🤝 Stammgegner",
@@ -90,6 +92,16 @@ const ROWS: { kind: RivalKind; title: string; hint: string; box: string; head: s
     rankBox: ["border-orange-200 bg-orange-50/70", "border-orange-100 bg-orange-50/40"],
     text: "text-orange-700",
     empty: "Noch keine Siegesserie",
+  },
+  {
+    kind: "lossStreak",
+    title: "🥶 Längste Niederlagenserie",
+    hint: "die meisten verlorenen Duelle am Stück",
+    box: "border-cyan-100 bg-cyan-50/20",
+    head: "bg-cyan-100 text-cyan-800",
+    rankBox: ["border-cyan-200 bg-cyan-50/70", "border-cyan-100 bg-cyan-50/40"],
+    text: "text-cyan-700",
+    empty: "Noch keine Niederlagenserie – nie 3× in Folge gegen denselben verloren",
   },
 ];
 
@@ -208,7 +220,7 @@ function RivalCard({
   rank: number;
   stat: RivalStat;
   p: ProfileInfo | undefined;
-  kind: RivalKind;
+  kind: PanelKind;
   box: string;
   text: string;
   open: boolean;
@@ -226,6 +238,10 @@ function RivalCard({
             <div className={"text-[13px] font-semibold " + text}>
               <span className="tabular-nums">{stat.bestStreak}</span> Siege in Folge
             </div>
+          ) : kind === "lossStreak" ? (
+            <div className={"text-[13px] font-semibold " + text}>
+              <span className="tabular-nums">{stat.worstLossStreak ?? 0}</span> Niederlagen in Folge
+            </div>
           ) : kind === "frequent" ? (
             <div className={"text-[13px] font-semibold " + text}>
               <span className="tabular-nums">{stat.duels}</span> Duelle
@@ -238,13 +254,19 @@ function RivalCard({
           <div className="text-xs text-neutral-600">
             Bilanz <b className="tabular-nums">{stat.wins} : {stat.losses}</b>
             {stat.draws ? <span className="tabular-nums"> · {stat.draws} gleich</span> : null}
-            {kind === "frequent" || kind === "streak" ? <span className="tabular-nums"> · {pct(stat.winrate)}</span> : null}
+            {kind === "frequent" || kind === "streak" || kind === "lossStreak" ? <span className="tabular-nums"> · {pct(stat.winrate)}</span> : null}
           </div>
           {kind === "streak" ? (
             <div className="text-[11px] text-neutral-500">
               📅 {day(stat.streakFrom)}
               {day(stat.streakTo) !== day(stat.streakFrom) ? ` – ${day(stat.streakTo)}` : ""} · {stat.streakTournaments}{" "}
               {stat.streakTournaments === 1 ? "Turnier" : "Turniere"}
+            </div>
+          ) : kind === "lossStreak" ? (
+            <div className="text-[11px] text-neutral-500">
+              📅 {day(stat.lossStreakFrom ?? null)}
+              {day(stat.lossStreakTo ?? null) !== day(stat.lossStreakFrom ?? null) ? ` – ${day(stat.lossStreakTo ?? null)}` : ""} ·{" "}
+              {stat.lossStreakTournaments ?? 0} {stat.lossStreakTournaments === 1 ? "Turnier" : "Turniere"}
             </div>
           ) : null}
           <button type="button" onClick={onToggle} className="mt-1 text-[11px] font-semibold text-blue-700 hover:underline">
@@ -260,7 +282,7 @@ export default function RivalsPanel({ profileId }: { profileId: string }) {
   const [data, setData] = useState<Resp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // aufgeklappte Duell-Liste: Zeile + Gegner
-  const [openLog, setOpenLog] = useState<{ kind: RivalKind; vsId: string } | null>(null);
+  const [openLog, setOpenLog] = useState<{ kind: PanelKind; vsId: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;

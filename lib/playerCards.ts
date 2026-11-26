@@ -20,7 +20,8 @@ export type CardInput = {
   allPlayers: { id: string; profile_id: string; tournament_id: string }[];
   /** Match-Ergebnisse dieser Spieler-Einträge */
   matchPlayers: { match_id: string; player_id: string; position: number | null; score: number | string | null }[];
-  matches: { id: string; machine_id: string | null }[];
+  /** created_at = Zeitpunkt (für die Form – letzte Matches) */
+  matches: { id: string; machine_id: string | null; created_at?: string | null }[];
   machines: { id: string; name: string | null; icon_emoji: string | null }[];
   /** Endergebnisse (tournament_results) dieser Spieler-Einträge */
   results: { tournament_id: string; player_id: string; final_rank: number | null; super_final_rank: number | null }[];
@@ -60,7 +61,12 @@ export type PlayerCard = {
   /** true = Flipper-Felder (Lieblings-/Bester Flipper, Bestscore) beziehen sich nur auf diese Location */
   localScope: boolean;
   bestScore: { score: number; machine: string | null; icon: string | null } | null;
+  /** 📊 Form: die letzten FORM_LENGTH gewerteten Matches, älteste zuerst (true = Sieg) */
+  form: boolean[];
 };
+
+/** so viele Matches zeigt die Form */
+export const FORM_LENGTH = 10;
 
 export type BestMachine = { name: string; icon: string | null; matches: number; wins: number; winrate: number };
 
@@ -79,6 +85,7 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
   const profileById = new Map(input.profiles.map((p) => [String(p.id), p]));
   const machineById = new Map(input.machines.map((m) => [String(m.id), m]));
   const machineIdByMatch = new Map(input.matches.map((m) => [String(m.id), m.machine_id ? String(m.machine_id) : null]));
+  const atByMatch = new Map(input.matches.map((m) => [String(m.id), String(m.created_at ?? "")]));
   const profileByPlayer = new Map(input.allPlayers.map((p) => [String(p.id), String(p.profile_id)]));
   const tournamentByPlayer = new Map(input.allPlayers.map((p) => [String(p.id), String(p.tournament_id)]));
   const localSet = input.locationTournamentIds ? new Set(input.locationTournamentIds.map(String)) : null;
@@ -95,12 +102,13 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     matchWins: number;
     machineCount: Map<string, { name: string; icon: string | null; count: number; wins: number }>;
     best: { score: number; machine: string | null; icon: string | null } | null;
+    form: { at: string; mid: string; win: boolean }[];
   };
   const agg = new Map<string, Agg>();
   const get = (profileId: string): Agg => {
     let a = agg.get(profileId);
     if (!a) {
-      a = { tournaments: new Set(), tournamentWins: 0, matches: 0, matchWins: 0, machineCount: new Map(), best: null };
+      a = { tournaments: new Set(), tournamentWins: 0, matches: 0, matchWins: 0, machineCount: new Map(), best: null, form: [] };
       agg.set(profileId, a);
     }
     return a;
@@ -125,6 +133,8 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
     if (mp.position != null && Number(mp.position) > 0) {
       a.matches += 1;
       if (Number(mp.position) === 1) a.matchWins += 1;
+      const mid = String(mp.match_id);
+      a.form.push({ at: atByMatch.get(mid) ?? "", mid, win: Number(mp.position) === 1 });
       if (machineName && machineFieldsCount) {
         // gleicher Flipper-Name in verschiedenen Turnieren = derselbe Flipper
         const key = nameKey(machineName);
@@ -192,6 +202,11 @@ export function buildPlayerCards(input: CardInput): PlayerCard[] {
       bestMachines,
       localScope: !!localSet,
       bestScore: a?.best ?? null,
+      form: (a?.form ?? [])
+        .slice()
+        .sort((x, y) => x.at.localeCompare(y.at) || x.mid.localeCompare(y.mid))
+        .slice(-FORM_LENGTH)
+        .map((f) => f.win),
     };
   });
 }

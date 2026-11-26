@@ -252,7 +252,9 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const place = idx + 1; // 1-basiert
+      // Gleichstand = gleicher Platz (1, 1, 1, 4 …) – wie beim Turnier beenden (tournaments/finish)
+      const myPoints = standings[idx].points;
+      const place = 1 + standings.filter((s) => s.points > myPoints).length;
 
       tournamentsPlayed++;
 
@@ -316,7 +318,8 @@ export async function POST(req: Request) {
       const pos = typeof row.rank === "number" ? row.rank : null;
       const fid = row.final_id ?? null;
 
-      if (fid) {
+      // nur Superfinals mit vergebenem Platz zählen (gestartet, aber nie fertig gespielt → zählt nicht)
+      if (fid && pos != null) {
         finalsIds.add(fid);
       }
 

@@ -305,6 +305,12 @@ export default function PhoneMatchInsights({
                   </span>
                 ) : null}
                 <StreakFire n={streaks[pid]} mode={sMode} />
+                {defenderOn && defender?.playerId === pid ? (
+                  <DefenderBadge at={defender.at} machine={machineName ?? null} />
+                ) : null}
+                {lastWinnerOn && lastWinner?.playerId === pid ? (
+                  <LastWinnerBadge at={lastWinner.at} machine={lastWinner.machine} />
+                ) : null}
                 {favorite === pid && favOn ? (
                   <span
                     className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-300"
@@ -312,12 +318,6 @@ export default function PhoneMatchInsights({
                   >
                     ★ Favorit
                   </span>
-                ) : null}
-                {defenderOn && defender?.playerId === pid ? (
-                  <DefenderBadge at={defender.at} machine={machineName ?? null} />
-                ) : null}
-                {lastWinnerOn && lastWinner?.playerId === pid ? (
-                  <LastWinnerBadge at={lastWinner.at} machine={lastWinner.machine} />
                 ) : null}
               </div>
               {/* 📈 Siegchance als Balken (wie im Admin) */}
