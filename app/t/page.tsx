@@ -122,6 +122,7 @@ import { rotationAllDone } from "@/lib/flawless";
 import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
+import { findOpenMatches } from "@/lib/openMatches";
 
 
 function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
@@ -11873,6 +11874,27 @@ const matchSize =
   }
 
   async function finishTournament() {
+    // ⚠️ Offene Matches (ohne Ergebnis)? → deutlich warnen, sonst bleiben sie für immer "läuft"
+    const openList = findOpenMatches(data as any);
+    if (openList.length) {
+      const lines = openList
+        .slice(0, 6)
+        .map((o) => {
+          const who = o.playerIds.map((pid) => nameOfPlayer(pid)).join(" – ");
+          const rd = o.roundNumber != null ? `Runde ${o.roundNumber}` : "Runde ?";
+          return `• ${rd}${o.machineName ? ` (${o.machineName})` : ""}: ${who}`;
+        })
+        .join("\n");
+      const more = openList.length > 6 ? `\n… und ${openList.length - 6} weitere` : "";
+      const n = openList.length;
+      if (
+        !confirm(
+          `⚠️ Es ${n === 1 ? "ist noch 1 Match" : `sind noch ${n} Matches`} ohne Ergebnis:\n\n${lines}${more}\n\n` +
+            `Trotzdem beenden? ${n === 1 ? "Dieses Match zählt" : "Diese Matches zählen"} dann nicht und ${n === 1 ? "bleibt" : "bleiben"} offen.`
+        )
+      )
+        return;
+    }
     if (!confirm("Turnier wirklich beenden? Danach ist nichts mehr änderbar."))
       return;
 

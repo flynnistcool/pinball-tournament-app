@@ -92,8 +92,8 @@ export async function GET() {
     const {
       data: matchPlayers,
       error: mpError,
-    } = await fetchAllRows<{ match_id: string; player_id: string }>(() =>
-      supabase.from("match_players").select("match_id, player_id").order("match_id").order("player_id")
+    } = await fetchAllRows<{ match_id: string; player_id: string; position: number | null }>(() =>
+      supabase.from("match_players").select("match_id, player_id, position").order("match_id").order("player_id")
     ); // >1000 Zeilen: seitenweise
 
     if (mpError) {
@@ -110,6 +110,8 @@ export async function GET() {
     for (const mp of matchPlayers ?? []) {
       const profileId = playerToProfile.get(mp.player_id);
       if (!profileId || !mp.match_id) continue;
+      // nur gewertete Matches (Platz vergeben) – wie Statistik/Profil; offene Matches zählen nicht
+      if (mp.position == null) continue;
 
       let set = matchesByProfile.get(profileId);
       if (!set) {
