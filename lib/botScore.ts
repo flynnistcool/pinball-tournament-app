@@ -5,13 +5,15 @@
 //    Raus: Bots, DYP/Timeplay, Scores ohne bekannte Elo.
 // 2. Punkteniveau: zuerst gleiches Niveau (normal / hoch = Extraball) – erst gleicher Modus (wenn genug),
 //    dann alle Modi; reicht das nicht, kommen Scores des anderen Niveaus umgerechnet dazu (÷/× 1,25).
-// 3. Elo-Nachbarn: Scores von Spielern mit ähnlicher Elo (zu Turnierbeginn) – Fenster ±50 → ±100 → ±200.
+// 3. Elo-Nachbarn: Scores von Spielern mit ähnlicher Elo (zu Turnierbeginn) – Fenster nacheinander (eloWindows).
 //    Gewicht nach Elo-Sicherheit damals: K16 voll, K24 halb, K32 (neu) nur wenn sonst zu wenig.
 //    Nähere Elo zählt stärker.
 // 4. Keine passenden Nachbarn (z. B. 2500er): die nächstgelegenen Spieler nehmen und je 100 Elo
-//    Unterschied 10 % auf- bzw. abschlagen.
-// 5. Bereich = mittlere 80 % der Scores; darin zufällig würfeln. Mit 10 % Chance ein Ausreißer
-//    bis 15 % unter/über dem Bereich. Der Highscore spielt keine Rolle.
+//    Unterschied auf- bzw. abschlagen (extrapolatePer100).
+// 5. Bereich = mittlere Scores (rangeLowPct … rangeHighPct); darin gleichmäßig würfeln. Mit outlierChance
+//    ein Ausreißer bis outlierMax unter/über dem Bereich. Der Highscore spielt keine Rolle.
+// ⚙️ Die Zahlen stehen in BOT_SETTINGS (Standard) – im Turnier gelten die im Bot-Labor GESPEICHERTEN Werte
+//    (app_settings 'bot_settings', lib/botSettingsServer.ts). Einstufung eines Wurfs: lib/botScoreRating.ts
 
 import type { ScoreLevel } from "@/lib/botRules";
 

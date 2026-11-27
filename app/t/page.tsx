@@ -78,6 +78,7 @@ import { useMyProfileId } from "@/components/useMyProfileId";
 import MyEntryButton from "@/components/MyEntryButton";
 import ScoreBalanceAdmin from "@/components/ScoreBalanceAdmin";
 import BotScoreButtons from "@/components/BotScoreButtons";
+import BotScoreRatingBadge from "@/components/BotScoreRatingBadge";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
 import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
@@ -9514,6 +9515,10 @@ return (
             ? ` · ${Math.round(playersById[String(mp.player_id)].botElo)}`
             : ""}
         </span>
+      ) : null}
+      {/* 🤖 Einstufung des Bot-Scores: für seine Verhältnisse gut/typisch/schwach? */}
+      {playersById?.[String(mp?.player_id)]?.isBot && mp?.match_id && getScore(mp) != null ? (
+        <BotScoreRatingBadge matchId={String(mp.match_id)} playerId={String(mp.player_id)} score={getScore(mp)} />
       ) : null}
       {PLAYER_ROW_LAYOUT === "balken" ? (
         <PersonalBestLine

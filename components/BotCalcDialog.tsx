@@ -2,6 +2,7 @@
 
 // 🧾 Rechenzettel eines Bot-Scores (nur Admin): Schritt für Schritt, wie der Bot gerechnet hat.
 
+import { botDiffText, rateBotScore } from "@/lib/botScoreRating";
 import type { BotCalc } from "@/lib/botScore";
 
 const nf = new Intl.NumberFormat("de-DE");
@@ -67,6 +68,22 @@ export function BotCalcView({
         ) : (
           <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">⚠️ {c.error}</div>
         )}
+        {(() => {
+          // 🤖 Einstufung: war das für IHN ein gutes Spiel? (lib/botScoreRating.ts)
+          const r = rateBotScore(c, currentScore ?? c.score);
+          if (!r) return null;
+          return (
+            <div className="rounded-xl bg-violet-50 px-3 py-2 text-sm text-violet-900">
+              <div className="font-semibold">
+                {r.emoji} {r.label} · {botDiffText(r.diffPct)}
+              </div>
+              <div className="text-xs text-violet-800/80">
+                Besser als {String(r.rank).replace(".", ",")} % seiner eigenen Würfe an diesem Flipper · typisch {fmtScore(r.typical)} ·
+                schlecht (10 %) {fmtScore(r.bad)} · gut (90 %) {fmtScore(r.good)}
+              </div>
+            </div>
+          );
+        })()}
         {changedByHand ? (
           <div className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
             ✏️ Der Score wurde danach von Hand geändert: jetzt {fmtScore(currentScore)}.
