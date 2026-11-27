@@ -5662,6 +5662,21 @@ return (
                               const i = ranked.findIndex((x) => x.id === p.id);
                               return i >= 0 ? { pos: i + 1, total: ranked.length } : null;
                             })()}
+                            gap={(() => {
+                              // 📏 Abstand: als #1 Vorsprung auf #2, sonst Rückstand auf den Platz davor
+                              const ranked = profiles
+                                .filter((x) => !x.is_bot && !x.exclude_from_stats && typeof x.rating === "number")
+                                .sort((a, b) => (b.rating as number) - (a.rating as number));
+                              const i = ranked.findIndex((x) => x.id === p.id);
+                              if (i < 0 || ranked.length < 2) return null;
+                              const me = ranked[i].rating as number;
+                              const other = i === 0 ? ranked[1] : ranked[i - 1];
+                              return {
+                                diff: Math.round(me - (other.rating as number)),
+                                otherName: other.name,
+                                otherPos: i === 0 ? 2 : i,
+                              };
+                            })()}
                             peak={peakPoint ? peakPoint.rating : null}
                             sinceStart={trendDelta}
                             lastDelta={

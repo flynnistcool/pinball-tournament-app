@@ -5,6 +5,7 @@
 // und persönliche Bestwerte der Turnierspieler.
 // enabled=false, wenn das Turnier keine Location hat oder selbst Timeplay/DYP ist.
 // Rechnung: lib/feedContextServer.ts (gemeinsam mit dem Server-Ticker)
+// &cutoff=start → nur Turniere, die VOR diesem Turnier angelegt wurden (📈 Bilanz: Stand des Turnierabends)
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
@@ -19,13 +20,15 @@ function fail(error: string, status: number) {
 
 export async function GET(req: Request) {
   try {
-    const code = String(new URL(req.url).searchParams.get("code") ?? "").trim().toUpperCase();
+    const params = new URL(req.url).searchParams;
+    const code = String(params.get("code") ?? "").trim().toUpperCase();
+    const cutoffStart = params.get("cutoff") === "start";
     if (!code) return fail("Code fehlt", 400);
     const sb = supabaseAdmin();
 
     const { data: t, error: tErr } = await sb
       .from("tournaments")
-      .select("id, location_id, format")
+      .select("id, location_id, format, created_at")
       .eq("code", code)
       .maybeSingle();
     if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
@@ -35,7 +38,7 @@ export async function GET(req: Request) {
       id: String(t.id),
       location_id: t.location_id ? String(t.location_id) : null,
       format: t.format ?? null,
-    });
+    }, cutoffStart ? { before: t.created_at ? String(t.created_at) : null } : undefined);
     return NextResponse.json({ ok: true, ...r });
   } catch (e: unknown) {
     console.error("machine-records crash:", e);

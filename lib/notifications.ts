@@ -589,8 +589,22 @@ export const BADGES: readonly NotificationDef[] = [
   },
 ];
 
-/** Mitteilungen + dauerhafte Anzeigen (für Standardwerte/Speichern) */
-const ALL_DEFS: readonly NotificationDef[] = [...NOTIFICATIONS, ...BADGES];
+// ─────────────────────────────────────────────────────────────────────────────
+// 👤 Spieler-Anzeigen – Infos über einen Spieler (nicht ans Match gebunden), z. B. Form.
+// Eigene Gruppe in den Einstellungen, damit später weitere dazukommen können. Nur an/aus je Gerät.
+
+export const PLAYER_DISPLAYS: readonly NotificationDef[] = [
+  {
+    id: "player:form",
+    icon: "⚡",
+    title: "Form (letzte 10)",
+    when: "Die letzten 10 gewerteten Matches des Spielers über alle Turniere, alt → neu: ● grün = Sieg, ○ rot = Niederlage (nur gegen Menschen)",
+    devices: { tv: BADGE("Spielerkarten"), admin: BADGE("im Match unter den Punkten"), phone: BADGE("Spielerkarten + Mein Match") },
+  },
+];
+
+/** Mitteilungen + dauerhafte Anzeigen + Spieler-Anzeigen (für Standardwerte/Speichern) */
+const ALL_DEFS: readonly NotificationDef[] = [...NOTIFICATIONS, ...BADGES, ...PLAYER_DISPLAYS];
 
 export const DEVICE_LABEL: Record<NotifDevice, string> = { tv: "📺 TV", admin: "🖥️ Admin", phone: "📱 Handy", ticker: "📣 Ticker" };
 

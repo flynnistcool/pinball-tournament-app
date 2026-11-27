@@ -28,6 +28,7 @@ import ChanceChip, { chanceTone } from "@/components/ChanceChip";
 import { formatLabel } from "@/lib/formatLabel";
 import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
 import type { MmData, MyMatchInfo } from "@/lib/myMatch";
+import { FormDots, usePlayerForms } from "@/components/PlayerFormDots";
 
 const WINRATE_REFRESH_MS = 5 * 60_000;
 const fmt = new Intl.NumberFormat("de-DE");
@@ -206,6 +207,13 @@ export default function PhoneMatchInsights({
   const defenderOn = useBadgeOn("badge:defender"); // 🛡️ Titelverteidiger
   const defender = showCompare ? defenderFor(rivFav, info.match?.id, info.match?.machine_id) : null;
   const lastWinnerOn = useBadgeOn("badge:lastWinner"); // 🏅 Letzter Sieger
+  // 📊 Form (letzte 10) je Spieler – neu laden, sobald ein Platz dazukommt
+  // beendetes Turnier: keine Form (wäre die HEUTIGE Form, nicht die von damals)
+  const formOn = useBadgeOn("player:form") && !finished;
+  const forms = usePlayerForms(
+    formOn ? code : null,
+    (((data as any).match_players ?? []) as any[]).filter((x) => x?.position != null).length
+  );
   const lastWinner = showCompare ? lastWinnerFor(rivFav, info.match?.id, info.match?.machine_id) : null;
 
   const recs = records?.enabled && machineName ? recordsForMachine(machineName, records.prior, live) : null;
@@ -274,10 +282,11 @@ export default function PhoneMatchInsights({
           const beaten = pb && pb.before != null && pb.today != null && pb.today > pb.before;
           return (
             <div key={pid} className={"px-3 py-2 " + (isMe ? "bg-indigo-50/60" : "")}>
-              <div className="flex items-center gap-1.5 font-bold">
+              {/* flex-wrap: viele Badges rutschen in die nächste Zeile – der Name bleibt immer sichtbar */}
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-bold">
                 <button
                   type="button"
-                  className="truncate text-left active:opacity-70"
+                  className="max-w-full truncate text-left active:opacity-70"
                   onClick={() => setHistOpen((prev) => ({ ...prev, [pid]: !prev[pid] }))}
                   aria-expanded={!!histOpen[pid]}
                   title="Alle Scores auf diesem Flipper hier anzeigen"
@@ -426,6 +435,8 @@ export default function PhoneMatchInsights({
                   {beaten ? <span className="font-semibold text-emerald-600">🎉 übertroffen</span> : null}
                 </div>
               ) : null}
+              {/* 📊 Form: letzte 10 Matches (alt → neu) */}
+              {formOn && forms[pid]?.length ? <FormDots form={forms[pid]} size="md" className="mt-0.5" /> : null}
               {/* ⚔️ Bilanz aus MEINER Sicht gegen diesen Spieler (bei mir selbst keine):
                   Allzeit · dieser Flipper · dieser Flipper nur im Format */}
               {machineName && !isMe && meId && info.players.some((o) => String(o.player_id) === String(meId)) ? (

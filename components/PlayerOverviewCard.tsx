@@ -83,6 +83,7 @@ export default function PlayerOverviewCard({
   name,
   rating,
   rank,
+  gap,
   peak,
   sinceStart,
   lastDelta,
@@ -94,6 +95,8 @@ export default function PlayerOverviewCard({
   rating: number | null;
   /** Platz in der Elo-Rangliste */
   rank: { pos: number; total: number } | null;
+  /** Elo-Abstand: als #1 zum Zweiten (positiv), sonst zum Platz davor (negativ) */
+  gap?: { diff: number; otherName: string; otherPos: number } | null;
   peak: number | null;
   /** Elo-Änderung seit dem Start-Elo */
   sinceStart: number | null;
@@ -154,7 +157,7 @@ export default function PlayerOverviewCard({
       </div>
 
       {/* Elo */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat
           label="Elo"
           value={rating != null ? Math.round(rating) : "–"}
@@ -166,6 +169,12 @@ export default function PlayerOverviewCard({
           label="seit Beginn"
           value={sinceStart != null ? deltaTxt(sinceStart) : "–"}
           tone={sinceStart == null || sinceStart === 0 ? "text-neutral-700" : sinceStart > 0 ? "text-emerald-700" : "text-red-600"}
+        />
+        <Stat
+          label="Abstand"
+          value={gap ? deltaTxt(gap.diff) : "–"}
+          tone={!gap || gap.diff === 0 ? "text-neutral-700" : gap.diff > 0 ? "text-emerald-700" : "text-red-600"}
+          sub={gap ? `${gap.diff >= 0 ? "vor" : "hinter"} #${gap.otherPos} (${gap.otherName})` : undefined}
         />
         <Stat
           label="letztes Turnier"

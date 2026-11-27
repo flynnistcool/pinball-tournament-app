@@ -2,7 +2,8 @@
 
 // 📱 Handy-Seite eines Spielers (/s/<CODE>/spieler/<token>), erreichbar per QR-Code aus der Spielerliste.
 // Reiter 1 "Mein Match": aktuelles Match + Eintragen (Regeln siehe lib/myMatch.ts → entryMode)
-// Reiter 2 "Turnier-Infos": Abschnitte untereinander zum Scrollen – Leaderboard (gleiche Rechnung wie der
+// Reiter "Bilanz": meine Scores im Vergleich zu meinem Ø und Bestwert (components/PhoneScoreBalance.tsx)
+// Reiter "Turnier-Infos": Abschnitte untereinander zum Scrollen – Leaderboard (gleiche Rechnung wie der
 //   Infobildschirm), Spielerkarten zum Wischen, später weitere. Die Reiter-Leiste bleibt oben kleben.
 // Aktualisiert sich alle paar Sekunden selbst (nur solange die Seite sichtbar ist).
 
@@ -35,6 +36,7 @@ import { useFeedSync } from "@/components/useFeedSync";
 import { RivalryEventPhone, useRivalryEvents } from "@/components/RivalryEvents";
 import LiveTicker from "@/components/LiveTicker";
 import PhoneFeedCards from "@/components/PhoneFeedCards";
+import PhoneScoreBalance from "@/components/PhoneScoreBalance";
 
 const POLL_MS = 6000;
 /** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 12 s) */
@@ -51,9 +53,9 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
   const [meError, setMeError] = useState<string | null>(null);
   const [data, setData] = useState<MmData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [tab, setTabState] = useState<"match" | "board">("match");
+  const [tab, setTabState] = useState<"match" | "balance" | "board">("match");
   // Reiter wechseln → nach oben springen (falls man in den Turnier-Infos weit unten war)
-  const setTab = (t: "match" | "board") => {
+  const setTab = (t: "match" | "balance" | "board") => {
     setTabState(t);
     if (typeof window !== "undefined" && window.scrollY > 0) window.scrollTo({ top: 0 });
   };
@@ -165,12 +167,15 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
         <div className="text-2xl font-black">Hallo {me.name} 👋</div>
       </header>
 
-      <div className="sticky top-[env(safe-area-inset-top,0px)] z-20 mb-3 grid grid-cols-2 gap-1 rounded-2xl bg-neutral-200/80 p-1 backdrop-blur">
+      <div className="sticky top-[env(safe-area-inset-top,0px)] z-20 mb-3 grid grid-cols-3 gap-1 rounded-2xl bg-neutral-200/80 p-1 backdrop-blur">
         <TabBtn active={tab === "match"} onClick={() => setTab("match")}>
           🕹️ Mein Match
         </TabBtn>
+        <TabBtn active={tab === "balance"} onClick={() => setTab("balance")}>
+          📈 Bilanz
+        </TabBtn>
         <TabBtn active={tab === "board"} onClick={() => setTab("board")}>
-          📊 Turnier-Infos
+          📊 Turnier
         </TabBtn>
       </div>
 
@@ -185,6 +190,8 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
         ) : (
           <MatchTab code={code} token={token} me={me} data={data} reload={load} />
         )
+      ) : tab === "balance" ? (
+        <PhoneScoreBalance code={code} data={data} meId={me.playerId} />
       ) : (
         <InfoTab code={code} data={data} meId={me.playerId} />
       )}
@@ -208,7 +215,7 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
       type="button"
       onClick={onClick}
       className={
-        "rounded-xl px-3 py-2 text-sm font-bold transition " +
+        "rounded-xl px-1.5 py-2 text-sm font-bold transition " +
         (active ? "bg-white text-neutral-900 shadow" : "text-neutral-600")
       }
     >
@@ -283,7 +290,7 @@ function MatchTab({
           <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
             <div className="text-4xl">😢</div>
             <div className="mt-2 text-lg font-bold">Du bist ausgeschieden</div>
-            <div className="mt-1 text-sm text-neutral-500">Gut gespielt! Unter „Turnier-Infos“ kannst du weiter mitfiebern.</div>
+            <div className="mt-1 text-sm text-neutral-500">Gut gespielt! Unter „Turnier“ kannst du weiter mitfiebern.</div>
           </div>
           {last ? <MatchCard info={last} data={data} meId={me.playerId} title="Dein letztes Match" /> : null}
         </div>
@@ -299,7 +306,7 @@ function MatchTab({
           </div>
           <div className="mt-1 text-sm text-neutral-500">
             {mode === "own" && last
-              ? "Du hast an allen Flippern deinen Score eingetragen. Den Stand siehst du unter „Turnier-Infos“."
+              ? "Du hast an allen Flippern deinen Score eingetragen. Den Stand siehst du unter „Turnier“."
               : "Warte auf die nächste Runde – die Seite springt dann von selbst weiter."}
           </div>
         </div>

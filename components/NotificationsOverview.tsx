@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BADGES,
+  PLAYER_DISPLAYS,
   DEVICE_LABEL,
   SERVER_FEED_ID,
   NOTIFICATIONS,
@@ -526,66 +527,78 @@ export default function NotificationsOverview() {
         </div>
       ) : null}
 
-      {/* 🏷️ Dauerhafte Anzeigen (Badges): nur an/aus je Gerät */}
-      <div className="rounded-xl border">
-        <div className="border-b bg-neutral-50 px-3 py-2">
-          <div className="text-sm font-semibold">🏷️ Dauerhafte Anzeigen</div>
-          <div className="text-[11px] text-neutral-500">
-            Keine Mitteilungen, sondern Badges/Zeilen, die stehen bleiben, solange der Zustand gilt – hier nur an/aus je
-            Gerät.
+      {/* 🏷️ Dauerhafte Anzeigen (Badges) + 👤 Spieler-Anzeigen: nur an/aus je Gerät */}
+      {[
+        {
+          key: "badges",
+          title: "🏷️ Dauerhafte Anzeigen",
+          desc: "Keine Mitteilungen, sondern Badges/Zeilen im Match, die stehen bleiben, solange der Zustand gilt – hier nur an/aus je Gerät.",
+          list: BADGES,
+        },
+        {
+          key: "player",
+          title: "👤 Spieler-Anzeigen",
+          desc: "Infos über einen Spieler (über alle Turniere), z. B. seine Form – hier nur an/aus je Gerät.",
+          list: PLAYER_DISPLAYS,
+        },
+      ].map((sec) => (
+        <div key={sec.key} className="rounded-xl border">
+          <div className="border-b bg-neutral-50 px-3 py-2">
+            <div className="text-sm font-semibold">{sec.title}</div>
+            <div className="text-[11px] text-neutral-500">{sec.desc}</div>
           </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead className="text-left text-xs text-neutral-500">
-              <tr>
-                <th className="px-3 py-2">Anzeige</th>
-                {(["tv", "admin", "phone"] as NotifDevice[]).map((d) => (
-                  <th key={d} className="px-3 py-2">
-                    {DEVICE_LABEL[d]}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {BADGES.map((b) => (
-                <tr key={b.id} className="border-t align-top">
-                  <td className="px-3 py-2">
-                    <div className="font-semibold">
-                      {b.icon} {b.title}
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-neutral-500">{b.when}</div>
-                  </td>
-                  {(["tv", "admin", "phone"] as NotifDevice[]).map((d) => {
-                    const p = b.devices[d];
-                    if (!p) {
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="text-left text-xs text-neutral-500">
+                <tr>
+                  <th className="px-3 py-2">Anzeige</th>
+                  {(["tv", "admin", "phone"] as NotifDevice[]).map((d) => (
+                    <th key={d} className="px-3 py-2">
+                      {DEVICE_LABEL[d]}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sec.list.map((b) => (
+                  <tr key={b.id} className="border-t align-top">
+                    <td className="px-3 py-2">
+                      <div className="font-semibold">
+                        {b.icon} {b.title}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-neutral-500">{b.when}</div>
+                    </td>
+                    {(["tv", "admin", "phone"] as NotifDevice[]).map((d) => {
+                      const p = b.devices[d];
+                      if (!p) {
+                        return (
+                          <td key={d} className="px-3 py-2 text-neutral-300">
+                            –
+                          </td>
+                        );
+                      }
+                      const base: NotifDeviceSetting = { enabled: true, seconds: null, volume: 1, sound: "none" };
+                      const st = draft[b.id]?.[d] ?? base;
                       return (
-                        <td key={d} className="px-3 py-2 text-neutral-300">
-                          –
+                        <td key={d} className={"px-3 py-2 " + (!st.enabled ? "bg-neutral-50/80" : "")}>
+                          <label className="flex items-center gap-1.5 text-xs font-semibold">
+                            <input
+                              type="checkbox"
+                              checked={st.enabled}
+                              onChange={(e) => update(b.id, d, base, { enabled: e.target.checked })}
+                            />
+                            <span className={!st.enabled ? "text-neutral-400 line-through" : "text-neutral-700"}>{p.where}</span>
+                          </label>
                         </td>
                       );
-                    }
-                    const base: NotifDeviceSetting = { enabled: true, seconds: null, volume: 1, sound: "none" };
-                    const st = draft[b.id]?.[d] ?? base;
-                    return (
-                      <td key={d} className={"px-3 py-2 " + (!st.enabled ? "bg-neutral-50/80" : "")}>
-                        <label className="flex items-center gap-1.5 text-xs font-semibold">
-                          <input
-                            type="checkbox"
-                            checked={st.enabled}
-                            onChange={(e) => update(b.id, d, base, { enabled: e.target.checked })}
-                          />
-                          <span className={!st.enabled ? "text-neutral-400 line-through" : "text-neutral-700"}>{p.where}</span>
-                        </label>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      ))}
 
       {msg ? (
         <div className={"rounded-lg px-3 py-2 text-xs " + (msg.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700")}>

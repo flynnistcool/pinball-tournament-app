@@ -91,7 +91,9 @@ async function loadPlayedAtLocation(sb: Sb, profileIds: string[], currentId: str
  */
 export async function loadMachineRecords(
   sb: Sb,
-  t: { id: string; location_id: string | null; format: string | null }
+  t: { id: string; location_id: string | null; format: string | null },
+  /** 📅 Stichtag: nur Turniere, die VOR diesem Zeitpunkt angelegt wurden (z. B. Start des Turniers – für die Bilanz) */
+  opts?: { before?: string | null }
 ): Promise<MachineRecordsResult> {
   const empty: MachineRecordsResult = { enabled: false, records: {}, monthly: {}, personal: {} };
   if (!t.location_id || NOT_COUNTED_FORMATS.has(String(t.format ?? ""))) return empty;
@@ -113,8 +115,11 @@ export async function loadMachineRecords(
     .eq("status", "finished")
     .neq("id", t.id);
   if (oErr) throw new Error(`Turniere laden fehlgeschlagen: ${oErr.message}`);
+  const beforeMs = opts?.before ? new Date(opts.before).getTime() : NaN;
   const counted = (others ?? []).filter(
-    (o: { format: string | null }) => !NOT_COUNTED_FORMATS.has(String(o.format ?? ""))
+    (o: { format: string | null; created_at: string | null }) =>
+      !NOT_COUNTED_FORMATS.has(String(o.format ?? "")) &&
+      (!Number.isFinite(beforeMs) || (!!o.created_at && new Date(o.created_at).getTime() < beforeMs))
   ) as { id: string; name: string | null; format: string | null; extraball: boolean | null; created_at: string | null }[];
   // 📊 Ø nur aus Turnieren mit gleichem Punkteniveau (wie bei den KI-Bots: lib/botRules.ts scoreLevel)
   const { data: cur } = await sb.from("tournaments").select("extraball").eq("id", t.id).maybeSingle();

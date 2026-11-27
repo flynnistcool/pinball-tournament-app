@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { BestMachine, PlayerCard } from "@/lib/playerCards";
 import { solidColor } from "@/lib/playerColor";
+import { useBadgeOn } from "@/components/DisplayDevice";
 
 const REFRESH_MS = 5 * 60_000;
 const PAGE_SIZE = 4;
@@ -159,6 +160,7 @@ function BestMachinesBox({ list, local, t }: { list: BestMachine[]; local: boole
 /** light = helle Variante für die Handy-Seite (Infobildschirm: dunkel) */
 export function PlayerTradingCard({ card, light = false }: { card: PlayerCard; light?: boolean }) {
   const t = light ? LIGHT : DARK;
+  const formOn = useBadgeOn("player:form"); // 📊 Form an/aus (👤 Spieler-Anzeigen)
   const accent = solidColor(card.color) || "#818cf8"; // 🎨 bei Verlauf: erste Farbe
   const badge = rankBadge(card, t);
   const frame = badge?.frame ?? accent;
@@ -229,9 +231,9 @@ export function PlayerTradingCard({ card, light = false }: { card: PlayerCard; l
       </div>
 
       {/* 📊 Form: letzte 10 Matches (alt → neu) */}
-      {card.form && card.form.length ? (
+      {formOn && card.form && card.form.length ? (
         <div className={`relative mt-2 flex items-center justify-between gap-2 rounded-xl px-3 py-2 ${t.box}`}>
-          <span className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>📊 Form</span>
+          <span className={`text-[11px] font-semibold uppercase tracking-wider ${t.label}`}>⚡ Form</span>
           <span className="flex items-center gap-1" title="letzte Matches, alt → neu (● Sieg, ○ Niederlage)">
             {card.form.map((w, i) => (
               <span

@@ -108,6 +108,8 @@ import PlayerStatTiles from "@/components/PlayerStatTiles";
  *  "balken"  = Siegchance als Balken, darunter Winrates + Highscore als Text
  *  "mix"     = Siegchance als Balken + darunter Kästchen (Turnier · Flipper · HS · Ø) */
 const PLAYER_ROW_LAYOUT: "kacheln" | "balken" | "mix" = "balken";
+// ⚡ Form im Admin: "bestwert" = links unter dem Bestwert · "punkte" = rechts unter dem Punktefeld
+const ADMIN_FORM_POS: "bestwert" | "punkte" = "bestwert";
 import StreakFire from "@/components/StreakFire";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import { usePersistentOpen } from "@/components/usePersistentOpen";
@@ -123,6 +125,8 @@ import { liveEntriesFrom } from "@/lib/recordWatch";
 import RecordCelebration from "@/components/RecordCelebration";
 import { matchPointsForDisplay } from "@/lib/pointsDisplay";
 import { findOpenMatches } from "@/lib/openMatches";
+import { FormDots, usePlayerForms } from "@/components/PlayerFormDots";
+import SuperFinalRace from "@/components/SuperFinalRace";
 
 
 function getExpectedPlayersForEliminationRound__DEPRECATED__nested(
@@ -1058,9 +1062,8 @@ const kBadgeClass =
                 <div className="ml-auto flex items-center gap-2">
                   {code ? (
                     isAdmin ? (
-                      !locked ? (
-                        <PlayerQrButton code={code} playerId={String(p.id)} name={String(p.name ?? "?")} />
-                      ) : null
+                      // 📱 QR auch bei beendeten Turnieren (Handy zeigt dann Podest/Bilanz, Eintragen sperrt der Server)
+                      <PlayerQrButton code={code} playerId={String(p.id)} name={String(p.name ?? "?")} />
                     ) : (
                       // 📱 Zuschauer (Seite ist für sie immer "gesperrt"): beim eigenen Spieler die eigene Handy-Eingabe
                       <MyEntryButton code={code} variant="row" onlyPlayerId={String(p.id)} />
@@ -6587,6 +6590,13 @@ function RoundMatchesCard({
   const favBadgeOn = useBadgeOn("badge:favorite");
   const defenderBadgeOn = useBadgeOn("badge:defender"); // 🛡️ Titelverteidiger-Abzeichen
   const lastWinnerBadgeOn = useBadgeOn("badge:lastWinner"); // 🏅 Letzter Sieger
+  // 📊 Form (letzte 10) je Spieler – neu laden, sobald ein Platz dazukommt
+  // beendetes Turnier: keine Form (wäre die HEUTIGE Form, nicht die von damals)
+  const playerFormOn = useBadgeOn("player:form") && tournament?.status !== "finished";
+  const playerForms = usePlayerForms(
+    playerFormOn ? code : null,
+    (matchPlayers ?? []).filter((x: any) => x?.position != null).length
+  );
   const chanceOn = useBadgeOn("badge:chance"); // 📈 Siegchance-Schildchen
 
   // 🔥 Siegesserien (nur laufendes Turnier, nicht Timeplay)
@@ -9225,7 +9235,8 @@ disabled={
                   <div
                     id={`mprow-${mp.match_id}-${mp.player_id}`}
                     className={
-                      "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 sm:px-3 sm:py-2 " +
+                      // 🧩 Aufteilung: oben Name + Badges (volle Breite), darunter 2/3 Infos · 1/3 Platz/Punkte/Form
+                      "grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] items-start gap-x-3 gap-y-1 rounded-xl border px-3 py-2 sm:px-3 sm:py-2 " +
                       (isWinner
                         ? "bg-amber-200 border-amber-300"
                         : hasSavedScore
@@ -9236,9 +9247,9 @@ disabled={
                     }
                   >
                     
-<div className="flex min-w-0 flex-1 flex-col">
-  <div className="flex flex-col gap-0.5">
-  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px]">
+<div className="contents">
+  <div className="contents">
+  <div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px]">
     {/* 📈 Antippen = Verlauf auf diesem Flipper auf-/zuklappen */}
     <button
       type="button"
@@ -9294,7 +9305,8 @@ disabled={
         ★ Favorit
       </span>
     ) : null}
-    {isActiveAtMachine ? (
+    {/* ▶ nur im Sonderfall: dran, aber Zeile nicht blau (schon Score gespeichert → grün / Sieger → gelb) */}
+    {isActiveAtMachine && (isWinner || hasSavedScore) ? (
       // ▶ nur das Symbol (spart Platz in der Namenszeile) – Text im Mouseover
       <span
         className="inline-flex items-center rounded-full bg-sky-500 px-2 py-0.5 text-[11px] font-semibold text-white animate-pulse"
@@ -9308,6 +9320,8 @@ disabled={
       <span className="text-xs text-neutral-500">speichere…</span>
     ) : null}
   </div>
+  {/* 2/3: Infos (Siegchance, Winrates, Bestwert) */}
+  <div className="flex min-w-0 flex-col gap-0.5">
 
     {/* 📈 Siegchance als Balken unter dem Namen (grün = höchste, rot = niedrigste im Match);
         fertiges Match: ausgegraut "vor dem Spiel" (eingefrorener Stand) */}
@@ -9511,6 +9525,10 @@ return (
         />
       ) : null}
     </div>
+    {/* ⚡ Form: letzte 10 Matches (alt → neu) – unter dem Bestwert */}
+    {ADMIN_FORM_POS === "bestwert" && playerFormOn && playerForms[String(mp.player_id)]?.length ? (
+      <FormDots form={playerForms[String(mp.player_id)]} size="md" className="pl-9" />
+    ) : null}
     {/* 🧱 Kennzahlen-Leiste (Anordnung "kacheln" bzw. "mix") */}
     {PLAYER_ROW_LAYOUT !== "balken" && !isTimeplayFormat ? (
       <PlayerStatTiles
@@ -9536,14 +9554,10 @@ return (
     ) : null}
 </div>
 </div>
+</div>
 
-
-
-
-
-
-
-                    <div className="ml-auto flex flex-col items-end gap-1">
+                    {/* 1/3: Platz, Punkte, Form */}
+                    <div className="flex min-w-0 flex-col items-end gap-1 self-center">
 
 
 
@@ -9974,10 +9988,15 @@ try {
                           </Button>
                         ) : null}
 
+                        {/* 📊 Form: letzte 10 Matches (alt → neu) */}
+                        {ADMIN_FORM_POS === "punkte" && playerFormOn && playerForms[String(mp.player_id)]?.length ? (
+                          <FormDots form={playerForms[String(mp.player_id)]} />
+                        ) : null}
+
                     </div>
                     {/* 📈 aufgeklappt: alle Scores dieses Spielers auf diesem Flipper hier */}
                     {mhOpen[k(mp.match_id, mp.player_id)] ? (
-                      <div className="basis-full border-t border-neutral-200/70 pt-2" onPointerDown={(e) => e.stopPropagation()}>
+                      <div className="col-span-2 border-t border-neutral-200/70 pt-2" onPointerDown={(e) => e.stopPropagation()}>
                         <PlayerMachineHistory
                           code={code}
                           profileId={mp?.player_id ? playersById?.[String(mp.player_id)]?.profile_id ?? null : null}
@@ -15701,8 +15720,8 @@ const tasksById = useMemo(() => {
               <div className="text-sm text-neutral-500">Optional</div>
               <div className="text-lg font-semibold flex items-center gap-2">
                 Super-Finale
-                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-                  Top 4 • Ziel: 4 Punkte
+                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                  Race to 4
                 </span>
               </div>
             </div>
@@ -15752,6 +15771,8 @@ const tasksById = useMemo(() => {
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Seed-Tabelle: nur noch nach dem Finale (laufend: 🏁 Race-Ansicht unten) */}
+              {finalState.status === "finished" ? (
               <div className="overflow-hidden rounded-2xl border bg-white">
                 <div className="grid grid-cols-12 gap-2 border-b bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
                   <div className="col-span-2">Seed</div>
@@ -15777,48 +15798,42 @@ const tasksById = useMemo(() => {
                   </div>
                 ))}
               </div>
+              ) : null}
 
               {finalState.status !== "finished" ? (
-                <div>
-                  <div className="mb-2 text-sm font-semibold text-neutral-600">
-                    Finalspiel {nextGameNumber} - wer hat gewonnen?
+                <div className="space-y-3">
+                  {/* 🏁 Super-Finale als "Race to 4": Balken je Spieler + Sieg-Knopf */}
+                  <SuperFinalRace
+                    players={(finalState.players ?? []).map((p: any) => ({
+                      playerId: String(p.playerId),
+                      name: String(p.name ?? "?"),
+                      seed: p.seed != null ? Number(p.seed) : null,
+                      startPoints: Number(p.startPoints ?? 0),
+                      points: Number(p.points ?? 0),
+                    }))}
+                    target={Number(finalState.target_points ?? 4)}
+                    gamesPlayed={Math.max(0, nextGameNumber - 1)}
+                    disabled={busy || locked}
+                    onWin={(rp) => {
+                      const orig = (finalState.players ?? []).find((x: any) => String(x.playerId) === rp.playerId);
+                      if (orig) handleFinalWinClick(orig);
+                    }}
+                  />
+                  <div className="flex items-center justify-end gap-2 text-xs text-amber-800">
+                    <span>Elo-Berechnung im Super-Finale</span>
+                    <button
+                      type="button"
+                      onClick={handleToggleSuperfinalElo}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition
+                        ${superfinalEloEnabled ? "bg-emerald-500" : "bg-neutral-300"}`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition
+                          ${superfinalEloEnabled ? "translate-x-4" : "translate-x-1"}`}
+                      />
+                    </button>
                   </div>
-                  <div className="mb-2 text-sm italic text-neutral-600">
-                    Drücke auf den Gewinner der Runde.
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(finalState.players ?? []).map((p: any) => (
-                      <Button
-                        key={p.playerId}
-                        variant="secondary"
-                        disabled={busy || locked}
-                        onClick={() => handleFinalWinClick(p)}
-                      >
-                        {p.name}
-                      </Button>
-                    ))}
-                    <div className="mt-4 flex items-center justify-end gap-2 text-xs text-amber-800 ml-auto">
-                      <span>Elo-Berechnung im Super-Finale</span>
-                      <button
-                        type="button"
-                        onClick={handleToggleSuperfinalElo}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition
-                          ${superfinalEloEnabled ? "bg-emerald-500" : "bg-neutral-300"}`}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition
-                            ${superfinalEloEnabled ? "translate-x-4" : "translate-x-1"}`}
-                        />
-                      </button>
-                    </div>
-                  </div>
-
-
-
                 </div>
-
-
-
               ) : finalState.ranking ? (
                 <div className="space-y-2">
                   <div className="text-sm font-semibold">
