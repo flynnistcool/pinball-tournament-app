@@ -76,6 +76,7 @@ import { formatAndPlayers, formatLabel as tournamentFormatLabel, participantsTex
 import EloHistoryPanel from "@/components/EloHistoryPanel";
 import { useMyProfileId } from "@/components/useMyProfileId";
 import MyEntryButton from "@/components/MyEntryButton";
+import ScoreBalanceAdmin from "@/components/ScoreBalanceAdmin";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
@@ -11347,6 +11348,13 @@ useEffect(() => {
 }
 
 const tournamentPointsRef = useRef<HTMLDivElement | null>(null);
+// 📈 Bilanz-Karte: Sprungknopf klappt sie auf und scrollt hin
+const balanceRef = useRef<HTMLDivElement | null>(null);
+const [balanceOpenNonce, setBalanceOpenNonce] = useState(0);
+function scrollToBalance() {
+  setBalanceOpenNonce((n) => n + 1);
+  window.setTimeout(() => balanceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+}
 
 function scrollToTournamentPoints() {
   const el = tournamentPointsRef.current;
@@ -15900,6 +15908,17 @@ const tasksById = useMemo(() => {
         </CardBody>
       </Card>
 
+{/* 📈 Bilanz: Scores heute vs. eigener Ø/Bestwert (nicht Timeplay/DYP) */}
+{!["timeplay", "dyp_round_robin"].includes(String(data?.tournament?.format ?? "")) ? (
+  <ScoreBalanceAdmin
+    ref={balanceRef}
+    code={code}
+    data={data}
+    profiles={profiles}
+    openNonce={balanceOpenNonce}
+  />
+) : null}
+
 {/* --- Leaderboards unten --- */}
 <div className="mt-6 grid gap-4 lg:grid-cols-3">
   {/* A) Turnierpunkte (dein Turnierleaderboard) – Reiter: Serie (Kategorie) | gleicher Turniername */}
@@ -16221,6 +16240,17 @@ const tasksById = useMemo(() => {
   >
     🔥 Highscores
   </Button>
+
+  {!["timeplay", "dyp_round_robin"].includes(String(data?.tournament?.format ?? "")) ? (
+    <Button
+      variant="secondary"
+      onClick={scrollToBalance}
+      className="whitespace-nowrap hidden sm:inline-flex"
+      title="Zur Bilanz springen (Scores vs. eigener Ø/Bestwert)"
+    >
+      📈 Bilanz
+    </Button>
+  ) : null}
     </div>
   </div>
 </div>

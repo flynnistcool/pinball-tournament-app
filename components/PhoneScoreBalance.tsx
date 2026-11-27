@@ -4,48 +4,12 @@
 // persönlichen Ø und Bestwert auf dem jeweiligen Flipper (frühere Turniere an dieser Location,
 // nur solche VOR diesem Turnier – cutoff=start). Rechnung: lib/scoreBalance.ts
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useBalanceRefs } from "@/components/useBalanceRefs";
 import { computeScoreBalance, type BalanceRow } from "@/lib/scoreBalance";
 import type { MmData } from "@/lib/myMatch";
 
-const REFRESH_MS = 5 * 60_000;
 const fmt = new Intl.NumberFormat("de-DE");
-
-type Ref = {
-  enabled: boolean;
-  personal: Record<string, number>;
-  personalAvg: Record<string, { avg: number; n: number }>;
-};
-
-function useBalanceRefs(code: string): { ref: Ref | null; error: boolean } {
-  const [ref, setRef] = useState<Ref | null>(null);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    const run = () =>
-      fetch(`/api/public/machine-records?code=${encodeURIComponent(code)}&cutoff=start&ts=${Date.now()}`, {
-        cache: "no-store",
-      })
-        .then((r) => r.json())
-        .then((j) => {
-          if (!alive) return;
-          if (!j?.ok) {
-            setError(true);
-            return;
-          }
-          setError(false);
-          setRef({ enabled: !!j.enabled, personal: j.personal ?? {}, personalAvg: j.personalAvg ?? {} });
-        })
-        .catch(() => alive && setError(true));
-    run();
-    const id = window.setInterval(run, REFRESH_MS);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, [code]);
-  return { ref, error };
-}
 
 function Bar({ label, value, max, cls, strong }: { label: string; value: number | null; max: number; cls: string; strong?: boolean }) {
   const pct = value != null && max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;

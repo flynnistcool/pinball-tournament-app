@@ -24,6 +24,7 @@ import RaceChart, { type RacePlayer } from "@/components/RaceChart";
 import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
+import ScoreBalanceTv from "@/components/ScoreBalanceTv";
 import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
 import RivalryBadge, { RivalryBar, rtpRefreshKey, useRivalryData, useRivalryDataShared } from "@/components/RivalryBadge";
@@ -68,7 +69,7 @@ type PbLookup = (
 // Modi mit "Runden aus mehreren Matches" -> Match-Ansicht (aktuelle Runde + Archiv)
 const MATCH_FORMATS = new Set(["matchplay", "swiss", "round_robin"]);
 // Ansichten (Tabs) mit Auto-Wechsel; Dauer je Ansicht
-type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race" | "players" | "qr";
+type TvTab = "current" | "archive" | "table" | "podium" | "superfinal" | "series" | "race" | "players" | "balance" | "qr";
 const TAB_DURATION_MS: Record<TvTab, number> = {
   current: 15000, // Aktuelle Runde (laufendes Turnier: ⇄ Verlauf)
   archive: 15000, // Alle Runden
@@ -78,6 +79,7 @@ const TAB_DURATION_MS: Record<TvTab, number> = {
   series: 16000, // 📊 Turnierserie (innen: Serie ⇄ Turniername)
   race: 10000, // 📈 Verlauf (Matchplay & Co.)
   players: 30000, // 🃏 Spielerkarten (blättert innen alle 10 s)
+  balance: 30000, // 📈 Bilanz (nur per Antippen, blättert innen alle 10 s)
   qr: 30000, // 📱 QR-Codes (nur per Antippen, nicht im Auto-Wechsel)
 };
 // Nach Turnierende: Siegerehrung -> Superfinale -> Verlauf, je 10 s
@@ -91,6 +93,7 @@ const TAB_LABEL: Record<TvTab, string> = {
   series: "📊 Turnierserie",
   race: "📈 Verlauf",
   players: "🃏 Spieler",
+  balance: "📈 Bilanz",
   qr: "📱 QR-Codes",
 };
 
@@ -1070,6 +1073,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       });
   }, [data?.players, data?.profiles]);
   const hasQr = !!qrLinks && qrPlayers.some((p) => !!qrLinks[p.id]);
+  // 📈 Bilanz: nur mit echten Scores (nicht Timeplay/DYP); "keine Location" meldet die Ansicht selbst
+  const hasBalance = !!data && !["timeplay", "dyp_round_robin"].includes(format);
 
   const tabs: TvTab[] = useMemo(() => {
     if (!data) return [];
@@ -1081,6 +1086,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       t.push(isMatchFormat ? "archive" : "table");
       if (isMatchFormat && hasRace) t.push("race");
       t.push("players"); // 🃏 Spielerkarten (nur per Antippen)
+      if (hasBalance) t.push("balance"); // 📈 Bilanz (nur per Antippen)
       return t;
     }
     const t: TvTab[] = [isMatchFormat ? "current" : "table"];
@@ -1088,9 +1094,10 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
     if (isMatchFormat && hasRace) t.push("race");
     if (hasSeries) t.push("series");
     t.push("players"); // 🃏 Spielerkarten (vorerst nur per Antippen)
+    if (hasBalance) t.push("balance"); // 📈 Bilanz (nur per Antippen)
     if (hasQr) t.push("qr"); // 📱 QR-Codes (nur per Antippen, nur mit Admin-Anmeldung)
     return t.length > 1 ? t : [];
-  }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries, hasRace, hasQr]);
+  }, [data, isFinished, isMatchFormat, hasArchive, superFinal, hasSeries, hasRace, hasQr, hasBalance]);
 
   const [tvTab, setTvTab] = useState<TvTab>("current");
   const vtSupported = useViewTransitionSupport();
@@ -1192,7 +1199,7 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       : isMatchFormat
       ? tabs.filter((t) => t === "current" || t === "race" || (betweenRounds && t === "players"))
       : tabs.filter((t) => t !== "series" && (t !== "players" || betweenRounds))
-  ).filter((t) => t !== "qr"); // 📱 QR-Codes nie automatisch
+  ).filter((t) => t !== "qr" && t !== "balance"); // 📱 QR-Codes + 📈 Bilanz nie automatisch
   // vor Runde 1 direkt die Karten zeigen; startet Runde 1, sofort zur Runde wechseln
   useEffect(() => {
     if (!data) return;
@@ -1657,6 +1664,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             <div className="py-24 text-center text-2xl text-white/50">Lade Turnier …</div>
           ) : activeTab === "players" ? (
             <PlayerCardsTv code={code} />
+          ) : activeTab === "balance" ? (
+            <ScoreBalanceTv code={code} data={data as any} />
           ) : activeTab === "qr" && qrLinks ? (
             <PlayerQrWall code={code} players={qrPlayers} links={qrLinks} />
           ) : isMatchFormat && matchView ? (

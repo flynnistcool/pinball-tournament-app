@@ -97,3 +97,36 @@ export function computeScoreBalance(inp: Input): { rows: BalanceRow[]; summary: 
   };
   return { rows, summary };
 }
+
+export type PlayerBalance = { playerId: string; name: string; rows: BalanceRow[]; summary: BalanceSummary };
+
+/**
+ * Bilanz ALLER Spieler (ohne 🤖 Bots, nur mit mind. einem Score) – für TV und Admin.
+ * Reihenfolge: heute am stärksten über dem eigenen Ø zuerst, ohne Vergleichswert ans Ende.
+ */
+export function computeAllBalances(inp: {
+  players: readonly { id: string; name?: string | null; profile_id?: string | null }[];
+  profiles?: readonly { id: string; is_bot?: boolean | null }[];
+  machines: Input["machines"];
+  rounds: Input["rounds"];
+  matches: Input["matches"];
+  match_players: Input["match_players"];
+  personal: Record<string, number>;
+  personalAvg: Record<string, { avg: number; n: number }>;
+}): PlayerBalance[] {
+  const bots = new Set((inp.profiles ?? []).filter((p) => p.is_bot).map((p) => String(p.id)));
+  const out: PlayerBalance[] = [];
+  for (const p of inp.players) {
+    if (p.profile_id && bots.has(String(p.profile_id))) continue;
+    const bal = computeScoreBalance({ ...inp, playerId: String(p.id) });
+    if (!bal.rows.length) continue;
+    out.push({ playerId: String(p.id), name: String(p.name ?? "?"), ...bal });
+  }
+  out.sort(
+    (a, b) =>
+      (b.summary.meanPct ?? -Infinity) - (a.summary.meanPct ?? -Infinity) ||
+      b.summary.newBests - a.summary.newBests ||
+      a.name.localeCompare(b.name, "de")
+  );
+  return out;
+}
