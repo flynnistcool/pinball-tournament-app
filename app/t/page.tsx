@@ -16175,10 +16175,10 @@ const tasksById = useMemo(() => {
               ? "Turnier ist beendet"
               : hasOpenPositions
               ? "Erst alle Platzierungen in der aktuellen Runde eintragen"
-              : ""
+              : "Neue Runde erzeugen und Flipper zuweisen"
           }
         >
-          Runde erzeugen + Maschinen zuweisen
+          🎲 Neue Runde
         </Button>
 
 <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-700">
