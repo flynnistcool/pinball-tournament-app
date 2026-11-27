@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { botKindFields } from "@/lib/botKindServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -15,6 +16,8 @@ export async function POST(req: Request) {
     color,
     icon,
     isBot,
+    botKind,
+    botOwnerId,
     excludeFromStats,
   }: {
     id?: string;
@@ -24,6 +27,9 @@ export async function POST(req: Request) {
     color?: string | null;
     icon?: string | null;
     isBot?: boolean;
+    /** 👻/⚡ "fixed" | "ghost" | "form" (nur zusammen mit isBot) */
+    botKind?: string;
+    botOwnerId?: string | null;
     excludeFromStats?: boolean;
   } = body;
 
@@ -96,6 +102,18 @@ export async function POST(req: Request) {
   if (typeof isBot === "boolean") {
     update.is_bot = isBot;
     update.bot_kind = isBot ? "fixed" : null;
+    update.bot_owner_profile_id = null;
+    // 👻/⚡ Bot-Art nur, wenn mitgeschickt – sonst bleibt eine vorhandene Art erhalten (alte Aufrufer)
+    if (isBot) {
+      if (botKind !== undefined) {
+        const bk = await botKindFields(sb, id, botKind, botOwnerId);
+        if (bk.error) return NextResponse.json({ ok: false, error: bk.error }, { status: 400 });
+        Object.assign(update, bk.fields);
+      } else {
+        delete update.bot_kind;
+        delete update.bot_owner_profile_id;
+      }
+    }
   }
 
   // 🚫 Platzhalter-Schalter nur ändern, wenn mitgeschickt
@@ -112,7 +130,7 @@ export async function POST(req: Request) {
     .update(update)
     .eq("id", id)
     .select(
-      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, is_bot, bot_kind, exclude_from_stats"
+      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, is_bot, bot_kind, bot_owner_profile_id, exclude_from_stats"
     )
     .single();
 

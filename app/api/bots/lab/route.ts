@@ -21,10 +21,21 @@ export async function GET(req: Request) {
     const sb = supabaseAdmin();
     const { data: bots, error: bErr } = await sb
       .from("profiles")
-      .select("id, name, rating")
+      .select("id, name, rating, bot_kind, bot_owner_profile_id")
       .eq("is_bot", true)
       .order("rating");
     if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+    // 👻/⚡ Name des Spielers, dem ein Ghost-/Form-Bot folgt
+    const ownerIds = Array.from(
+      new Set((bots ?? []).map((b: { bot_owner_profile_id: string | null }) => b.bot_owner_profile_id).filter(Boolean) as string[])
+    );
+    if (ownerIds.length) {
+      const { data: owners } = await sb.from("profiles").select("id, name").in("id", ownerIds);
+      const nameOf = new Map((owners ?? []).map((o: { id: string; name: string | null }) => [String(o.id), String(o.name ?? "?")]));
+      for (const b of (bots ?? []) as { bot_owner_profile_id: string | null; owner_name?: string | null }[]) {
+        if (b.bot_owner_profile_id) b.owner_name = nameOf.get(String(b.bot_owner_profile_id)) ?? null;
+      }
+    }
 
     if (!locationId || !machine) {
       return NextResponse.json({ ok: true, samples: [], bots: bots ?? [] }, { headers: { "Cache-Control": "no-store" } });

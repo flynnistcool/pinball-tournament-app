@@ -107,6 +107,22 @@ export default function PlayerOverviewCard({
 }) {
   const [riv, setRiv] = useState<RivalsResp | null>(null);
   const [rivErr, setRivErr] = useState(false);
+  // 🥊 Rivalen-Bot dieses Spielers (falls angelegt)
+  const [rivalBots, setRivalBots] = useState<
+    { botId: string; name: string; start: number; strength: number; wins: number; losses: number }[] | null
+  >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRivalBots(null);
+    fetch(`/api/players/rival-bot?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => !cancelled && setRivalBots(j?.ok && Array.isArray(j.rivals) ? j.rivals : []))
+      .catch(() => !cancelled && setRivalBots([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,6 +303,22 @@ export default function PlayerOverviewCard({
             <span className="text-neutral-400">–</span>
           )}
         </div>
+
+        {rivalBots && rivalBots.length
+          ? rivalBots.map((rb) => (
+              <div key={rb.botId} className="flex flex-wrap items-center gap-2">
+                <span className="w-52 shrink-0 text-neutral-500">🥊 Rivale</span>
+                <span>
+                  <span className="font-semibold text-neutral-900">{rb.name}</span> – Bilanz{" "}
+                  <span className={"font-semibold " + (rb.wins > rb.losses ? "text-emerald-700" : rb.wins < rb.losses ? "text-red-600" : "")}>
+                    {rb.wins} : {rb.losses}
+                  </span>{" "}
+                  · Stärke <span className="font-semibold tabular-nums">{rb.strength}</span>{" "}
+                  <span className="text-[11px] text-neutral-500">(Start {rb.start})</span>
+                </span>
+              </div>
+            ))
+          : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <span className="w-52 shrink-0 text-neutral-500">🔥 Längste Siegesserie</span>

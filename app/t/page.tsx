@@ -79,6 +79,13 @@ import MyEntryButton from "@/components/MyEntryButton";
 import ScoreBalanceAdmin from "@/components/ScoreBalanceAdmin";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import BotScoreRatingBadge from "@/components/BotScoreRatingBadge";
+import { botBadgeText as pbBotBadgeText, botBadgeTitle as pbBotBadgeTitle } from "@/lib/botBadge";
+import { useBotSettings as pbUseBotSettings } from "@/components/useBotSettings";
+import {
+  specialistFavorites as pbSpecialistFavorites,
+  isSpecialistFavorite as pbIsSpecialistFavorite,
+  characterMachines as pbCharacterMachines,
+} from "@/lib/botSpecialist";
 import { BotBadge, PlaceholderBadge } from "@/components/BotToggle";
 import { chanceShortTitle, favoriteBreakdown, favoriteTitle, h2hFromPairMachine, pickFavorite } from "@/lib/favorite";
 import { getChanceSnapshot, saveChanceSnapshot } from "@/lib/chanceSnapshots";
@@ -554,6 +561,13 @@ type PlayerVisual = {
   isBot?: boolean;
   /** 🤖 feste Elo des Bots */
   botElo?: number | null;
+  /** 👻/⚡ Bot-Art + Spieler, dem der Bot folgt */
+  botKind?: string | null;
+  botOwner?: string | null;
+  /** 🟠 Specialist / 🎭 Charakter: Lieblingsflipper in diesem Turnier */
+  specialistFavs?: string[] | null;
+  /** 🎭 Charakter: Angstflipper in diesem Turnier */
+  characterFlops?: string[] | null;
   /** aktuelle Elo (für den ★ Favoriten) */
   elo?: number | null;
   /** 🚫 Platzhalter/Testprofil */
@@ -1051,6 +1065,15 @@ const kBadgeClass =
                   )}
 
                   {/* 🤖 Bot / 🚫 Platzhalter (statt K-Faktor) – hinter der Elo */}
+                  {prof?.is_bot && playersById?.[p.id]?.specialistFavs?.length ? (
+                    <span
+                      className="ml-1 inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[11px] font-semibold text-orange-700"
+                      title="🟠 Specialist-Bot: an diesen Flippern spielt er in diesem Turnier deutlich stärker (Flipper seines Matches lässt sich umstellen)"
+                    >
+                      {playersById[p.id].characterFlops ? "🎭" : "🟠"} liebt heute: {playersById[p.id].specialistFavs.join(", ")}
+                      {playersById[p.id].characterFlops?.length ? ` · mag nicht: ${playersById[p.id].characterFlops.join(", ")}` : ""}
+                    </span>
+                  ) : null}
                   {prof?.is_bot ? (
                     <BotBadge className="ml-1" />
                   ) : prof?.exclude_from_stats ? (
@@ -9508,12 +9531,39 @@ return (
       {playersById?.[String(mp?.player_id)]?.isBot ? (
         <span
           className="inline-flex shrink-0 items-center rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700"
-          title="KI-Bot mit fester Elo"
+          title={pbBotBadgeTitle(playersById[String(mp.player_id)].botKind, playersById[String(mp.player_id)].botOwner)}
         >
-          🤖 Bot
-          {typeof playersById?.[String(mp?.player_id)]?.botElo === "number"
-            ? ` · ${Math.round(playersById[String(mp.player_id)].botElo)}`
-            : ""}
+          {pbBotBadgeText(
+            playersById[String(mp.player_id)].botKind,
+            playersById[String(mp.player_id)].botOwner,
+            playersById[String(mp.player_id)].botElo
+          )}
+        </span>
+      ) : null}
+      {/* 🟠 Specialist am Lieblingsflipper */}
+      {playersById?.[String(mp?.player_id)]?.specialistFavs?.length &&
+      pbIsSpecialistFavorite(
+        playersById[String(mp.player_id)].specialistFavs,
+        m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null
+      ) ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded-full border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[11px] font-semibold text-orange-700"
+          title="Einer seiner Lieblingsflipper in diesem Turnier – hier spielt er deutlich stärker"
+        >
+          ⭐ Lieblingsflipper
+        </span>
+      ) : null}
+      {/* 🎭 Charakter am Angstflipper */}
+      {playersById?.[String(mp?.player_id)]?.characterFlops?.length &&
+      pbIsSpecialistFavorite(
+        playersById[String(mp.player_id)].characterFlops,
+        m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null
+      ) ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700"
+          title="Einer seiner Angstflipper in diesem Turnier – hier spielt er deutlich schwächer"
+        >
+          😬 Angstflipper
         </span>
       ) : null}
       {/* 🤖 Einstufung des Bot-Scores: für seine Verhältnisse gut/typisch/schwach? */}
@@ -14578,6 +14628,11 @@ const tasksById = useMemo(() => {
   return Object.fromEntries(arr.map((x) => [String(x.id), x]));
 }, [data]);
 
+  // 🟠 Specialist-Bots: Lieblingsflipper (gleiche Rechnung wie beim Würfeln) – Einstellungen nur laden, wenn einer mitspielt
+  const pbHasSpecialist = (data?.players ?? []).some(
+    (p: any) => p.is_bot === true && ["specialist", "character"].includes(profilesById[p.profile_id]?.bot_kind)
+  );
+  const pbBotSettings = pbUseBotSettings(pbHasSpecialist);
   const playersById = useMemo(
     () =>
       Object.fromEntries(
@@ -14594,13 +14649,39 @@ const tasksById = useMemo(() => {
               avatarUrl: p.avatar_url ?? prof?.avatar_url ?? null,
               isBot: p.is_bot === true,
               botElo: p.is_bot === true && typeof prof?.rating === "number" ? prof.rating : null,
+              botKind: p.is_bot === true ? prof?.bot_kind ?? null : null,
+              botOwner:
+                p.is_bot === true && prof?.bot_owner_profile_id
+                  ? profilesById[prof.bot_owner_profile_id]?.name ?? null
+                  : null,
+              ...(p.is_bot === true && prof?.bot_kind === "specialist" && data?.tournament?.id
+                ? {
+                    specialistFavs: pbSpecialistFavorites(
+                      String(prof.id),
+                      String(data.tournament.id),
+                      data?.machines ?? [],
+                      pbBotSettings.specialistFavs
+                    ),
+                  }
+                : p.is_bot === true && prof?.bot_kind === "character" && data?.tournament?.id
+                ? (() => {
+                    const cm = pbCharacterMachines(
+                      String(prof.id),
+                      String(data.tournament.id),
+                      data?.machines ?? [],
+                      pbBotSettings.characterFavs,
+                      pbBotSettings.characterFlops
+                    );
+                    return { specialistFavs: cm.favorites, characterFlops: cm.flops };
+                  })()
+                : {}),
               elo: typeof prof?.rating === "number" ? prof.rating : null,
               isPlaceholder: prof?.exclude_from_stats === true,
             } as PlayerVisual,
           ];
         })
       ),
-    [data?.players, profilesById]
+    [data?.players, profilesById, data?.machines, data?.tournament?.id, pbBotSettings]
   );
 
   if (!data)

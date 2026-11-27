@@ -38,6 +38,9 @@ export type MmData = {
     rating?: number | null;
     is_bot?: boolean | null;
     exclude_from_stats?: boolean | null;
+    /** 👻/⚡ Bot-Art + Name des Spielers, dem der Bot folgt */
+    bot_kind?: string | null;
+    bot_owner_name?: string | null;
   }[];
   /** Elo beim Turnierstart */
   start_ratings?: { profile_id: string; rating_before: number | null }[];
@@ -233,6 +236,9 @@ export type LiveRow = {
   eloNow: number | null;
   /** 🤖 KI-Bot (feste Elo) */
   isBot?: boolean;
+  /** 👻/⚡ Bot-Art + Spieler, dem der Bot folgt */
+  botKind?: string | null;
+  botOwner?: string | null;
   /** 🚫 Platzhalter / Ghost: place = 0 (ohne Platz), nach Turnierende nicht in der Liste */
   placeholder?: boolean;
   /** Punkte pro Runde (für die kleinen Balken) */
@@ -308,6 +314,8 @@ export function liveLeaderboard(data: MmData): { rows: LiveRow[]; roundPointsMax
       eloStart: p.profile_id ? startElo.get(String(p.profile_id)) ?? null : null,
       eloNow: now,
       isBot: prof?.is_bot === true,
+      botKind: prof?.bot_kind ?? null,
+      botOwner: prof?.bot_owner_name ?? null,
       placeholder: prof?.exclude_from_stats === true && prof?.is_bot !== true,
       history: history[p.id] ?? [],
     };
@@ -331,6 +339,13 @@ export function liveLeaderboard(data: MmData): { rows: LiveRow[]; roundPointsMax
 }
 
 /** 🤖 Elo eines Bots (Spieler-ID) – undefined = kein Bot */
+/** 👻/⚡ Bot-Art + Spieler eines Bots (für BotEloBadge kind/owner) */
+export function botInfoOf(data: MmData, playerId: string): { kind: string | null; owner: string | null } {
+  const p = data.players.find((x) => String(x.id) === String(playerId));
+  const prof = p?.profile_id ? (data.profiles ?? []).find((x) => String(x.id) === String(p.profile_id)) : undefined;
+  return { kind: prof?.bot_kind ?? null, owner: prof?.bot_owner_name ?? null };
+}
+
 export function botEloOf(data: MmData, playerId: string): number | null | undefined {
   const p = data.players.find((x) => String(x.id) === String(playerId));
   const prof = p?.profile_id ? (data.profiles ?? []).find((x) => String(x.id) === String(p.profile_id)) : undefined;

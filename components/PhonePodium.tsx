@@ -63,7 +63,7 @@ function Step({ place, rows, meId }: { place: 1 | 2 | 3; rows: LiveRow[]; meId: 
                 {isMe ? (
                   <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">du</span>
                 ) : null}
-                {r.isBot ? <BotEloBadge elo={r.eloNow ?? r.eloStart} className="text-[10px]" /> : null}
+                {r.isBot ? <BotEloBadge elo={r.eloNow ?? r.eloStart} kind={r.botKind} owner={r.botOwner} className="text-[10px]" /> : null}
                 <div className="text-xs font-semibold tabular-nums text-neutral-500">{r.total} Punkte</div>
               </div>
             );
@@ -140,7 +140,7 @@ export default function PhonePodium({ data, meId }: { data: MmData; meId: string
                 <span className={"min-w-0 flex-1 truncate " + (isMe ? "font-black text-indigo-800" : "font-bold")}>
                   {r.name}
                 </span>
-                {r.isBot ? <BotEloBadge elo={r.eloNow ?? r.eloStart} className="text-[10px]" /> : null}
+                {r.isBot ? <BotEloBadge elo={r.eloNow ?? r.eloStart} kind={r.botKind} owner={r.botOwner} className="text-[10px]" /> : null}
                 {isMe ? (
                   <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
                     du

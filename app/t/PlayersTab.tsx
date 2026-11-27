@@ -203,6 +203,7 @@ import AchievementsPanel from "@/components/AchievementsPanel";
 import { SUPER_FINAL_TP_BONUS } from "@/lib/points";
 import { joinTournamentByCode } from "@/lib/joinTournament";
 import BotToggle, { BotBadge, PlaceholderToggle, PlaceholderBadge } from "@/components/BotToggle";
+import BotKindPicker from "@/components/BotKindPicker";
 import BotStatsCard from "@/components/BotStatsCard";
 import { GRADIENT_OPTIONS } from "@/lib/playerColor";
 import ColorPickerButton from "@/components/ColorPickerButton";
@@ -242,6 +243,7 @@ type Profile = {
   info?: string | null;
   is_bot?: boolean | null;
   bot_kind?: string | null;
+  bot_owner_profile_id?: string | null;
   exclude_from_stats?: boolean | null;
 };
 
@@ -253,6 +255,9 @@ type Draft = {
   color: string;
   icon: string;
   isBot: boolean;
+  /** 👻/⚡ Bot-Art + Spieler, dem der Bot folgt */
+  botKind: "fixed" | "ghost" | "form" | "rival" | "gambler" | "pro" | "champion" | "specialist" | "character";
+  botOwnerId: string;
   excludeFromStats: boolean;
 };
 
@@ -892,6 +897,7 @@ const [spSaveDrainDetailFilter, setSpSaveDrainDetailFilter] = useState<Record<st
             is_bot: p.is_bot === true, // 🤖 KI-Bot
             exclude_from_stats: p.exclude_from_stats === true, // 🚫 Platzhalter
             bot_kind: p.bot_kind ?? null,
+            bot_owner_profile_id: p.bot_owner_profile_id ?? null,
             info: p.info ?? null,
           }))
         );
@@ -1561,6 +1567,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
               icon: profile.icon ?? "",
               isBot: profile.is_bot === true,
               excludeFromStats: profile.exclude_from_stats === true,
+              botKind: ["ghost", "form", "rival", "gambler", "pro", "champion", "specialist", "character"].includes(String(profile.bot_kind)) ? profile.bot_kind : "fixed",
+              botOwnerId: profile.bot_owner_profile_id ?? "",
             }
           : {
               name: profile?.name ?? "",
@@ -1571,6 +1579,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
               icon: profile?.icon ?? "",
               isBot: profile?.is_bot === true,
               excludeFromStats: profile?.exclude_from_stats === true,
+              botKind: ["ghost", "form", "rival", "gambler", "pro", "champion", "specialist", "character"].includes(String(profile?.bot_kind)) ? profile.bot_kind : "fixed",
+              botOwnerId: profile?.bot_owner_profile_id ?? "",
             };
       return { ...prev, [key]: base };
     });
@@ -1589,6 +1599,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
         icon: profile?.icon ?? "",
         isBot: profile?.is_bot === true,
         excludeFromStats: profile?.exclude_from_stats === true,
+        botKind: ["ghost", "form", "rival", "gambler", "pro", "champion", "specialist", "character"].includes(String(profile?.bot_kind)) ? profile.bot_kind : "fixed",
+        botOwnerId: profile?.bot_owner_profile_id ?? "",
       } as Draft)
     );
   }
@@ -1862,6 +1874,8 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
           icon: "",
           isBot: false,
           excludeFromStats: false,
+          botKind: "fixed",
+          botOwnerId: "",
         };
       return {
         ...prev,
@@ -1898,6 +1912,7 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
           color: draft.color || null,
           icon: draft.icon || null,
           isBot: draft.isBot === true,
+          ...(draft.isBot === true ? { botKind: draft.botKind ?? "fixed", botOwnerId: draft.botOwnerId || null } : {}),
           excludeFromStats: draft.excludeFromStats === true,
         }),
       });
@@ -1970,6 +1985,7 @@ async function deleteSinglePlayRun(profileId: string, runId: string) {
           color: draft.color || null,
           icon: draft.icon || null,
           isBot: draft.isBot === true,
+          ...(draft.isBot === true ? { botKind: draft.botKind ?? "fixed", botOwnerId: draft.botOwnerId || null } : {}),
           excludeFromStats: draft.excludeFromStats === true,
         }),
       });
@@ -2750,6 +2766,27 @@ const headToHeadPanel =
                   onChange={(v) => updateDraftField("new", "isBot", v)}
                   disabled={savingKey === "new" || !isAdmin}
                 />
+                {drafts["new"]?.isBot === true ? (
+                  <BotKindPicker
+                    kind={drafts["new"]?.botKind ?? "fixed"}
+                    ownerId={drafts["new"]?.botOwnerId ?? ""}
+                    owners={profiles
+                      .filter((x) => !x.is_bot)
+                      .map((x) => ({ id: String(x.id), name: String(x.name ?? "?") }))
+                      .sort((a, b) => a.name.localeCompare(b.name, "de"))}
+                    bots={profiles
+                      .filter((x) => x.is_bot)
+                      .map((x) => ({
+                        name: String(x.name ?? "?"),
+                        rating: x.rating ?? null,
+                        kind: x.bot_kind ?? null,
+                        owner: x.bot_owner_profile_id ? profiles.find((o) => String(o.id) === String(x.bot_owner_profile_id))?.name ?? null : null,
+                      }))}
+                    onKind={(v) => updateDraftField("new", "botKind", v)}
+                    onOwner={(id) => updateDraftField("new", "botOwnerId", id)}
+                    disabled={savingKey === "new" || !isAdmin}
+                  />
+                ) : null}
                 <div className="mt-2">
                   <PlaceholderToggle
                     checked={drafts["new"]?.excludeFromStats === true}
@@ -3416,6 +3453,27 @@ const machineStatsSortedByWinrate: MachineStat[] = [...machineStatsArray]
                               onChange={(v) => updateDraftField(p.id, "isBot", v)}
                               disabled={savingKey === p.id || !isAdmin}
                             />
+                            {draft.isBot === true ? (
+                              <BotKindPicker
+                                kind={draft.botKind ?? "fixed"}
+                                ownerId={draft.botOwnerId ?? ""}
+                                owners={profiles
+                                  .filter((x) => !x.is_bot && String(x.id) !== String(p.id))
+                                  .map((x) => ({ id: String(x.id), name: String(x.name ?? "?") }))
+                                  .sort((a, b) => a.name.localeCompare(b.name, "de"))}
+                    bots={profiles
+                      .filter((x) => x.is_bot)
+                      .map((x) => ({
+                        name: String(x.name ?? "?"),
+                        rating: x.rating ?? null,
+                        kind: x.bot_kind ?? null,
+                        owner: x.bot_owner_profile_id ? profiles.find((o) => String(o.id) === String(x.bot_owner_profile_id))?.name ?? null : null,
+                      }))}
+                                onKind={(v) => updateDraftField(p.id, "botKind", v)}
+                                onOwner={(id) => updateDraftField(p.id, "botOwnerId", id)}
+                                disabled={savingKey === p.id || !isAdmin}
+                              />
+                            ) : null}
                             <PlaceholderToggle
                               checked={draft.excludeFromStats === true}
                               onChange={(v) => updateDraftField(p.id, "excludeFromStats", v)}

@@ -29,7 +29,7 @@ import {
 } from "@/lib/myMatch";
 import { computeStreaks, streakMode } from "@/lib/winStreaks";
 import BotEloBadge from "@/components/BotEloBadge";
-import { botEloOf } from "@/lib/myMatch";
+import { botEloOf, botInfoOf } from "@/lib/myMatch";
 import { rtpRefreshKey, useRivalryData } from "@/components/RivalryBadge";
 import { liveMachineSigFromData } from "@/lib/titleDefender";
 import { useFeedSync } from "@/components/useFeedSync";
@@ -410,7 +410,12 @@ function MatchCard({ info, data, meId, title }: { info: MyMatchInfo; data: MmDat
               <span className="min-w-0 flex-1 truncate font-semibold">
                 {nameOf(data, mp.player_id)}
                 {botEloOf(data, mp.player_id) !== undefined ? (
-                  <BotEloBadge elo={botEloOf(data, mp.player_id)} className="ml-1.5 align-middle text-[10px]" />
+                  <BotEloBadge
+                    elo={botEloOf(data, mp.player_id)}
+                    kind={botInfoOf(data, mp.player_id).kind}
+                    owner={botInfoOf(data, mp.player_id).owner}
+                    className="ml-1.5 align-middle text-[10px]"
+                  />
                 ) : null}
                 {isMe ? <span className="ml-1 text-xs font-normal text-indigo-600">(du)</span> : null}
               </span>
@@ -664,7 +669,12 @@ function EntryCard({
                   <span className="min-w-0 flex-1 truncate text-base font-bold">
                     {nameOf(data, pid)}
                     {botEloOf(data, pid) !== undefined ? (
-                      <BotEloBadge elo={botEloOf(data, pid)} className="ml-1.5 align-middle text-[10px]" />
+                      <BotEloBadge
+                        elo={botEloOf(data, pid)}
+                        kind={botInfoOf(data, pid).kind}
+                        owner={botInfoOf(data, pid).owner}
+                        className="ml-1.5 align-middle text-[10px]"
+                      />
                     ) : null}
                     {isMe ? <span className="ml-1 text-xs font-normal text-indigo-600">(du)</span> : null}
                   </span>

@@ -197,6 +197,9 @@ type Profile = {
   rating?: number | null;
   is_bot?: boolean | null;
   exclude_from_stats?: boolean | null;
+  /** 👻/⚡ Bot-Art + Name des Spielers, dem der Bot folgt */
+  bot_kind?: string | null;
+  bot_owner_name?: string | null;
 };
 type Round = {
   id: string;
@@ -274,6 +277,8 @@ type Row = {
   eloStart: number | null; // Elo vor dem Turnier (tournament_ratings)
   eloNow: number | null; // aktuelle Elo im Profil (wird nach jeder fertigen Runde neu berechnet)
   isBot?: boolean; // 🤖 KI-Bot (feste Elo)
+  botKind?: string | null; // 👻/⚡ Bot-Art
+  botOwner?: string | null; // Spieler, dem der Ghost-/Form-Bot folgt
   placeholder?: boolean; // 🚫 Platzhalter / Ghost: blass, ohne Platz, nach Turnierende ausgeblendet
   tp?: number | null; // Turnierpunkte heute (erst nach "Turnier beenden"), inkl. Superfinale-Bonus
   tpBonus?: number; // davon Superfinale-Bonus (für "+6 TP +2 🔥")
@@ -490,6 +495,8 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
         eloNow:
           prof?.rating != null && Number.isFinite(Number(prof.rating)) ? Number(prof.rating) : null,
         isBot: prof?.is_bot === true,
+        botKind: prof?.bot_kind ?? null,
+        botOwner: prof?.bot_owner_name ?? null,
         // 🚫 Platzhalter / Ghost: blass, ohne Platz (0 = "–"); nach Turnierende ausgeblendet
         placeholder: prof?.exclude_from_stats === true && prof?.is_bot !== true,
       };
@@ -1803,7 +1810,7 @@ function EloLine({ row, eloOn }: { row: Row; eloOn: boolean }) {
   if (row.isBot) {
     return (
       <div className="mt-0.5">
-        <BotEloBadge variant="tv" elo={row.eloNow ?? row.eloStart} />
+        <BotEloBadge variant="tv" elo={row.eloNow ?? row.eloStart} kind={row.botKind} owner={row.botOwner} />
       </div>
     );
   }
@@ -2322,7 +2329,7 @@ function MatchTvView({
                     <span key={id} className="flex items-center gap-2 font-semibold">
                       <PlayerAvatar row={r} size="h-8 w-8 text-base" />
                       {r.name}
-                      {r.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} /> : null}
+                      {r.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} kind={r.botKind} owner={r.botOwner} /> : null}
                     </span>
                   ) : null;
                 })}
@@ -2580,7 +2587,7 @@ function MatchCardView({
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="min-w-0 max-w-full truncate text-lg font-bold">{r.name}</span>
                   {r.isBot ? (
-                    <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} className="text-sm" />
+                    <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} kind={r.botKind} owner={r.botOwner} className="text-sm" />
                   ) : (r.eloNow ?? r.eloStart) != null ? (
                     <span className="shrink-0 text-sm font-normal tabular-nums text-white/40">
                       Elo {Math.round((r.eloNow ?? r.eloStart) as number)}
@@ -2767,7 +2774,7 @@ function ArchiveView({ blocks, rowById }: { blocks: RoundBlock[]; rowById: Recor
                               {p.position ?? "–"}
                             </span>
                             <span className="font-semibold">{r?.name ?? "?"}</span>
-                            {r?.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} /> : null}
+                            {r?.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} kind={r.botKind} owner={r.botOwner} /> : null}
                           </span>
                         );
                       })}
@@ -3072,7 +3079,7 @@ function PodiumView({ rows, eloOn }: { rows: Row[]; eloOn: boolean }) {
               <span className="text-xl font-extrabold text-white/50">{r.place}.</span>
               <PlayerAvatar row={r} size="h-9 w-9 text-lg" />
               <span className="text-xl font-bold">{r.name}</span>
-              {r.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} /> : null}
+              {r.isBot ? <BotEloBadge variant="tv" elo={r.eloNow ?? r.eloStart} kind={r.botKind} owner={r.botOwner} /> : null}
               <span className="text-lg tabular-nums text-white/60">{r.real} P</span>
             </div>
           ))}

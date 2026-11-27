@@ -85,8 +85,22 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     new Set((players ?? []).map((p: any) => p.profile_id).filter(Boolean))
   ) as string[];
   const { data: profiles } = profileIds.length
-    ? await sb.from("profiles").select("id, icon, color, rating, is_bot, exclude_from_stats").in("id", profileIds)
+    ? await sb
+        .from("profiles")
+        .select("id, icon, color, rating, is_bot, exclude_from_stats, bot_kind, bot_owner_profile_id")
+        .in("id", profileIds)
     : { data: [] as any[] };
+  // 👻/⚡ Ghost-/Form-Bots: Name des Spielers, dem sie folgen (fürs Abzeichen "👻 Ghost-Bot · Marco")
+  const ownerIds = Array.from(
+    new Set(((profiles ?? []) as any[]).map((p) => p.bot_owner_profile_id).filter(Boolean).map(String))
+  );
+  if (ownerIds.length) {
+    const { data: owners } = await sb.from("profiles").select("id, name").in("id", ownerIds);
+    const ownerName = new Map(((owners ?? []) as any[]).map((o) => [String(o.id), String(o.name ?? "")]));
+    for (const p of (profiles ?? []) as any[]) {
+      if (p.bot_owner_profile_id) p.bot_owner_name = ownerName.get(String(p.bot_owner_profile_id)) ?? null;
+    }
+  }
 
   // Elo-Stand vor dem Turnier (Sicherung beim Turnierstart) – für Infobildschirm
   const { data: startRatings } = await sb

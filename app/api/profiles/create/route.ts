@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
+import { botKindFields } from "@/lib/botKindServer";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -44,6 +45,13 @@ export async function POST(req: Request) {
   const excludeFromStats = body.excludeFromStats === true;
 
   const sb = supabaseAdmin();
+  // 👻/⚡ Bot-Art (feste Elo / Ghost-Bot / Form-Bot) + Spieler
+  let botFields: Record<string, unknown> = {};
+  if (isBot) {
+    const bk = await botKindFields(sb, null, body.botKind, body.botOwnerId);
+    if (bk.error) return NextResponse.json({ error: bk.error }, { status: 400 });
+    botFields = bk.fields;
+  }
   const { data, error } = await sb
     .from("profiles")
     .insert({
@@ -53,11 +61,11 @@ export async function POST(req: Request) {
       matches_played: 0,
       color, // 🆕
       icon,  // 🆕
-      ...(isBot ? { is_bot: true, bot_kind: "fixed", provisional_matches: 0 } : {}),
+      ...(isBot ? { is_bot: true, bot_kind: "fixed", provisional_matches: 0, ...botFields } : {}),
       ...(excludeFromStats ? { exclude_from_stats: true } : {}),
     })
     .select(
-      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, created_at, is_bot, bot_kind, exclude_from_stats"
+      "id, name, avatar_url, rating, matches_played, provisional_matches, color, icon, created_at, is_bot, bot_kind, bot_owner_profile_id, exclude_from_stats"
     )
     .single();
 

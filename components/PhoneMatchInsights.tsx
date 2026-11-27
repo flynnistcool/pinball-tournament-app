@@ -297,7 +297,8 @@ export default function PhoneMatchInsights({
                   // dezent: aktuelle Elo hinter dem Namen (Bots: lila Abzeichen)
                   const pr = (data.profiles ?? []).find((x) => String(x.id) === profileOf(pid));
                   const elo = pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Math.round(Number(pr.rating)) : null;
-                  if (pr?.is_bot) return <BotEloBadge elo={elo} className="text-[10px]" />;
+                  if (pr?.is_bot)
+                    return <BotEloBadge elo={elo} kind={(pr as any).bot_kind} owner={(pr as any).bot_owner_name} className="text-[10px]" />;
                   return elo != null ? (
                     <span className="shrink-0 text-[11px] font-normal tabular-nums text-neutral-400">Elo {elo}</span>
                   ) : null;

@@ -90,6 +90,48 @@ export function BotCalcView({
           </div>
         ) : null}
 
+        {c.style ? (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900">
+            {c.style === "gambler" ? "🔴 Gambler-Bot" : "🟣 Pro-Bot"}: eigene Streuung – mittlere{" "}
+            {Math.round((c.settings?.rangeHighPct ?? 0) - (c.settings?.rangeLowPct ?? 0))} %,{" "}
+            {Math.round((c.settings?.outlierChance ?? 0) * 100)} % Ausreißer bis {Math.round((c.settings?.outlierMax ?? 0) * 100)} %.
+          </div>
+        ) : null}
+        {c.specialist ? (
+          <div className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-900">
+            <div className="font-semibold">{c.specialist.character ? "🎭 Charakter-Bot" : "🟠 Specialist-Bot"}</div>
+            <div className="text-[13px]">
+              Seine Lieblingsflipper in diesem Turnier: <b>{c.specialist.favorites.join(", ") || "–"}</b>
+              {c.specialist.character ? (
+                <>
+                  {" "}
+                  · Angstflipper: <b>{(c.specialist.flops ?? []).join(", ") || "–"}</b>
+                </>
+              ) : null}
+              .{" "}
+              {c.specialist.isFavorite
+                ? `„${c.machine}“ ist ein Liebling (+${c.specialist.bonus} Elo) → gewürfelt wie ${c.specialist.baseElo + c.specialist.bonus} statt ${c.specialist.baseElo}.`
+                : c.specialist.isFlop
+                ? `„${c.machine}“ ist ein Angstflipper (−${c.specialist.malus ?? 0} Elo) → gewürfelt wie ${Math.max(100, c.specialist.baseElo - (c.specialist.malus ?? 0))} statt ${c.specialist.baseElo}.`
+                : `„${c.machine}“ ist ${c.specialist.character ? "weder Liebling noch Angstflipper" : "keiner davon"} → normale Elo ${c.specialist.baseElo}.`}
+            </div>
+          </div>
+        ) : null}
+        {/* 🥊 Rivalen-Bot: Stärke aus den Duellen mit seinem Spieler */}
+        {c.rival ? (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900">
+            <div className="font-semibold">🥊 Rivalen-Bot von {c.rival.owner}</div>
+            <div className="text-[13px]">
+              Start {c.rival.start} · {c.rival.owner} lag {c.rival.wins}× vorne (+{c.rival.step} je Duell), der Rivale {c.rival.losses}× (−
+              {c.rival.step}) → Stärke jetzt <b>{c.rival.strength}</b>. Damit wurde gewürfelt (Schritte unten).
+            </div>
+          </div>
+        ) : null}
+        {/* 👻/⚡ Ghost-/Form-Bot: eigene Rechnung; bei Ersatz über Elo folgen die normalen Schritte */}
+        {c.mirror ? <MirrorSteps c={c} /> : null}
+        {c.champion ? <ChampionSteps c={c} /> : null}
+        {(c.mirror && !c.mirror.fallback) || c.champion ? null : (
+        <>
         <Step n={1} title="Datenbasis">
           <div>
             <b>{c.data.found}</b> Scores an „{c.machine}“ in dieser Location gefunden (beendete Turniere).
@@ -215,8 +257,152 @@ export function BotCalcView({
             </div>
           </Step>
         ) : null}
+        </>
+        )}
       </div>
     )}
+    </>
+  );
+}
+
+/** 👑 Champion-Bot: Spitzenfeld aller Scores */
+function ChampionSteps({ c }: { c: BotCalc }) {
+  const ch = c.champion;
+  if (!ch) return null;
+  const S = c.settings;
+  return (
+    <>
+      <Step n={1} title="👑 Champion-Bot · spielt wie die Besten">
+        <div>
+          <b>{c.data.usable}</b> verwendbare Scores an „{c.machine}“ in dieser Location (ohne Bots, Platzhalter, falsch markierte,
+          Timeplay/DYP) – die Elo der Spieler spielt keine Rolle.
+        </div>
+        <div>
+          Genommen: <b>{c.pool.label}</b> ({ch.poolCount} Scores)
+        </div>
+        {ch.few ? (
+          <div className="rounded-lg bg-amber-50 px-2 py-1 text-amber-800">
+            ⚠️ Nur {ch.poolCount} Scores – „die Besten“ ist hier noch wenig aussagekräftig.
+          </div>
+        ) : null}
+      </Step>
+      <Step n={2} title={`Die besten Scores (${c.samples.length})`}>
+        <div className="max-h-56 overflow-auto">
+          <table className="w-full text-[12px]">
+            <tbody>
+              {c.samples.map((s, i) => (
+                <tr key={i} className="border-t first:border-t-0">
+                  <td className="py-0.5 pr-2">{s.player}</td>
+                  <td className="py-0.5 pr-2 tabular-nums">{fmtDate(s.date)}</td>
+                  <td className="py-0.5 text-right font-semibold tabular-nums">
+                    {fmtScore(s.used)}
+                    {s.converted ? <span className="ml-1 text-[10px] text-neutral-400">(umgerechnet)</span> : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Step>
+      <Step n={3} title="Würfel">
+        <div>
+          Bereich = zwischen den {Math.round(S?.rangeLowPct ?? 85)} % und {Math.round(S?.rangeHighPct ?? 97)} % besten aller Scores:{" "}
+          <b>
+            {fmtScore(c.range?.low)} – {fmtScore(c.range?.high)}
+          </b>
+        </div>
+        {c.roll ? (
+          <div>
+            {c.roll.kind === "normal"
+              ? `🎲 Normales Spiel: bei ${String(c.roll.pct).replace(".", ",")} % des Bereichs`
+              : c.roll.kind === "outlier_high"
+              ? `🍀 Ausreißer nach oben (Chance ${Math.round((S?.outlierChance ?? 0) * 100)} %): ${String(c.roll.pct).replace(".", ",")} % über dem Bereich`
+              : `😬 Ausreißer nach unten (Chance ${Math.round((S?.outlierChance ?? 0) * 100)} %): ${String(c.roll.pct).replace(".", ",")} % unter dem Bereich`}
+          </div>
+        ) : null}
+        <div>
+          = <b>{fmtScore(c.score)}</b> (auf 10 gerundet)
+        </div>
+      </Step>
+    </>
+  );
+}
+
+/** 👻 Ghost-Bot / ⚡ Form-Bot: woraus gewürfelt wurde */
+function MirrorSteps({ c }: { c: BotCalc }) {
+  const m = c.mirror;
+  if (!m) return null;
+  const ghost = m.kind === "ghost";
+  const title = ghost ? `👻 Ghost-Bot · spielt wie ${m.owner}` : `⚡ Form-Bot · folgt der Form von ${m.owner}`;
+  return (
+    <>
+      <Step n={1} title={title}>
+        <div>
+          <b>{m.found}</b> Scores von {m.owner} an „{c.machine}“ in dieser Location gefunden (beendete Turniere + heute, ohne dieses Match).
+        </div>
+        <div>Genommen: {m.poolLabel}</div>
+        {m.ownerElo != null ? <div>Elo von {m.owner}: {m.ownerElo} (gilt auch als Elo des Bots)</div> : null}
+        {m.fallback ? (
+          <div className="rounded-lg bg-amber-50 px-2 py-1 text-amber-800">
+            ↪️ {m.fallback} Deshalb Ersatz: gewürfelt wie ein typischer Spieler mit Elo {m.ownerElo ?? "?"} (Schritte unten).
+          </div>
+        ) : null}
+      </Step>
+      {!m.fallback ? (
+        <>
+          <Step n={2} title={ghost ? `Seine Scores (${m.used.length})` : `Seine letzten ${m.used.length === 1 ? "Score" : `${m.used.length} Scores`}`}>
+            <div className="max-h-56 overflow-auto">
+              <table className="w-full text-[12px]">
+                <tbody>
+                  {m.used.map((u, i) => (
+                    <tr key={i} className="border-t first:border-t-0">
+                      <td className="py-0.5 pr-2 tabular-nums">{fmtDate(u.at)}</td>
+                      <td className="py-0.5 pr-2">
+                        {u.tournament}
+                        {u.current ? <span className="ml-1 text-violet-700">(heute)</span> : null}
+                      </td>
+                      <td className="py-0.5 text-right font-semibold tabular-nums">{fmtScore(u.score)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Step>
+          <Step n={3} title="Würfel">
+            {ghost ? (
+              <>
+                <div>
+                  Bereich = seine mittleren {(c.settings?.rangeHighPct ?? 85) - (c.settings?.rangeLowPct ?? 15)} %:{" "}
+                  <b>
+                    {fmtScore(c.range?.low)} – {fmtScore(c.range?.high)}
+                  </b>{" "}
+                  (Mitte {fmtScore(c.range?.median)})
+                </div>
+                {c.roll ? (
+                  <div>
+                    {c.roll.kind === "normal"
+                      ? `🎲 Normales Spiel: bei ${String(c.roll.pct).replace(".", ",")} % des Bereichs`
+                      : c.roll.kind === "outlier_high"
+                      ? `🍀 Ausreißer nach oben: ${String(c.roll.pct).replace(".", ",")} % über dem Bereich`
+                      : `😬 Ausreißer nach unten: ${String(c.roll.pct).replace(".", ",")} % unter dem Bereich`}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div>
+                Ø {fmtScore(m.avg)} ± {Math.round((m.spreadPct ?? 0) * 100)} % →{" "}
+                <b>
+                  {fmtScore(c.range?.low)} – {fmtScore(c.range?.high)}
+                </b>
+                , gleichmäßig gewürfelt
+              </div>
+            )}
+            <div>
+              = <b>{fmtScore(c.score)}</b> (auf 10 gerundet)
+            </div>
+          </Step>
+        </>
+      ) : null}
     </>
   );
 }

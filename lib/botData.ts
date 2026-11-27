@@ -120,6 +120,7 @@ export async function loadBotSamples(
       scoreIgnored: row.stats_ignored === true,
       matchId: String(row.match_id),
       playerId: String(row.player_id),
+      profileId: profId,
     });
   }
   return { samples, error: null };

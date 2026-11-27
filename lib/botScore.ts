@@ -30,7 +30,33 @@ export type BotSettings = {
   kWeights: { k16: number; k24: number; k32: number };
   minTotal: number;
   dataOutlierIqr: number;
+  /** ⚡ Form-Bot: Spanne um den Durchschnitt der letzten 2 Scores (0.05 = ±5 %) */
+  formSpreadPct: number;
+  /** 🥊 Rivalen-Bot: Stärke-Änderung je Duell mit seinem Spieler (+ wenn der Spieler vorne liegt) */
+  rivalStep: number;
+  /** 🥊 Rivalen-Bot: Grenzen der Stärke */
+  rivalMin: number;
+  rivalMax: number;
+  /** 🔴 Gambler-Bot: breiter Bereich + viele/starke Ausreißer */
+  gambler: BotStyle;
+  /** 🟣 Pro-Bot: enger Bereich + kaum Ausreißer */
+  pro: BotStyle;
+  /** 👑 Champion-Bot: Bereich im Spitzenfeld ALLER Scores (Perzentile), unabhängig von der Elo */
+  champion: BotStyle;
+  /** 🟠 Specialist-Bot: so viele Lieblingsflipper je Turnier (bei ≤ 4 aktiven Flippern immer 1) */
+  specialistFavs: number;
+  /** 🟠 Specialist-Bot: so viel Elo mehr an einem Lieblingsflipper */
+  specialistBonus: number;
+  /** 🎭 Charakter-Bot: Lieblings- und Angstflipper je Turnier (bei wenigen Flippern weniger) */
+  characterFavs: number;
+  characterFlops: number;
+  /** 🎭 Charakter-Bot: Elo mehr am Liebling / weniger am Angstflipper */
+  characterBonus: number;
+  characterMalus: number;
 };
+
+/** Streuung eines Bot-Stils (ersetzt Bereich + Ausreißer der festen Bots) */
+export type BotStyle = { rangeLowPct: number; rangeHighPct: number; outlierChance: number; outlierMax: number };
 
 // Werte vom Nutzer im Bot-Labor abgestimmt (2026-11-14)
 export const BOT_SETTINGS: BotSettings = {
@@ -56,7 +82,33 @@ export const BOT_SETTINGS: BotSettings = {
   minTotal: 3,
   /** Wahnsinns-/Pechspiele in den Daten aussortieren (Abstand in Quartilsabständen, log. Skala) */
   dataOutlierIqr: 1.5,
+  /** ⚡ Form-Bot: ±5 % um den Durchschnitt der letzten 2 Scores (Nutzer 2026-11-27) */
+  formSpreadPct: 0.05,
+  /** 🥊 Rivale: ±25 je Duell, Stärke 1000–2800 (Nutzer 2026-11-14 / 2026-11-28) */
+  rivalStep: 25,
+  rivalMin: 1000,
+  rivalMax: 2800,
+  /** 🔴 Gambler: mittlere 95 %, 35 % Ausreißer bis 30 % (Vorschlag 2026-11-28) */
+  gambler: { rangeLowPct: 2.5, rangeHighPct: 97.5, outlierChance: 0.35, outlierMax: 0.3 },
+  /** 🟣 Pro: mittlere 40 %, 3 % Ausreißer bis 5 % */
+  pro: { rangeLowPct: 30, rangeHighPct: 70, outlierChance: 0.03, outlierMax: 0.05 },
+  /** 👑 Champion: zwischen den 85 % und 97 % besten aller Scores, 5 % Ausreißer bis 5 % */
+  champion: { rangeLowPct: 85, rangeHighPct: 97, outlierChance: 0.05, outlierMax: 0.05 },
+  /** 🟠 Specialist: 2 Lieblingsflipper, dort +250 Elo */
+  specialistFavs: 2,
+  specialistBonus: 250,
+  /** 🎭 Charakter: 2 Lieblinge (+250), 2 Angstflipper (−250) */
+  characterFavs: 2,
+  characterFlops: 2,
+  characterBonus: 250,
+  characterMalus: 250,
 };
+
+/** Stellschrauben für eine Bot-Art: Gambler/Pro bekommen ihre eigene Streuung, alle anderen bleiben gleich */
+export function settingsForKind(S: BotSettings, kind: string | null | undefined): BotSettings {
+  const st = kind === "gambler" ? S.gambler : kind === "pro" ? S.pro : null;
+  return st ? { ...S, ...st } : S;
+}
 export type KStatus = "k16" | "k24" | "k32";
 
 /** ein echter, früherer Score (vom Server geladen) */
@@ -79,6 +131,8 @@ export type BotRawSample = {
   /** zum Markieren im Bot-Labor */
   matchId?: string;
   playerId?: string;
+  /** Profil des Spielers (👻/⚡ im Bot-Labor: Scores eines bestimmten Spielers) */
+  profileId?: string | null;
 };
 
 export type BotCalcSample = {
@@ -131,6 +185,59 @@ export type BotCalc = {
   roll: null | { kind: "normal" | "outlier_low" | "outlier_high"; pct: number };
   score: number | null;
   at: string;
+  /** 👻 Ghost-Bot / ⚡ Form-Bot: woraus gewürfelt wurde (lib/botMirror.ts); fehlt bei festen Elo-Bots */
+  mirror?: BotMirrorInfo;
+  /** 🥊 Rivalen-Bot: wie seine Stärke zustande kam (lib/botRival.ts) */
+  rival?: BotRivalInfo;
+  /** 🔴/🟣 Stil-Bot (eigene Streuung) */
+  style?: "gambler" | "pro";
+  /** 👑 Champion-Bot: Spitzenfeld aller Scores (lib/botChampion.ts) */
+  champion?: { poolCount: number; few: boolean };
+  /** 🟠 Specialist-Bot: Lieblingsflipper in diesem Turnier (lib/botSpecialist.ts) */
+  specialist?: {
+    favorites: string[];
+    isFavorite: boolean;
+    baseElo: number;
+    bonus: number;
+    /** 🎭 Charakter-Bot: zusätzlich Angstflipper */
+    character?: boolean;
+    flops?: string[];
+    isFlop?: boolean;
+    malus?: number;
+  };
+};
+
+/** 🥊 Angaben im Rechenzettel eines Rivalen-Bots */
+export type BotRivalInfo = {
+  owner: string;
+  /** Stärke beim Anlegen (= Elo des Spielers damals) */
+  start: number;
+  /** Stärke jetzt (= Elo, mit der gewürfelt wurde) */
+  strength: number;
+  /** Duelle: Spieler vorne / Rivale vorne */
+  wins: number;
+  losses: number;
+  step: number;
+};
+
+/** 👻/⚡ Angaben im Rechenzettel eines Ghost- bzw. Form-Bots */
+export type BotMirrorInfo = {
+  kind: "ghost" | "form";
+  /** Spieler, dem der Bot folgt */
+  owner: string;
+  ownerElo: number | null;
+  /** gefundene Scores des Spielers an diesem Flipper (Location) */
+  found: number;
+  /** welcher Datentopf (gleiches Format / gleiches Punkteniveau) */
+  poolLabel: string;
+  /** genommene Scores (neueste zuerst) */
+  used: { score: number; at: string | null; tournament: string; format: string | null; current: boolean }[];
+  /** Form-Bot: Durchschnitt der genommenen Scores */
+  avg?: number | null;
+  /** Form-Bot: Spanne (0.05 = ±5 %) */
+  spreadPct?: number;
+  /** gesetzt = zu wenig eigene Scores → Ersatz über die Elo des Spielers (Text = Grund) */
+  fallback: string | null;
 };
 
 export function kStatus(provisionalBefore: number | null, matchesBefore: number | null): KStatus {
@@ -166,7 +273,29 @@ export function weightedPercentile(items: { v: number; w: number }[], p: number)
   return pts[pts.length - 1].v;
 }
 
-const roundScore = (n: number) => Math.max(10, Math.round(n / 10) * 10);
+export const roundScore = (n: number) => Math.max(10, Math.round(n / 10) * 10);
+
+/**
+ * Würfeln im Bereich [low, high]: mit (1 − outlierChance) gleichmäßig darin, sonst ein Ausreißer
+ * bis outlierMax unter/über dem Bereich. (Gemeinsam für feste Bots und den 👻 Ghost-Bot.)
+ */
+export function rollInRange(
+  low: number,
+  high: number,
+  S: Pick<BotSettings, "outlierChance" | "outlierMax">,
+  rng: () => number
+): { score: number; roll: NonNullable<BotCalc["roll"]> } {
+  if (rng() < S.outlierChance) {
+    const up = rng() < 0.5;
+    const pct = rng() * S.outlierMax;
+    return {
+      score: up ? high * (1 + pct) : low * (1 - pct),
+      roll: { kind: up ? "outlier_high" : "outlier_low", pct: Math.round(pct * 1000) / 10 },
+    };
+  }
+  const t = rng();
+  return { score: low + t * (high - low), roll: { kind: "normal", pct: Math.round(t * 1000) / 10 } };
+}
 
 type Prepared = {
   raw: BotRawSample;
@@ -392,19 +521,9 @@ export function computeBotScore(input: {
   }
   calc.range = { low: Math.round(low), high: Math.round(high), median: Math.round(median) };
 
-  let score: number;
-  if (rng() < S.outlierChance) {
-    const up = rng() < 0.5;
-    const pct = rng() * S.outlierMax;
-    score = up ? high * (1 + pct) : low * (1 - pct);
-    calc.roll = { kind: up ? "outlier_high" : "outlier_low", pct: Math.round(pct * 1000) / 10 };
-  } else {
-    const t = rng();
-    score = low + t * (high - low);
-    calc.roll = { kind: "normal", pct: Math.round(t * 1000) / 10 };
-  }
-
-  calc.score = roundScore(score);
+  const rolled = rollInRange(low, high, S, rng);
+  calc.roll = rolled.roll;
+  calc.score = roundScore(rolled.score);
   calc.ok = true;
   return calc;
 }
@@ -448,5 +567,50 @@ export function normalizeBotSettings(raw: unknown): BotSettings {
     },
     minTotal: Math.round(num(r.minTotal, D.minTotal, 1, 100)),
     dataOutlierIqr: num(r.dataOutlierIqr, D.dataOutlierIqr, 0.1, 10),
+    formSpreadPct: num(r.formSpreadPct, D.formSpreadPct, 0, 1),
+    rivalStep: Math.round(num(r.rivalStep, D.rivalStep, 0, 200)),
+    rivalMin: Math.round(num(r.rivalMin, D.rivalMin, 100, 3000)),
+    rivalMax: Math.round(num(r.rivalMax, D.rivalMax, 100, 4000)),
+    gambler: normStyle(r.gambler, D.gambler),
+    pro: normStyle(r.pro, D.pro),
+    champion: normChampion(r.champion, D.champion),
+    specialistFavs: Math.round(num(r.specialistFavs, D.specialistFavs, 1, 10)),
+    specialistBonus: Math.round(num(r.specialistBonus, D.specialistBonus, 0, 1000)),
+    characterFavs: Math.round(num(r.characterFavs, D.characterFavs, 0, 10)),
+    characterFlops: Math.round(num(r.characterFlops, D.characterFlops, 0, 10)),
+    characterBonus: Math.round(num(r.characterBonus, D.characterBonus, 0, 1000)),
+    characterMalus: Math.round(num(r.characterMalus, D.characterMalus, 0, 1000)),
   };
+
+  function normChampion(v: unknown, def: BotStyle): BotStyle {
+    const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+    let lo = num(o.rangeLowPct, def.rangeLowPct, 50, 99);
+    let hi = num(o.rangeHighPct, def.rangeHighPct, 51, 100);
+    if (hi <= lo) {
+      lo = def.rangeLowPct;
+      hi = def.rangeHighPct;
+    }
+    return {
+      rangeLowPct: lo,
+      rangeHighPct: hi,
+      outlierChance: num(o.outlierChance, def.outlierChance, 0, 1),
+      outlierMax: num(o.outlierMax, def.outlierMax, 0, 2),
+    };
+  }
+
+  function normStyle(v: unknown, def: BotStyle): BotStyle {
+    const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+    let lo = num(o.rangeLowPct, def.rangeLowPct, 0, 49);
+    let hi = num(o.rangeHighPct, def.rangeHighPct, 51, 100);
+    if (hi <= lo) {
+      lo = def.rangeLowPct;
+      hi = def.rangeHighPct;
+    }
+    return {
+      rangeLowPct: lo,
+      rangeHighPct: hi,
+      outlierChance: num(o.outlierChance, def.outlierChance, 0, 1),
+      outlierMax: num(o.outlierMax, def.outlierMax, 0, 2),
+    };
+  }
 }

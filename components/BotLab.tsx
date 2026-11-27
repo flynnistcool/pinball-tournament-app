@@ -6,10 +6,14 @@
 // - Stellschrauben zum Ausprobieren (werden NICHT gespeichert – nur hier im Labor)
 // Gerechnet wird mit derselben Funktion wie beim echten Spielen (lib/botScore.ts).
 
-import { useEffect, useMemo, useState } from "react";
-import { BOT_SETTINGS, normalizeBotSettings, computeBotScore, kStatus, type BotCalc, type BotRawSample, type BotSettings } from "@/lib/botScore";
+import { useEffect, useMemo, useState, Fragment } from "react";
+import { BOT_SETTINGS, normalizeBotSettings, computeBotScore, settingsForKind, kStatus, type BotCalc, type BotRawSample, type BotSettings } from "@/lib/botScore";
 import { effectiveExtraball, extraballForced, scoreLevel } from "@/lib/botRules";
 import { BotCalcView, fmtLabel } from "@/components/BotCalcDialog";
+import { computeMirrorBotScore, type MirrorSample } from "@/lib/botMirror";
+import { computeChampionScore } from "@/lib/botChampion";
+import BotKindsOverview from "@/components/BotKindsOverview";
+import { botBadgeText } from "@/lib/botBadge";
 import ExtraballToggle from "@/components/ExtraballToggle";
 
 const nf = new Intl.NumberFormat("de-DE");
@@ -25,7 +29,79 @@ const LAB_FORMATS = [
 ];
 const RUNS = 200;
 
-type Bot = { id: string; name: string; rating: number | null };
+type Bot = {
+  id: string;
+  name: string;
+  rating: number | null;
+  /** 👻/⚡ Bot-Art + Spieler, dem der Bot folgt */
+  bot_kind?: string | null;
+  bot_owner_profile_id?: string | null;
+  owner_name?: string | null;
+};
+
+/**
+ * Eine Rechnung wie beim echten Würfeln: feste Bots über die Elo, 👻 Ghost / ⚡ Form aus den Scores
+ * ihres Spielers (hier nur beendete Turniere – "heute" gibt es im Labor nicht). Zu wenig eigene
+ * Scores → wie ein fester Bot mit der Elo des Spielers (= Elo des Bots).
+ */
+function labCalc(
+  bot: Bot | undefined,
+  name: string,
+  elo: number,
+  base: { machine: string; location: string | null; format: string; extraball: boolean; samples: BotRawSample[]; settings: BotSettings },
+  rng: () => number
+): BotCalc {
+  const level = scoreLevel(base.format, base.extraball) ?? "normal";
+  const kind = bot?.bot_kind === "ghost" || bot?.bot_kind === "form" ? bot.bot_kind : null;
+  let fallback: BotCalc["mirror"] | null = null;
+  if (kind && bot?.bot_owner_profile_id) {
+    const own: MirrorSample[] = base.samples
+      .filter((s) => s.profileId && String(s.profileId) === String(bot.bot_owner_profile_id))
+      .map((s) => ({
+        score: s.score,
+        format: s.format,
+        extraball: s.extraball,
+        at: s.date,
+        round: null,
+        tournamentName: s.tournamentName,
+        current: false,
+        scoreIgnored: s.scoreIgnored,
+      }));
+    const res = computeMirrorBotScore({
+      kind,
+      botName: name,
+      owner: { name: bot.owner_name ?? "?", elo },
+      machine: base.machine,
+      location: base.location,
+      format: base.format,
+      extraball: base.extraball,
+      level,
+      levelOf: scoreLevel,
+      samples: own,
+      settings: base.settings,
+      rng,
+    });
+    if (res.ok) return res.calc;
+    fallback = res.info;
+  }
+  const champion = bot?.bot_kind === "champion";
+  const calc = (champion ? computeChampionScore : computeBotScore)({
+    botName: name,
+    botElo: elo,
+    machine: base.machine,
+    location: base.location,
+    format: base.format,
+    extraball: base.extraball,
+    level,
+    levelOf: scoreLevel,
+    samples: base.samples,
+    settings: settingsForKind(base.settings, bot?.bot_kind), // 🔴/🟣 eigene Streuung
+    rng,
+  });
+  if (bot?.bot_kind === "gambler" || bot?.bot_kind === "pro") calc.style = bot.bot_kind;
+  if (fallback) calc.mirror = fallback;
+  return calc;
+}
 
 type SimResult = {
   key: string;
@@ -74,30 +150,19 @@ function simulate(
   name: string,
   elo: number,
   base: { machine: string; location: string | null; format: string; extraball: boolean; samples: BotRawSample[]; settings: BotSettings },
-  seed: number
+  seed: number,
+  bot?: Bot
 ): SimResult {
-  const rng = seededRng(hashSeed(`${seed}|${elo}`));
-  const level = scoreLevel(base.format, base.extraball) ?? "normal";
-  const input = {
-    botName: name,
-    botElo: elo,
-    machine: base.machine,
-    location: base.location,
-    format: base.format,
-    extraball: base.extraball,
-    level,
-    levelOf: scoreLevel,
-    samples: base.samples,
-    settings: base.settings,
-    rng,
-  };
-  const calc = computeBotScore(input);
+  // feste Bots: Startwert wie bisher (gleiche Zahlen wie vorher); 👻/⚡ zusätzlich je Bot
+  const mirrorBot = bot?.bot_kind === "ghost" || bot?.bot_kind === "form";
+  const rng = seededRng(hashSeed(mirrorBot ? `${seed}|${elo}|${key}` : `${seed}|${elo}`));
+  const calc = labCalc(bot, name, elo, base, rng);
   const scores: number[] = [];
   let up = 0;
   let down = 0;
   if (calc.ok) {
     for (let i = 0; i < RUNS; i++) {
-      const c = computeBotScore(input);
+      const c = labCalc(bot, name, elo, base, rng);
       if (c.score != null) scores.push(c.score);
       if (c.roll?.kind === "outlier_high") up++;
       if (c.roll?.kind === "outlier_low") down++;
@@ -314,7 +379,21 @@ export default function BotLab() {
   const results = useMemo(() => {
     if (!samples) return [];
     const base = { machine, location: locName, format, extraball: xb, samples, settings };
-    const list: SimResult[] = bots.map((b) => simulate(b.id, b.name, Number(b.rating ?? 1500), base, simSeed));
+    const list: SimResult[] = bots.flatMap((b) =>
+      b.bot_kind === "specialist"
+        ? [
+            simulate(b.id, b.name, Number(b.rating ?? 1500), base, simSeed, b),
+            // 🟠 zusätzlich: so würde er an einem Lieblingsflipper würfeln
+            simulate(`${b.id}|fav`, `${b.name} ⭐ am Lieblingsflipper`, Number(b.rating ?? 1500) + settings.specialistBonus, base, simSeed, b),
+          ]
+        : b.bot_kind === "character"
+        ? [
+            simulate(b.id, b.name, Number(b.rating ?? 1500), base, simSeed, b),
+            simulate(`${b.id}|fav`, `${b.name} ⭐ am Liebling`, Number(b.rating ?? 1500) + settings.characterBonus, base, simSeed, b),
+            simulate(`${b.id}|flop`, `${b.name} 😬 am Angstflipper`, Math.max(100, Number(b.rating ?? 1500) - settings.characterMalus), base, simSeed, b),
+          ]
+        : [simulate(b.id, b.name, Number(b.rating ?? 1500), base, simSeed, b)]
+    );
     const ce = Number(customElo);
     if (customElo.trim() && Number.isFinite(ce) && ce > 0) list.push(simulate("custom", `Eigene Elo`, ce, base, simSeed));
     return list.sort((a, b) => a.elo - b.elo);
@@ -359,20 +438,10 @@ export default function BotLab() {
     const level = scoreLevel(format, xb) ?? "normal";
     const list = results.map((r) => {
       const rolls: BotCalc[] = [];
+      const bot = bots.find((b) => b.id === r.key);
       for (let i = 0; i < 10; i++) {
         rolls.push(
-          computeBotScore({
-            botName: r.name,
-            botElo: r.elo,
-            machine,
-            location: locName,
-            format,
-            extraball: xb,
-            level,
-            levelOf: scoreLevel,
-            samples,
-            settings,
-          })
+          labCalc(bot, r.name, r.elo, { machine, location: locName, format, extraball: xb, samples, settings }, Math.random)
         );
       }
       return { key: r.key, name: r.name, elo: r.elo, rolls };
@@ -414,6 +483,11 @@ export default function BotLab() {
 
   return (
     <div className="space-y-4">
+      {/* 📖 alle Bot-Arten mit den gespeicherten Zahlen */}
+      <BotKindsOverview
+        settings={saved}
+        bots={bots.map((b) => ({ name: b.name, rating: b.rating, kind: b.bot_kind ?? null, owner: b.owner_name ?? null }))}
+      />
       {/* Auswahl */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="block">
@@ -553,6 +627,122 @@ export default function BotLab() {
               />
               <NumField label="Ausreißer-Chance" hint="So oft liegt der Bot außerhalb des Bereichs." value={Math.round(settings.outlierChance * 100)} base={Math.round(saved.outlierChance * 100)} onChange={(v) => set("outlierChance", Math.min(100, Math.max(0, v)) / 100)} suffix="%" />
               <NumField label="Ausreißer-Stärke (max.)" hint="So weit höchstens unter/über dem Bereich." value={Math.round(settings.outlierMax * 100)} base={Math.round(saved.outlierMax * 100)} onChange={(v) => set("outlierMax", Math.max(0, v) / 100)} suffix="%" />
+              {(["gambler", "pro"] as const).map((k) => {
+                const st = settings[k];
+                const sv = saved[k];
+                const icon = k === "gambler" ? "🔴 Gambler" : "🟣 Pro";
+                const setSt = (patch: Partial<typeof st>) => set(k, { ...st, ...patch });
+                return (
+                  <Fragment key={k}>
+                    <NumField
+                      label={`${icon}: Bereich (mittlere)`}
+                      hint={k === "gambler" ? "Gambler-Bot: so breit würfelt er (z. B. 95 %)." : "Pro-Bot: so eng würfelt er (z. B. 40 %)."}
+                      value={Math.round(st.rangeHighPct - st.rangeLowPct)}
+                      base={Math.round(sv.rangeHighPct - sv.rangeLowPct)}
+                      onChange={(v) => {
+                        const w = Math.min(100, Math.max(2, v));
+                        setSt({ rangeLowPct: (100 - w) / 2, rangeHighPct: 100 - (100 - w) / 2 });
+                      }}
+                      suffix="%"
+                    />
+                    <NumField
+                      label={`${icon}: Ausreißer-Chance`}
+                      hint="So oft liegt er außerhalb seines Bereichs."
+                      value={Math.round(st.outlierChance * 100)}
+                      base={Math.round(sv.outlierChance * 100)}
+                      onChange={(v) => setSt({ outlierChance: Math.min(100, Math.max(0, v)) / 100 })}
+                      suffix="%"
+                    />
+                    <NumField
+                      label={`${icon}: Ausreißer-Stärke`}
+                      hint="So weit höchstens unter/über seinem Bereich."
+                      value={Math.round(st.outlierMax * 100)}
+                      base={Math.round(sv.outlierMax * 100)}
+                      onChange={(v) => setSt({ outlierMax: Math.max(0, v) / 100 })}
+                      suffix="%"
+                    />
+                  </Fragment>
+                );
+              })}
+              <NumField
+                label="👑 Champion: Bereich ab"
+                hint="Champion-Bot: untere Grenze seines Bereichs – Perzentil aller Scores (85 = die besten 15 %)."
+                value={Math.round(settings.champion.rangeLowPct)}
+                base={Math.round(saved.champion.rangeLowPct)}
+                onChange={(v) => set("champion", { ...settings.champion, rangeLowPct: Math.min(99, Math.max(50, v)) })}
+                suffix="%"
+              />
+              <NumField
+                label="👑 Champion: Bereich bis"
+                hint="Obere Grenze – Perzentil aller Scores (97 = nur die besten 3 % liegen darüber)."
+                value={Math.round(settings.champion.rangeHighPct)}
+                base={Math.round(saved.champion.rangeHighPct)}
+                onChange={(v) => set("champion", { ...settings.champion, rangeHighPct: Math.min(100, Math.max(51, v)) })}
+                suffix="%"
+              />
+              <NumField
+                label="👑 Champion: Ausreißer-Chance"
+                hint="So oft liegt er außerhalb seines Bereichs."
+                value={Math.round(settings.champion.outlierChance * 100)}
+                base={Math.round(saved.champion.outlierChance * 100)}
+                onChange={(v) => set("champion", { ...settings.champion, outlierChance: Math.min(100, Math.max(0, v)) / 100 })}
+                suffix="%"
+              />
+              <NumField
+                label="👑 Champion: Ausreißer-Stärke"
+                hint="So weit höchstens unter/über seinem Bereich."
+                value={Math.round(settings.champion.outlierMax * 100)}
+                base={Math.round(saved.champion.outlierMax * 100)}
+                onChange={(v) => set("champion", { ...settings.champion, outlierMax: Math.max(0, v) / 100 })}
+                suffix="%"
+              />
+              <NumField
+                label="🟠 Specialist: Lieblingsflipper"
+                hint="So viele Lieblingsflipper je Turnier (bei höchstens 4 aktiven Flippern immer 1)."
+                value={settings.specialistFavs}
+                base={saved.specialistFavs}
+                onChange={(v) => set("specialistFavs", Math.min(10, Math.max(1, Math.round(v))))}
+              />
+              <NumField
+                label="🟠 Specialist: Bonus"
+                hint="So viel Elo mehr an einem Lieblingsflipper (im Labor: Zeile „⭐ am Lieblingsflipper“)."
+                value={settings.specialistBonus}
+                base={saved.specialistBonus}
+                onChange={(v) => set("specialistBonus", Math.max(0, Math.round(v)))}
+                suffix="Elo"
+              />
+              <NumField
+                label="🎭 Charakter: Lieblinge"
+                hint="So viele Lieblingsflipper je Turnier (mehr als 6 aktive Flipper; bei 4–6 → 1, bis 3 → 1)."
+                value={settings.characterFavs}
+                base={saved.characterFavs}
+                onChange={(v) => set("characterFavs", Math.min(10, Math.max(0, Math.round(v))))}
+              />
+              <NumField
+                label="🎭 Charakter: Angstflipper"
+                hint="So viele Angstflipper je Turnier (mehr als 6 aktive Flipper; bei 4–6 → 1, bis 3 → keiner)."
+                value={settings.characterFlops}
+                base={saved.characterFlops}
+                onChange={(v) => set("characterFlops", Math.min(10, Math.max(0, Math.round(v))))}
+              />
+              <NumField
+                label="🎭 Charakter: Bonus Liebling"
+                hint="So viel Elo mehr an einem Lieblingsflipper."
+                value={settings.characterBonus}
+                base={saved.characterBonus}
+                onChange={(v) => set("characterBonus", Math.max(0, Math.round(v)))}
+                suffix="Elo"
+              />
+              <NumField
+                label="🎭 Charakter: Malus Angstflipper"
+                hint="So viel Elo weniger an einem Angstflipper."
+                value={settings.characterMalus}
+                base={saved.characterMalus}
+                onChange={(v) => set("characterMalus", Math.max(0, Math.round(v)))}
+                suffix="Elo"
+              />
+              <NumField label="🥊 Rivale: je Duell (±)" hint="Rivalen-Bot: so viel stärker, wenn sein Spieler vorne liegt – so viel schwächer, wenn der Spieler verliert." value={settings.rivalStep} base={saved.rivalStep} onChange={(v) => set("rivalStep", Math.max(0, Math.round(v)))} suffix="Elo" />
+              <NumField label="⚡ Form-Bot Spanne (±)" hint="Form-Bot: so weit um den Durchschnitt der letzten 2 Scores seines Spielers." value={Math.round(settings.formSpreadPct * 100)} base={Math.round(saved.formSpreadPct * 100)} onChange={(v) => set("formSpreadPct", Math.min(100, Math.max(0, v)) / 100)} suffix="%" />
               <NumField label="Auf-/Abschlag je 100 Elo" hint="Wenn es keine Spieler mit ähnlicher Elo gibt (z. B. 2500er)." value={Math.round(settings.extrapolatePer100 * 100)} base={Math.round(saved.extrapolatePer100 * 100)} onChange={(v) => set("extrapolatePer100", Math.max(0, v) / 100)} suffix="%" />
               <NumField label="Faktor Extraball-Niveau" hint="Umrechnung normal ↔ hoch (1,25 = Extraball-Scores sind 25 % höher)." value={settings.levelFactor} base={saved.levelFactor} onChange={(v) => set("levelFactor", Math.max(1, v || 1))} step={0.05} />
               <NumField label="Gewicht K24" hint="Spieler mit 10–30 Matches (Elo ziemlich sicher). K16 = 1 (voll)." value={settings.kWeights.k24} base={saved.kWeights.k24} onChange={(v) => set("kWeights", { ...settings.kWeights, k24: Math.max(0, v) })} step={0.05} />
@@ -599,9 +789,35 @@ export default function BotLab() {
                         onClick={() => setOpenKey(openKey === r.key ? null : r.key)}
                         className={"cursor-pointer border-t hover:bg-violet-50 " + (openKey === r.key ? "bg-violet-50" : "")}
                       >
-                        <td className="py-1.5 pr-2 font-semibold">{r.name}</td>
+                        <td className="py-1.5 pr-2 font-semibold">
+                          {r.name}
+                          {r.calc.mirror ? (
+                            <div className="text-[11px] font-normal text-violet-700">
+                              {botBadgeText(r.calc.mirror.kind, r.calc.mirror.owner)}
+                            </div>
+                          ) : r.calc.style ? (
+                            <div className="text-[11px] font-normal text-violet-700">{botBadgeText(r.calc.style, null)}</div>
+                          ) : r.calc.champion ? (
+                            <div className="text-[11px] font-normal text-violet-700">{botBadgeText("champion", null)}</div>
+                          ) : bots.find((b) => r.key.startsWith(b.id))?.bot_kind === "specialist" ? (
+                            <div className="text-[11px] font-normal text-orange-700">{botBadgeText("specialist", null)}</div>
+                          ) : bots.find((b) => r.key.startsWith(b.id))?.bot_kind === "character" ? (
+                            <div className="text-[11px] font-normal text-orange-700">{botBadgeText("character", null)}</div>
+                          ) : null}
+                        </td>
                         <td className="py-1.5 pr-2 tabular-nums">{r.elo}</td>
                         <td className="py-1.5 pr-2 text-neutral-600">
+                          {r.calc.mirror && !r.calc.mirror.fallback ? (
+                            r.calc.mirror.kind === "ghost" ? (
+                              `${r.calc.mirror.used.length} eigene Scores von ${r.calc.mirror.owner}`
+                            ) : (
+                              `letzte ${r.calc.mirror.used.length}: Ø ${mio(r.calc.mirror.avg ?? NaN)} ± ${Math.round((r.calc.mirror.spreadPct ?? 0) * 100)} %`
+                            )
+                          ) : (
+                          <>
+                          {r.calc.mirror?.fallback ? (
+                            <span className="mr-1 text-amber-700">↪️ zu wenig eigene Scores → Elo:</span>
+                          ) : null}
                           {!r.calc.ok
                             ? `⚠️ ${r.calc.error}`
                             : r.calc.extrapolation
@@ -611,6 +827,8 @@ export default function BotLab() {
                             <span className="ml-1 text-neutral-400">({r.calc.pool.key === "sameMode" ? "nur gleicher Modus" : "inkl. umgerechnet"})</span>
                           ) : null}
                           {r.calc.dataOutliers.length ? <span className="ml-1 text-amber-700">· {r.calc.dataOutliers.length} Ausreißer raus</span> : null}
+                          </>
+                          )}
                         </td>
                         <td className="py-1.5 pr-2 text-right tabular-nums">
                           {r.calc.range ? `${mio(r.calc.range.low)} – ${mio(r.calc.range.high)}` : "–"}
