@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { loadArcadeRuns } from "@/lib/arcadeServer";
-import { compareArcadeRuns } from "@/lib/arcade";
+import { berlinDay, compareArcadeRuns } from "@/lib/arcade";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -33,7 +33,9 @@ export async function GET(req: Request) {
         { wins: r.wins, stagesTotal: r.stagesTotal, livesLeft: r.livesLeft, status: r.status, at: r.at },
       ])
     );
-    return NextResponse.json({ ok: true, cleared, best, played, clears }, { headers: { "Cache-Control": "no-store" } });
+    const today = berlinDay(new Date());
+    const dailyPlayedToday = runs.some((r) => r.mode === "daily" && r.day === today);
+    return NextResponse.json({ ok: true, cleared, best, played, clears, dailyPlayedToday }, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {
     console.error("arcade/progress crash:", e);
     return NextResponse.json({ ok: false, error: String((e as Error)?.message ?? e) }, { status: 500 });

@@ -7,16 +7,16 @@
 import { useEffect, useState } from "react";
 import { botRollQuantile } from "@/lib/botScoreRating";
 
-type Preview = {
+export type BotPreview = {
   range: { low: number; high: number } | null;
   settings: { outlierChance: number; outlierMax: number };
   specialist: { isFavorite: boolean; isFlop: boolean } | null;
   fallback: string | null;
 };
 
-const cache = new Map<string, Promise<Preview | null>>();
+const cache = new Map<string, Promise<BotPreview | null>>();
 
-function load(code: string, matchId: string, playerId: string, key: string): Promise<Preview | null> {
+export function loadBotPreview(code: string, matchId: string, playerId: string, key: string): Promise<BotPreview | null> {
   const hit = cache.get(key);
   if (hit) return hit;
   const p = fetch(
@@ -24,7 +24,7 @@ function load(code: string, matchId: string, playerId: string, key: string): Pro
     { cache: "no-store" }
   )
     .then((r) => r.json())
-    .then((j) => (j?.ok ? (j as Preview) : null))
+    .then((j) => (j?.ok ? (j as BotPreview) : null))
     .catch(() => {
       cache.delete(key);
       return null;
@@ -53,13 +53,13 @@ export default function BotPreviewLine({
   machineName: string | null | undefined;
   hidden?: boolean;
 }) {
-  const [pv, setPv] = useState<Preview | null>(null);
+  const [pv, setPv] = useState<BotPreview | null>(null);
   const key = `${code}|${matchId}|${playerId}|${machineName ?? ""}`;
   useEffect(() => {
     if (hidden || !machineName) return;
     let alive = true;
     setPv(null);
-    load(code, matchId, playerId, key).then((v) => alive && setPv(v));
+    loadBotPreview(code, matchId, playerId, key).then((v) => alive && setPv(v));
     return () => {
       alive = false;
     };

@@ -52,6 +52,13 @@ const TICKER: NotifPlacement = { where: "Eintrag im Ticker", seconds: null, soun
 
 export const NOTIFICATIONS: readonly NotificationDef[] = [
   {
+    id: "botRating",
+    icon: "🤖",
+    title: "Bot: Sahnetag / rabenschwarzer Tag",
+    when: "Ein KI-Bot würfelt einen für SEINE Verhältnisse extremen Score (🤩 besser als 90 % bzw. 😖 schlechter als 90 % seiner Würfe)",
+    devices: { ticker: TICKER },
+  },
+  {
     id: "record",
     icon: "🏆",
     title: "Allzeit-Highscore",
@@ -806,6 +813,7 @@ const SCOPE_OF: Record<string, NotifScope> = {
   matchShort: "short",
   waveShort: "short",
   scoreForm: "spieler",
+  botRating: "spieler",
   scoreThanks: "team",
   scoreHelper: "team",
   scoreTip: "team",

@@ -4,7 +4,15 @@
 // - Alle anderen: über profiles.arcade_key (z. B. "pro:1600"); fehlt er → anlegen (is_bot, bot_kind, Elo).
 
 import type { supabaseAdmin } from "@/lib/supabaseServer";
-import { arcadeDuelWon, arcadeState, type ArcadeDuel, type ArcadeRun, type ArcadeStageSpec } from "@/lib/arcade";
+import {
+  arcadeDuelWon,
+  arcadeState,
+  berlinDay,
+  seededOrder,
+  type ArcadeDuel,
+  type ArcadeRun,
+  type ArcadeStageSpec,
+} from "@/lib/arcade";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 
 type Sb = ReturnType<typeof supabaseAdmin>;
@@ -59,12 +67,16 @@ export async function ensureArcadeBots(
 // 🏆 Läufe auswerten (Freischalten, Rangliste, Hall of Fame, Profil)
 
 /** alle Arcade-Läufe (optional nur eines Spielers) mit ihrem Stand */
-export async function loadArcadeRuns(sb: Sb, opts: { profileId?: string | null } = {}): Promise<{ runs: ArcadeRun[]; error: string | null }> {
+export async function loadArcadeRuns(
+  sb: Sb,
+  opts: { profileId?: string | null; mode?: string | null } = {}
+): Promise<{ runs: ArcadeRun[]; error: string | null }> {
   let q = sb
     .from("tournaments")
-    .select("id, code, status, format, created_at, arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
+    .select("id, code, status, format, created_at, location_id, arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
     .not("arcade_mode", "is", null);
   if (opts.profileId) q = q.eq("arcade_profile_id", opts.profileId);
+  if (opts.mode) q = q.eq("arcade_mode", opts.mode);
   const { data: ts, error } = await q;
   if (error) return { runs: [], error: `Arcade-Läufe laden fehlgeschlagen (supabase_arcade.sql ausgeführt?): ${error.message}` };
   const tours = (ts ?? []) as {
@@ -73,6 +85,7 @@ export async function loadArcadeRuns(sb: Sb, opts: { profileId?: string | null }
     status: string | null;
     format: string | null;
     created_at: string | null;
+    location_id: string | null;
     arcade_mode: string;
     arcade_lives: number | null;
     arcade_stages: string[] | null;
@@ -122,6 +135,7 @@ export async function loadArcadeRuns(sb: Sb, opts: { profileId?: string | null }
     if (!stages.length || !t.arcade_profile_id) continue;
     const me = pl.data.find((p) => String(p.tournament_id) === String(t.id) && String(p.profile_id) === String(t.arcade_profile_id));
     if (!me) continue;
+    let margin = 0; // Summe "mein Score ÷ Bot-Score" (Tiebreak der Tages-Challenge)
     const duels: ArcadeDuel[] = (matchesByT.get(String(t.id)) ?? []).map((m) => {
       const rows = mpsByMatch.get(m.id) ?? [];
       const mine = rows.find((x) => String(x.player_id) === String(me.id));
@@ -130,6 +144,9 @@ export async function loadArcadeRuns(sb: Sb, opts: { profileId?: string | null }
         position: x?.position ?? null,
         score: x?.score != null && x.score !== "" ? Number(x.score) : null,
       });
+      const a = v(mine).score;
+      const b = v(bot).score;
+      if (a != null && b != null && a > 0 && b > 0) margin += Math.min(10, a / b);
       return { roundNumber: m.round, won: mine && bot ? arcadeDuelWon(v(mine), v(bot)) : null };
     });
     const st = arcadeState(stages.length, Number(t.arcade_lives ?? 1), duels);
@@ -147,6 +164,9 @@ export async function loadArcadeRuns(sb: Sb, opts: { profileId?: string | null }
       finished: t.status === "finished",
       at: t.created_at ?? null,
       format: t.format ?? null,
+      locationId: t.location_id ?? null,
+      day: berlinDay(t.created_at),
+      margin: Math.round(margin * 1000) / 1000,
     });
   }
   return { runs, error: null };
@@ -162,13 +182,19 @@ type BotRow = {
   bot_kind: string | null;
   arcade_key: string | null;
   bot_owner_profile_id: string | null;
+  created_at?: string | null;
 };
 const FIXED_KINDS = new Set(["fixed", "gambler", "pro", "specialist", "character"]);
 
-export async function buildDynamicStages(sb: Sb, mode: string, profileId: string): Promise<{ ids: string[]; error: string | null }> {
+export async function buildDynamicStages(
+  sb: Sb,
+  mode: string,
+  profileId: string,
+  opts: { locationId?: string | null } = {}
+): Promise<{ ids: string[]; error: string | null }> {
   const { data, error } = await sb
     .from("profiles")
-    .select("id, name, rating, bot_kind, arcade_key, bot_owner_profile_id")
+    .select("id, name, rating, bot_kind, arcade_key, bot_owner_profile_id, created_at")
     .eq("is_bot", true);
   if (error) return { ids: [], error: error.message };
   const bots = (data ?? []) as BotRow[];
@@ -187,6 +213,21 @@ export async function buildDynamicStages(sb: Sb, mode: string, profileId: string
     const ids = [...own.map((b) => String(b.id)), ends.ids["champion"], ends.ids["classic:terminator"]];
     if (ids.length < 3) return { ids: [], error: "Für den Monster-Rush braucht es eigene Bots mit fester Elo." };
     return { ids, error: null };
+  }
+
+  if (mode === "daily") {
+    // 📅 für alle gleich: Tag + Location bestimmen die 5 Gegner (nur Bots, die vor heute angelegt wurden)
+    const day = berlinDay(new Date());
+    const pool = bots.filter(
+      (b) =>
+        FIXED_KINDS.has(String(b.bot_kind ?? "fixed")) &&
+        Number(b.rating ?? 0) >= 1400 &&
+        Number(b.rating ?? 0) <= 2200 &&
+        (!b.created_at || berlinDay(b.created_at) < day)
+    );
+    if (pool.length < 5) return { ids: [], error: "Zu wenige Bots zwischen 1400 und 2200 Elo für die Tages-Challenge." };
+    const picked = seededOrder(pool, day + "|" + String(opts.locationId ?? ""), (b) => String(b.id)).slice(0, 5);
+    return { ids: picked.sort((a, b) => Number(a.rating ?? 0) - Number(b.rating ?? 0)).map((b) => String(b.id)), error: null };
   }
 
   if (mode === "random") {

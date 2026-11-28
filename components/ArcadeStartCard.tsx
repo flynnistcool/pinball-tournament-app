@@ -29,6 +29,7 @@ export default function ArcadeStartCard({
   const [err, setErr] = useState<string | null>(null);
   // 🔒 Freischalten: geschaffte Modi des gewählten Spielers
   const [cleared, setCleared] = useState<Set<string> | null>(null);
+  const [dailyDone, setDailyDone] = useState(false); // 📅 heute schon gespielt
   useEffect(() => {
     if (!profileId) {
       setCleared(null);
@@ -38,13 +39,18 @@ export default function ArcadeStartCard({
     setCleared(null);
     fetch(`/api/arcade/progress?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`, { cache: "no-store" })
       .then((r) => r.json())
-      .then((j) => alive && setCleared(new Set(Array.isArray(j?.cleared) ? j.cleared.map(String) : [])))
+      .then((j) => {
+        if (!alive) return;
+        setCleared(new Set(Array.isArray(j?.cleared) ? j.cleared.map(String) : []));
+        setDailyDone(j?.dailyPlayedToday === true);
+      })
       .catch(() => alive && setCleared(new Set()));
     return () => {
       alive = false;
     };
   }, [profileId]);
-  const isOpen = (m: (typeof ARCADE_MODES)[number]) => arcadeUnlocked(m, cleared ?? new Set());
+  const isOpen = (m: (typeof ARCADE_MODES)[number]) =>
+    arcadeUnlocked(m, cleared ?? new Set()) && !(m.mode === "daily" && dailyDone);
 
   useEffect(() => {
     fetch(`/api/profiles/list?ts=${Date.now()}`, { cache: "no-store" })
@@ -172,7 +178,13 @@ export default function ArcadeStartCard({
               type="button"
               onClick={() => open && setMode(m.mode)}
               disabled={!open}
-              title={open ? m.hint : `🔒 Erst ${need?.icon ?? ""} ${need?.label ?? ""} schaffen`}
+              title={
+                open
+                  ? m.hint
+                  : m.mode === "daily" && dailyDone
+                  ? "📅 Heute schon gespielt"
+                  : `🔒 Erst ${need?.icon ?? ""} ${need?.label ?? ""} schaffen`
+              }
               className={
                 "rounded-xl border px-2 py-2 text-left transition " +
                 (!open
@@ -187,7 +199,11 @@ export default function ArcadeStartCard({
                 {cleared?.has(m.mode) ? <span className="ml-1" title="schon geschafft">✅</span> : null}
               </div>
               <div className={"text-[11px] " + (mode === m.mode && open ? "text-white/80" : "text-neutral-500")}>
-                {open ? m.hint : `erst ${need?.icon ?? ""} ${need?.label ?? ""} schaffen`}
+                {open
+                  ? m.hint
+                  : m.mode === "daily" && dailyDone
+                  ? "heute schon gespielt – morgen gibt es eine neue"
+                  : `erst ${need?.icon ?? ""} ${need?.label ?? ""} schaffen`}
                 {!m.ranked ? " · ohne Rangliste" : ""}
               </div>
             </button>

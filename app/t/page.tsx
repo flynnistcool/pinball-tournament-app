@@ -86,6 +86,12 @@ import { playMinutesOf as pbPlayMinutesOf } from "@/lib/playMinutes";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import BotScoreRatingBadge from "@/components/BotScoreRatingBadge";
 import BotPreviewLine from "@/components/BotPreviewLine";
+import BotScoreChance from "@/components/BotScoreChance";
+import {
+  rateBotScore as pbRateBotScore,
+  botRatingText as pbBotRatingText,
+  botDiffText as pbBotDiffText,
+} from "@/lib/botScoreRating";
 import { botBadgeText as pbBotBadgeText, botBadgeTitle as pbBotBadgeTitle } from "@/lib/botBadge";
 import { useBotSettings as pbUseBotSettings } from "@/components/useBotSettings";
 import {
@@ -9407,6 +9413,24 @@ disabled={
       </div>
     ) : null}
 
+    {/* 📊 Übergangsphase: gegen einen Bot (Duell 1 gegen 1) beide Siegchancen – nach Elo und nach deinen Scores am Flipper */}
+    {(() => {
+      if (tournament?.status === "finished" || playersById?.[String(mp?.player_id)]?.isBot) return null;
+      const list = (mps ?? []) as any[];
+      const botMp = list.length === 2 ? list.find((x: any) => String(x?.player_id) !== String(mp?.player_id) && playersById?.[String(x?.player_id)]?.isBot) : null;
+      if (!botMp || !m?.id) return null;
+      return (
+        <BotScoreChance
+          code={code}
+          matchId={String(m.id)}
+          botPlayerId={String(botMp.player_id)}
+          profileId={playersById?.[String(mp.player_id)]?.profile_id ?? null}
+          machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
+          eloChance={chanceBar && !chanceBar.frozen ? chanceBar.chance : null}
+        />
+      );
+    })()}
+
     {/* Winrate direkt im Match (links) – nur Anordnung "balken" */}
     {!isTimeplayFormat && PLAYER_ROW_LAYOUT === "balken" && (
     <div className="pl-9 flex flex-col text-[11px] leading-snug tabular-nums text-neutral-500">
@@ -9972,6 +9996,31 @@ return (
         playerId={String(mp.player_id)}
         botName={playersById?.[String(mp.player_id)]?.name ?? null}
         machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
+        onRated={(score, calc) => {
+          // 📣 Ticker: nur bei extremen Würfen (🤩 Sahnetag / 😖 rabenschwarzer Tag)
+          const r = pbRateBotScore(calc, score);
+          if (!r || (r.tier !== "top" && r.tier !== "bad")) return;
+          const bot = playersById?.[String(mp.player_id)]?.name ?? "Bot";
+          const machine = m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? "" : "";
+          const key = "botRating|" + String(mp.match_id) + "|" + String(mp.player_id);
+          postFeedItems(code, [
+            {
+              key,
+              kind: "botRating",
+              icon: r.emoji,
+              title: pbBotRatingText(r.tier, bot, key),
+              body:
+                Math.round(score).toLocaleString("de-DE") +
+                (machine ? " an " + machine : "") +
+                " – " +
+                pbBotDiffText(r.diffPct) +
+                " (typisch " +
+                Math.round(r.typical).toLocaleString("de-DE") +
+                ")",
+              players: [String(mp.player_id)],
+            },
+          ]);
+        }}
         hasScore={getScore(mp) != null}
         currentScore={getScore(mp)}
         disabled={locked || rotationWaitLocked}

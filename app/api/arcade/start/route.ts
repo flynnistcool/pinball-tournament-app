@@ -11,7 +11,7 @@ import { supabaseAdmin } from "@/lib/supabaseServer";
 import { sha256, randomCode } from "@/lib/crypto";
 import { extraballForced } from "@/lib/botRules";
 import { DEFAULT_PLAY_MINUTES, normalizePlayMinutes } from "@/lib/playMinutes";
-import { arcadeModeDef, arcadeModeDef as defOf, arcadeUnlocked } from "@/lib/arcade";
+import { arcadeModeDef, arcadeModeDef as defOf, arcadeUnlocked, berlinDay } from "@/lib/arcade";
 import { buildDynamicStages, ensureArcadeBots, loadArcadeRuns } from "@/lib/arcadeServer";
 
 export const dynamic = "force-dynamic";
@@ -49,10 +49,18 @@ export async function POST(req: Request) {
       }
     }
 
+    // 📅 Tages-Challenge: nur 1 Versuch pro Spieler und Tag
+    if (def.mode === "daily") {
+      const r = await loadArcadeRuns(sb, { profileId, mode: "daily" });
+      if (r.error) return fail(r.error, 500);
+      const today = berlinDay(new Date());
+      if (r.runs.some((x) => x.day === today)) return fail("📅 Die Tages-Challenge hast du heute schon gespielt – morgen gibt es eine neue!", 409);
+    }
+
     // 🤖 Gegner: feste Liste (fehlende Bots einmal anlegen) oder beim Start zusammengestellt (Monster-Rush/Spiegel/Zufall)
     let stages: string[];
     if (def.dynamic) {
-      const dyn = await buildDynamicStages(sb, def.mode, profileId);
+      const dyn = await buildDynamicStages(sb, def.mode, profileId, { locationId });
       if (dyn.error) return fail(dyn.error, 400);
       stages = dyn.ids;
     } else {

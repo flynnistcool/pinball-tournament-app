@@ -18,7 +18,10 @@ export default function BotScoreButtons({
   onRolled,
   botName,
   machineName,
+  onRated,
 }: {
+  /** nach dem Speichern: Score + Rechenzettel (z. B. für die Ticker-Meldung bei 🤩/😖) */
+  onRated?: (score: number, calc: BotCalc | null) => void;
   /** für die "Bot spielt"-Show */
   botName?: string | null;
   machineName?: string | null;
@@ -62,6 +65,7 @@ export default function BotScoreButtons({
     setCalc(c);
     try {
       await onRolled(score); // erst nach der Show speichern
+      onRated?.(score, c);
     } finally {
       setBusy(false);
     }

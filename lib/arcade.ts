@@ -12,7 +12,8 @@ export type ArcadeMode =
   | "classic_rush"
   | "monster_rush"
   | "mirror"
-  | "random";
+  | "random"
+  | "daily";
 
 /** Gegner einer Stufe. classic = vorhandener Bot (per Name gesucht, sonst angelegt); sonst automatisch angelegt (arcade_key) */
 export type ArcadeStageSpec = {
@@ -155,6 +156,16 @@ export const ARCADE_MODES: ArcadeModeDef[] = [
     stages: [],
   },
   {
+    mode: "daily",
+    icon: "📅",
+    label: "Tages-Challenge",
+    hint: "Für alle gleich: heute dieselben 5 Gegner + Flipper, 1 Leben, 1 Versuch pro Tag – eigene Tages-Rangliste",
+    lives: 1,
+    ranked: false,
+    dynamic: true,
+    stages: [],
+  },
+  {
     mode: "random",
     icon: "🎲",
     label: "Zufall",
@@ -186,7 +197,36 @@ export type ArcadeRun = {
   finished: boolean;
   at: string | null;
   format: string | null;
+  /** 📅 Tages-Challenge: Location + Tag (Europe/Berlin) */
+  locationId?: string | null;
+  day?: string | null;
+  /** Summe "mein Score ÷ Bot-Score" der entschiedenen Duelle (Tiebreak: wer deutlicher gewonnen hat) */
+  margin?: number;
 };
+
+/** 📅 Tag eines Zeitpunkts in Europe/Berlin (YYYY-MM-DD) */
+export function berlinDay(iso: string | Date | null | undefined): string {
+  const d = iso ? new Date(iso) : new Date();
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+
+/** feste "Auslosung": gleiche Kennung → gleiche Reihenfolge (z. B. Tages-Challenge: Tag + Location) */
+export function seededOrder<T>(items: readonly T[], seed: string, keyOf: (x: T) => string): T[] {
+  const h = (t: string) => {
+    let x = 2166136261;
+    for (let i = 0; i < t.length; i++) {
+      x ^= t.charCodeAt(i);
+      x = Math.imul(x, 16777619);
+    }
+    return x >>> 0;
+  };
+  return [...items].sort((a, b) => h(`${seed}|${keyOf(a)}`) - h(`${seed}|${keyOf(b)}`) || keyOf(a).localeCompare(keyOf(b)));
+}
+
+/** Tages-Rangliste: weiter gekommen zuerst, dann deutlicher gewonnen (margin), dann früher */
+export function compareDailyRuns(a: ArcadeRun, b: ArcadeRun): number {
+  return b.wins - a.wins || (b.margin ?? 0) - (a.margin ?? 0) || String(a.at ?? "").localeCompare(String(b.at ?? ""));
+}
 
 export function compareArcadeRuns(a: ArcadeRun, b: ArcadeRun): number {
   const pa = a.stagesTotal ? a.wins / a.stagesTotal : 0;

@@ -6,7 +6,8 @@
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
-import { arcadeDuelWon, arcadeState, type ArcadeDuel } from "@/lib/arcade";
+import { arcadeDuelWon, arcadeState, berlinDay, seededOrder, type ArcadeDuel } from "@/lib/arcade";
+import { machineKey } from "@/lib/machineStats";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
 
     const { data: t, error: tErr } = await sb
       .from("tournaments")
-      .select("id, status, format, arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
+      .select("id, status, format, created_at, location_id, arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
       .eq("code", code)
       .maybeSingle();
     if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
@@ -34,6 +35,8 @@ export async function POST(req: Request) {
       id: string;
       status: string | null;
       format: string | null;
+      created_at: string | null;
+      location_id: string | null;
       arcade_mode: string | null;
       arcade_lives: number | null;
       arcade_stages: string[] | null;
@@ -116,9 +119,9 @@ export async function POST(req: Request) {
     }
 
     // Flipper: zufällig aus den aktiven, möglichst nicht derselbe wie im letzten Duell
-    const { data: machines, error: mcErr } = await sb.from("machines").select("id, active").eq("tournament_id", tt.id);
+    const { data: machines, error: mcErr } = await sb.from("machines").select("id, name, active").eq("tournament_id", tt.id);
     if (mcErr) return fail(mcErr.message, 500);
-    const active = ((machines ?? []) as { id: string; active: boolean | null }[]).filter((m) => m.active !== false);
+    const active = ((machines ?? []) as { id: string; name: string | null; active: boolean | null }[]).filter((m) => m.active !== false);
     if (!active.length) return fail("Keine aktiven Flipper", 400);
     const lastMatch = [...(matches as { id: string; round_id: string; machine_id: string | null }[])].sort(
       (a, b) => (roundNo.get(String(b.round_id)) ?? 0) - (roundNo.get(String(a.round_id)) ?? 0)
@@ -129,7 +132,14 @@ export async function POST(req: Request) {
     const lastActive = active.find((m) => String(m.id) === String(lastMatch?.machine_id ?? ""));
     const reuse = lastLost && lastActive && sameMachineWish !== false;
     const pool = active.length > 1 ? active.filter((m) => String(m.id) !== String(lastMatch?.machine_id ?? "")) : active;
-    const machine = reuse ? lastActive : pool[Math.floor(Math.random() * pool.length)];
+    // 📅 Tages-Challenge: Flipper je Stufe für alle gleich (Tag + Location + Stufe)
+    const dailyMachine =
+      tt.arcade_mode === "daily"
+        ? seededOrder(active, berlinDay(tt.created_at) + "|" + String(tt.location_id ?? "") + "|machines", (m) => machineKey(m.name))[
+            st.wins % active.length
+          ]
+        : null;
+    const machine = dailyMachine ?? (reuse ? lastActive : pool[Math.floor(Math.random() * pool.length)]);
 
     const nextNumber = Math.max(0, ...Array.from(roundNo.values())) + 1;
     const { data: round, error: nrErr } = await sb
