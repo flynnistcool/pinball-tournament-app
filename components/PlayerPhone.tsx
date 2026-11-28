@@ -37,6 +37,9 @@ import { RivalryEventPhone, useRivalryEvents } from "@/components/RivalryEvents"
 import LiveTicker from "@/components/LiveTicker";
 import PhoneFeedCards from "@/components/PhoneFeedCards";
 import PhoneScoreBalance from "@/components/PhoneScoreBalance";
+import ArcadeTower, { arcadeViewOf } from "@/components/ArcadeTower";
+import ArcadeOverlay, { ArcadeBar, useArcadeMoment } from "@/components/ArcadeOverlay";
+import { arcadeModeDef } from "@/lib/arcade";
 
 const POLL_MS = 6000;
 /** nach dem Speichern so lange Pause (Admin-Seite aktualisiert alle 12 s) */
@@ -126,6 +129,18 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
   // 📡 Ticker über den Server (falls eingeschaltet): auch Handys klopfen an (seltener)
   useFeedSync(code, { rotation: phFormat === "rotation", active: !!data, everyMs: 15_000 });
 
+  // 🕹️ Arcade-Lauf: Leiste + Turm + Overlay (reine Anzeige)
+  const phArcade = arcadeViewOf(data as any);
+  const phArcadeDef = arcadeModeDef((data as any)?.tournament?.arcade_mode);
+  const phArcadeProfiles: Record<string, { name?: string | null; rating?: number | null; bot_kind?: string | null }> = Object.fromEntries(
+    (((data as any)?.tournament?.arcade_stage_profiles ?? []) as any[]).map((p) => [String(p.id), p])
+  );
+  const [phArcadeMoment, setPhArcadeMoment] = useArcadeMoment(phArcade?.state ?? null, {
+    roundsCount: (data?.rounds ?? []).length,
+    finished: String(data?.tournament?.status ?? "") === "finished",
+  });
+  const [phTowerOpen, setPhTowerOpen] = useState(false);
+
   if (meError) {
     return (
       <Shell>
@@ -181,6 +196,31 @@ export default function PlayerPhone({ code, token }: { code: string; token: stri
 
       {loadError ? (
         <div className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">{loadError}</div>
+      ) : null}
+
+      {/* 🕹️ Arcade: Stand + Turm zum Aufklappen + Overlay */}
+      {phArcade && phArcadeDef ? (
+        <>
+          <ArcadeBar
+            def={phArcadeDef}
+            state={phArcade.state}
+            stages={phArcade.stages}
+            profilesById={phArcadeProfiles}
+            onTower={() => setPhTowerOpen((v) => !v)}
+          />
+          {phTowerOpen ? <ArcadeTower data={data as any} profilesById={phArcadeProfiles} /> : null}
+          {phArcadeMoment ? (
+            <ArcadeOverlay
+              displayOnly
+              moment={phArcadeMoment}
+              def={phArcadeDef}
+              state={phArcade.state}
+              stages={phArcade.stages}
+              profilesById={phArcadeProfiles}
+              onClose={() => setPhArcadeMoment(null)}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {tab === "match" ? (

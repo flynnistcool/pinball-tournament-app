@@ -49,8 +49,9 @@ export default function ArcadeTower({
 }: {
   data: TData | null;
   profilesById: Record<string, { name?: string | null; rating?: number | null; bot_kind?: string | null }>;
-  onNext: () => void;
-  busy: boolean;
+  /** fehlt = reine Anzeige (TV/Handy), ohne Knopf */
+  onNext?: () => void;
+  busy?: boolean;
 }) {
   const view = arcadeViewOf(data);
   const def = arcadeModeDef(data?.tournament?.arcade_mode);
@@ -126,7 +127,7 @@ export default function ArcadeTower({
           💀 GAME OVER – Stufe {state.wins + 1} von {state.stagesTotal}
           {finished ? "" : " – Lauf wird abgeschlossen …"}
         </div>
-      ) : (
+      ) : !onNext ? null : (
         <div className="mt-3 flex justify-end">
           <button
             type="button"

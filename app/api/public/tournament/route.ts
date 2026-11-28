@@ -140,6 +140,27 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
     const { data: rt, error: rtErr } = await sb.from("tournaments").select("rotation_timer").eq("id", t.id).maybeSingle();
     if (!rtErr) rotationTimer = (rt as { rotation_timer?: unknown } | null)?.rotation_timer ?? null;
   }
+  // 🕹️ Arcade-Lauf (supabase_arcade.sql) – eigene Abfrage: fehlen die Spalten, ist es einfach kein Arcade-Lauf.
+  //    Dazu Name/Elo/Art ALLER Gegner (auch späterer Stufen, die noch nicht im Turnier sind) für den Turm.
+  let arcade: Record<string, unknown> | null = null;
+  {
+    const { data: ar, error: arErr } = await sb
+      .from("tournaments")
+      .select("arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
+      .eq("id", t.id)
+      .maybeSingle();
+    const a = ar as { arcade_mode?: string | null; arcade_lives?: number | null; arcade_stages?: string[] | null; arcade_profile_id?: string | null } | null;
+    if (!arErr && a?.arcade_mode && Array.isArray(a.arcade_stages)) {
+      const { data: sp } = await sb.from("profiles").select("id, name, rating, bot_kind").in("id", a.arcade_stages);
+      arcade = {
+        arcade_mode: a.arcade_mode,
+        arcade_lives: a.arcade_lives ?? null,
+        arcade_stages: a.arcade_stages,
+        arcade_profile_id: a.arcade_profile_id ?? null,
+        arcade_stage_profiles: sp ?? [],
+      };
+    }
+  }
   // 🔊 Sprache der Ansagen (TV-Timer) – Spalte evtl. nicht vorhanden → Englisch
   let speechLang: string = "en";
   if (t.format === "rotation") {
@@ -148,7 +169,7 @@ const { data: matchPlayers, error: mpErr } = matchIds.length
   }
 
   return NextResponse.json({
-    tournament: t,
+    tournament: arcade ? { ...t, ...arcade } : t,
     final,
     rotation_timer: rotationTimer,
     speech_lang: speechLang,

@@ -79,6 +79,7 @@ import MyEntryButton from "@/components/MyEntryButton";
 import ScoreBalanceAdmin from "@/components/ScoreBalanceAdmin";
 import ArcadeTower, { arcadeViewOf as pbArcadeViewOf } from "@/components/ArcadeTower";
 import ArcadeStartCard from "@/components/ArcadeStartCard";
+import ArcadeLeaderboard from "@/components/ArcadeLeaderboard";
 import ArcadeOverlay, { ArcadeBar, type ArcadeMoment } from "@/components/ArcadeOverlay";
 import { arcadeModeDef as pbArcadeModeDef } from "@/lib/arcade";
 import { playMinutesOf as pbPlayMinutesOf } from "@/lib/playMinutes";
@@ -11026,11 +11027,14 @@ if (joined)
             />
           ) : null}
           {tab === "create" ? (
-            <ArcadeStartCard
-              locations={locations}
-              defaultLocationId={locationId || null}
-              onStarted={(c) => joinTournament(c)}
-            />
+            <>
+              <ArcadeStartCard
+                locations={locations}
+                defaultLocationId={locationId || null}
+                onStarted={(c) => joinTournament(c)}
+              />
+              <ArcadeLeaderboard />
+            </>
           ) : tab === "archive" ? (
             <div className="space-y-2">
               <div className="text-sm text-neutral-600">
@@ -14355,6 +14359,7 @@ if (rotEndTimeoutRef.current != null) {
   // 🕹️ Arcade-Lauf: statt normaler Runde die nächste Stufe (1 Duell gegen den Bot dieser Stufe)
   const pbArcade = pbArcadeViewOf(data);
   const pbArcadeDef = pbArcadeModeDef(data?.tournament?.arcade_mode);
+  const arcadeRoundMsgsOn = useBadgeOn("arcade:roundMessages"); // 🕹️ Runden-Meldungen im Arcade (Standard aus)
   // 🎬 Overlay: READY? / STAGE CLEAR! / TRY AGAIN / CONGRATULATIONS! / GAME OVER (bzw. 🗼 Turm von Hand)
   const [arcadeMoment, setArcadeMoment] = useState<ArcadeMoment | null>(null);
   // nach "Nächste Stufe": so viele Runden müssen geladen sein, bevor gescrollt wird (null = nichts offen)
@@ -14885,7 +14890,8 @@ const tasksById = useMemo(() => {
       {/* 🪧 Karten für Ticker-Meldungen ohne eigene Einblendung (z. B. Finalspiel im Superfinale) */}
       <FeedPopups code={code} variant="admin" />
       {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}
-      {!isRotationFormat ? (
+      {/* 🕹️ im Arcade-Lauf nur, wenn "Runden-Meldungen im Arcade" eingeschaltet ist (Standard: aus) */}
+      {!isRotationFormat && (!pbArcade || arcadeRoundMsgsOn) ? (
         <RoundSplash data={data} variant="admin" onFeed={isAdmin ? (items) => postFeedItems(code, items) : undefined} />
       ) : null}
       {/* 📰 Turnier-Shortnews: Match-Ergebnis in den Ticker (Round the Pinball: je Durchgang in RotationTurnSplash) */}

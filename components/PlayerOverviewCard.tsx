@@ -5,6 +5,7 @@
 // Platzierungen, Form, Lieblingsflipper, Erzfeind/Lieblingsgegner, Serien).
 // Gegner + Form/Serien: /api/players/rivals (lib/rivals.ts, lib/matchStreaks.ts).
 
+import { ARCADE_MODES } from "@/lib/arcade";
 import { useEffect, useState, type ReactNode } from "react";
 import type { RivalStat } from "@/lib/rivals";
 import type { OverallForm, StreakInfo } from "@/lib/matchStreaks";
@@ -111,6 +112,23 @@ export default function PlayerOverviewCard({
   const [rivalBots, setRivalBots] = useState<
     { botId: string; name: string; start: number; strength: number; wins: number; losses: number }[] | null
   >(null);
+
+  // 🕹️ Arcade-Fortschritt dieses Spielers
+  const [arcade, setArcade] = useState<{
+    best: Record<string, { wins: number; stagesTotal: number; status: string }>;
+    played: Record<string, number>;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setArcade(null);
+    fetch(`/api/arcade/progress?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => !cancelled && j?.ok && setArcade({ best: j.best ?? {}, played: j.played ?? {} }))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -319,6 +337,30 @@ export default function PlayerOverviewCard({
               </div>
             ))
           : null}
+
+        {arcade && Object.keys(arcade.best).length ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-52 shrink-0 text-neutral-500">🕹️ Arcade</span>
+            <span className="flex flex-wrap gap-1">
+              {ARCADE_MODES.filter((m) => arcade.best[m.mode]).map((m) => {
+                const b = arcade.best[m.mode];
+                const done = b.status === "cleared";
+                return (
+                  <span
+                    key={m.mode}
+                    className={
+                      "rounded-full border px-2 py-0.5 text-[12px] " +
+                      (done ? "border-emerald-200 bg-emerald-50 font-semibold text-emerald-800" : "border-neutral-200 bg-white")
+                    }
+                    title={`${m.label}: ${arcade.played[m.mode] ?? 0} Läufe – ${done ? "geschafft" : `bester Lauf Stufe ${b.wins + 1} von ${b.stagesTotal}`}`}
+                  >
+                    {m.icon} {m.label} {done ? "✅" : `${b.wins + 1}/${b.stagesTotal}`}
+                  </span>
+                );
+              })}
+            </span>
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <span className="w-52 shrink-0 text-neutral-500">🔥 Längste Siegesserie</span>

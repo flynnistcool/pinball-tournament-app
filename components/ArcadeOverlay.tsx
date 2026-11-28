@@ -10,7 +10,7 @@
 // Titel knallt rein → Text + Knöpfe. Schließt nur per Knopf.
 // Dazu ArcadeBar: schmale Leiste direkt über den Matches (Stufe, Leben, Gegner, 🗼 Turm).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { arcadeKindIcon, type ArcadeModeDef, type ArcadeState } from "@/lib/arcade";
 
 export type ArcadeMoment = "start" | "win" | "loss" | "cleared" | "gameover" | "tower";
@@ -53,7 +53,10 @@ export default function ArcadeOverlay({
   onClose,
   busy,
   revengeMachine,
+  displayOnly,
 }: {
+  /** TV/Handy: ohne Knöpfe, schließt nach der Animation von selbst */
+  displayOnly?: boolean;
   /** Flipper des verlorenen Duells (für "▶ Revanche · Evil Dead") */
   revengeMachine?: string | null;
   moment: ArcadeMoment;
@@ -61,9 +64,9 @@ export default function ArcadeOverlay({
   state: ArcadeState;
   stages: readonly string[];
   profilesById: Record<string, Prof>;
-  onNext: (opts?: { sameMachine?: boolean }) => void;
+  onNext?: (opts?: { sameMachine?: boolean }) => void;
   onClose: () => void;
-  busy: boolean;
+  busy?: boolean;
 }) {
   const animated = moment === "win" || moment === "loss" || moment === "cleared" || moment === "gameover";
   const [phase, setPhase] = useState<Phase>(animated ? "hold" : "done");
@@ -152,6 +155,12 @@ export default function ArcadeOverlay({
   const nextText =
     moment === "start" ? "▶ START" : moment === "loss" ? `▶ Revanche${revengeMachine ? ` · ${revengeMachine}` : ""}` : "▶ Nächste Stufe";
   const done = phase === "done";
+  // 📺/📱 reine Anzeige: nach der Animation noch kurz stehen lassen, dann von selbst schließen
+  useEffect(() => {
+    if (!displayOnly || !done) return;
+    const t = window.setTimeout(onClose, moment === "cleared" || moment === "gameover" ? 9000 : 5500);
+    return () => window.clearTimeout(t);
+  }, [displayOnly, done, moment, onClose]);
 
   // Herzen
   const hearts = [];
@@ -278,12 +287,13 @@ export default function ArcadeOverlay({
           </div>
         </div>
 
+        {displayOnly ? null : (
         <div className="mt-5 flex min-h-[3.25rem] flex-wrap justify-center gap-2" style={done ? { animation: "arcFade .4s ease-out" } : { visibility: "hidden" }}>
           {canNext ? (
             <button
               type="button"
               disabled={busy || !done}
-              onClick={() => onNext(moment === "loss" ? { sameMachine: true } : undefined)}
+              onClick={() => onNext?.(moment === "loss" ? { sameMachine: true } : undefined)}
               className="rounded-xl bg-fuchsia-500 px-6 py-3 text-lg font-black shadow-lg hover:bg-fuchsia-400 disabled:opacity-50"
             >
               {busy ? "…" : nextText}
@@ -293,7 +303,7 @@ export default function ArcadeOverlay({
             <button
               type="button"
               disabled={busy || !done}
-              onClick={() => onNext({ sameMachine: false })}
+              onClick={() => onNext?.({ sameMachine: false })}
               className="rounded-xl border border-fuchsia-300/60 px-5 py-3 text-base font-bold hover:bg-white/10 disabled:opacity-50"
             >
               🎲 Anderer Flipper
@@ -308,9 +318,35 @@ export default function ArcadeOverlay({
             {canNext ? "Später" : "Schließen"}
           </button>
         </div>
+        )}
       </div>
     </div>
   );
+}
+
+/**
+ * Erkennt Arcade-Momente aus dem Stand: erstes Laden eines frischen Laufs → "start";
+ * danach ein entschiedenes Duell → "win" / "loss" / "cleared" / "gameover". (Admin, TV, Handy gleich)
+ */
+export function useArcadeMoment(
+  state: ArcadeState | null,
+  opts: { roundsCount: number; finished: boolean; showStart?: boolean }
+): [ArcadeMoment | null, (m: ArcadeMoment | null) => void] {
+  const [moment, setMoment] = useState<ArcadeMoment | null>(null);
+  const prevRef = useRef<{ wins: number; losses: number } | null>(null);
+  useEffect(() => {
+    if (!state) return;
+    const prev = prevRef.current;
+    prevRef.current = { wins: state.wins, losses: state.losses };
+    if (!prev) {
+      if (opts.showStart !== false && opts.roundsCount === 0 && state.status === "playing" && !opts.finished) setMoment("start");
+      return;
+    }
+    if (state.wins === prev.wins && state.losses === prev.losses) return;
+    setMoment(state.status === "cleared" ? "cleared" : state.status === "gameover" ? "gameover" : state.wins > prev.wins ? "win" : "loss");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.wins, state?.losses, state?.status]);
+  return [moment, setMoment];
 }
 
 /** schmale Leiste direkt über den Matches */

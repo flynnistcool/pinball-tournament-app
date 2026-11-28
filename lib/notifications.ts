@@ -38,6 +38,8 @@ export type NotificationDef = {
   /** wann kommt sie */
   when: string;
   devices: Partial<Record<NotifDevice, NotifPlacement>>;
+  /** standardmäßig AUS (muss man bewusst einschalten) */
+  defaultOff?: boolean;
 };
 
 const FANFARE = "/sounds/winner-fanfare.mp3";
@@ -603,8 +605,23 @@ export const PLAYER_DISPLAYS: readonly NotificationDef[] = [
   },
 ];
 
-/** Mitteilungen + dauerhafte Anzeigen + Spieler-Anzeigen (für Standardwerte/Speichern) */
-const ALL_DEFS: readonly NotificationDef[] = [...NOTIFICATIONS, ...BADGES, ...PLAYER_DISPLAYS];
+// ─────────────────────────────────────────────────────────────────────────────
+// 🕹️ Arcade – Einstellungen für Arcade-Läufe (nur an/aus je Gerät)
+
+export const ARCADE_DISPLAYS: readonly NotificationDef[] = [
+  {
+    id: "arcade:roundMessages",
+    icon: "🕹️",
+    title: "Runden-Meldungen im Arcade",
+    when:
+      "„Runde generiert“ / „Runde abgeschlossen“ auch in Arcade-Läufen zeigen. Aus = im Arcade nur das Arcade-Overlay (STAGE CLEAR, TRY AGAIN …)",
+    devices: { admin: BADGE("Einblendung Mitte"), tv: BADGE("Vollbild Mitte") },
+    defaultOff: true,
+  },
+];
+
+/** Mitteilungen + dauerhafte Anzeigen + Spieler-Anzeigen + Arcade (für Standardwerte/Speichern) */
+const ALL_DEFS: readonly NotificationDef[] = [...NOTIFICATIONS, ...BADGES, ...PLAYER_DISPLAYS, ...ARCADE_DISPLAYS];
 
 export const DEVICE_LABEL: Record<NotifDevice, string> = { tv: "📺 TV", admin: "🖥️ Admin", phone: "📱 Handy", ticker: "📣 Ticker" };
 
@@ -640,7 +657,7 @@ export function defaultNotificationSettings(): NotificationSettings {
     const per: Partial<Record<NotifDevice, NotifDeviceSetting>> = {};
     (Object.keys(n.devices) as NotifDevice[]).forEach((d) => {
       const p = n.devices[d]!;
-      per[d] = { enabled: true, seconds: p.seconds, volume: 1, sound: defaultSoundId(p.sound) };
+      per[d] = { enabled: !n.defaultOff, seconds: p.seconds, volume: 1, sound: defaultSoundId(p.sound) };
     });
     out[n.id] = per;
   }

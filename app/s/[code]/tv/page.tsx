@@ -24,6 +24,9 @@ import RaceChart, { type RacePlayer } from "@/components/RaceChart";
 import { PointsSystemTvChips } from "@/components/PointsSystemInfo";
 import KeepAwake from "@/components/KeepAwake";
 import PlayerCardsTv from "@/components/PlayerCardsTv";
+import ArcadeTower, { arcadeViewOf as tvArcadeViewOf } from "@/components/ArcadeTower";
+import ArcadeOverlay, { useArcadeMoment } from "@/components/ArcadeOverlay";
+import { arcadeModeDef as tvArcadeModeDef } from "@/lib/arcade";
 import ScoreBalanceTv from "@/components/ScoreBalanceTv";
 import RecordCelebration from "@/components/RecordCelebration";
 import StreakFire from "@/components/StreakFire";
@@ -1142,6 +1145,18 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
   // 🔔 Meldungen & Sounds (Turnierende: an/aus + Lautstärke)
   const tvNotif = useNotificationSettings();
 
+  // 🕹️ Arcade-Lauf: Turm + Overlay (reine Anzeige) – Gegner-Namen aus arcade_stage_profiles
+  const tvArcade = tvArcadeViewOf(data as any);
+  const tvArcadeDef = tvArcadeModeDef((data as any)?.tournament?.arcade_mode);
+  const tvArcadeProfiles: Record<string, { name?: string | null; rating?: number | null; bot_kind?: string | null }> = Object.fromEntries(
+    (((data as any)?.tournament?.arcade_stage_profiles ?? []) as any[]).map((p) => [String(p.id), p])
+  );
+  const [tvArcadeMoment, setTvArcadeMoment] = useArcadeMoment(tvArcade?.state ?? null, {
+    roundsCount: (data?.rounds ?? []).length,
+    finished: isFinished,
+  });
+  const tvArcadeRoundMsgsOn = useBadgeOn("arcade:roundMessages"); // 🕹️ Runden-Meldungen im Arcade (Standard aus)
+
   function playCelebration() {
     const drum = drumRef.current;
     const fanfare = fanfareRef.current;
@@ -1364,9 +1379,21 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
       className="fixed inset-0 z-50 overflow-auto bg-[radial-gradient(ellipse_at_top,#1e1b4b_0%,#0b1020_55%,#05070d_100%)] text-white"
     >
       {/* 🔵 Round the Pinball: kurze Einblendung bei neuem Durchgang / alle fertig */}
-      {isRotation ? <RotationTurnSplash progress={rotProgress} variant="tv" detectStart data={data as any} /> : null}
-      {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball) */}
-      {!isRotation && data ? <RoundSplash data={data as any} variant="tv" soundOn={soundOn} /> : null}
+      {isRotation && !tvArcade ? <RotationTurnSplash progress={rotProgress} variant="tv" detectStart data={data as any} /> : null}
+      {/* 🎲 Runde generiert / ✅ Runde abgeschlossen + Rückblick (alle Formate außer Round the Pinball; im Arcade nur per Schalter) */}
+      {!isRotation && data && (!tvArcade || tvArcadeRoundMsgsOn) ? <RoundSplash data={data as any} variant="tv" soundOn={soundOn} /> : null}
+      {/* 🎬 Arcade-Overlay (STAGE CLEAR / TRY AGAIN …) – reine Anzeige, schließt von selbst */}
+      {tvArcade && tvArcadeDef && tvArcadeMoment ? (
+        <ArcadeOverlay
+          displayOnly
+          moment={tvArcadeMoment}
+          def={tvArcadeDef}
+          state={tvArcade.state}
+          stages={tvArcade.stages}
+          profilesById={tvArcadeProfiles}
+          onClose={() => setTvArcadeMoment(null)}
+        />
+      ) : null}
       {/* 🥋 Flawless Victory am Turnierende (RtP: wenn alle Durchgänge fertig) */}
       {data ? <FlawlessCelebration data={data as any} variant="tv" soundOn={soundOn} /> : null}
       {/* 🪧 Karten für Ticker-Meldungen ohne eigene Einblendung (z. B. Finalspiel im Superfinale) */}
@@ -1663,6 +1690,12 @@ function TournamentTvPageInner({ params }: { params: { code: string } }) {
             }}
             elo={Object.fromEntries(view.rows.map((r) => [String(r.id), { start: r.eloStart, now: r.eloNow }]))} // = TV-Leaderboard
           />
+          {/* 🗼 Arcade-Turm über der Ansicht */}
+          {tvArcade ? (
+            <div className="mb-4 w-[1500px]">
+              <ArcadeTower data={data as any} profilesById={tvArcadeProfiles} />
+            </div>
+          ) : null}
           {/* Fallback-Einblenden (nur ohne echtes Überblenden): neuer key = neue Ansicht */}
           <div
             key={`${activeTab}|${showTableSub ? tableSub : ""}`}

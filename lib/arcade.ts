@@ -3,7 +3,16 @@
 // Gewonnen → nächste Stufe. Verloren → ein Leben weniger, derselbe Gegner nochmal. Keine Leben mehr → Game Over.
 // Abgestimmt mit dem Nutzer am 2026-11-28 (klassische Arcade-Namen, feste Gegner, Freischalten in Schritt 2).
 
-export type ArcadeMode = "easy" | "normal" | "hard" | "expert" | "insane" | "classic_rush";
+export type ArcadeMode =
+  | "easy"
+  | "normal"
+  | "hard"
+  | "expert"
+  | "insane"
+  | "classic_rush"
+  | "monster_rush"
+  | "mirror"
+  | "random";
 
 /** Gegner einer Stufe. classic = vorhandener Bot (per Name gesucht, sonst angelegt); sonst automatisch angelegt (arcade_key) */
 export type ArcadeStageSpec = {
@@ -27,6 +36,10 @@ export type ArcadeModeDef = {
   stages: ArcadeStageSpec[];
   /** in der Rangliste (Schritt 2) */
   ranked: boolean;
+  /** Gegner werden erst beim Start zusammengestellt (Monster-Rush, Spiegel, Zufall) – stages ist dann leer */
+  dynamic?: boolean;
+  /** 🔒 erst spielbar, wenn dieser Modus geschafft ist */
+  unlockAfter?: ArcadeMode;
 };
 
 // —— Gegner (einmal definiert, in mehreren Modi wiederverwendet) ——
@@ -77,6 +90,7 @@ export const ARCADE_MODES: ArcadeModeDef[] = [
     hint: "5 Stufen, 3 Leben",
     lives: 3,
     ranked: true,
+    unlockAfter: "easy",
     stages: [A.f1400, C.bernd, A.p1600, C.tilt, A.c1800],
   },
   {
@@ -86,6 +100,7 @@ export const ARCADE_MODES: ArcadeModeDef[] = [
     hint: "6 Stufen, 2 Leben",
     lives: 2,
     ranked: true,
+    unlockAfter: "normal",
     stages: [A.f1600, C.tilt, A.s1800, A.g1900, C.max, A.p2100],
   },
   {
@@ -95,6 +110,7 @@ export const ARCADE_MODES: ArcadeModeDef[] = [
     hint: "6 Stufen, 2 Leben – Endboss 👑 Champion",
     lives: 2,
     ranked: true,
+    unlockAfter: "hard",
     stages: [A.f1900, C.max, A.c2100, A.g2200, A.p2300, A.champ],
   },
   {
@@ -104,6 +120,7 @@ export const ARCADE_MODES: ArcadeModeDef[] = [
     hint: "7 Stufen, 1 Leben – Endboss 🤖 Terminator",
     lives: 1,
     ranked: true,
+    unlockAfter: "expert",
     stages: [A.f2100, A.p2200, A.g2300, A.s2400, A.c2400, A.champ, C.terminator],
   },
   {
@@ -113,9 +130,69 @@ export const ARCADE_MODES: ArcadeModeDef[] = [
     hint: "Die 5 klassischen Bots, 1 Leben",
     lives: 1,
     ranked: true,
+    unlockAfter: "normal",
     stages: [C.rookie, C.bernd, C.tilt, C.max, C.terminator],
   },
+  {
+    mode: "monster_rush",
+    icon: "☠️",
+    label: "Monster-Rush",
+    hint: "Alle deine Bots mit fester Elo, 👑 Champion + 🤖 Terminator am Ende, 1 Leben",
+    lives: 1,
+    ranked: true,
+    dynamic: true,
+    unlockAfter: "expert",
+    stages: [],
+  },
+  {
+    mode: "mirror",
+    icon: "🪞",
+    label: "Spiegel",
+    hint: "Gegen dich selbst: Form → Ghost → Rivale → Ghost des Besten, 2 Leben (ohne Rangliste)",
+    lives: 2,
+    ranked: false,
+    dynamic: true,
+    stages: [],
+  },
+  {
+    mode: "random",
+    icon: "🎲",
+    label: "Zufall",
+    hint: "5 zufällige Bots (1300–2100), 2 Leben (ohne Rangliste)",
+    lives: 2,
+    ranked: false,
+    dynamic: true,
+    stages: [],
+  },
 ];
+
+/** Freischalten: Modus offen, wenn er keine Voraussetzung hat oder die Voraussetzung geschafft ist */
+export function arcadeUnlocked(def: ArcadeModeDef, cleared: ReadonlySet<string>): boolean {
+  return !def.unlockAfter || cleared.has(def.unlockAfter);
+}
+
+/** Rangliste: bester Lauf je Spieler – mehr Stufen (Anteil) zuerst, dann mehr übrige Leben, dann früher */
+export type ArcadeRun = {
+  tournamentId: string;
+  code: string;
+  profileId: string;
+  playerName: string;
+  mode: string;
+  stagesTotal: number;
+  wins: number;
+  livesStart: number;
+  livesLeft: number;
+  status: "playing" | "cleared" | "gameover";
+  finished: boolean;
+  at: string | null;
+  format: string | null;
+};
+
+export function compareArcadeRuns(a: ArcadeRun, b: ArcadeRun): number {
+  const pa = a.stagesTotal ? a.wins / a.stagesTotal : 0;
+  const pb = b.stagesTotal ? b.wins / b.stagesTotal : 0;
+  return pb - pa || b.livesLeft - a.livesLeft || String(a.at ?? "").localeCompare(String(b.at ?? ""));
+}
 
 export function arcadeModeDef(mode: string | null | undefined): ArcadeModeDef | null {
   return ARCADE_MODES.find((m) => m.mode === mode) ?? null;

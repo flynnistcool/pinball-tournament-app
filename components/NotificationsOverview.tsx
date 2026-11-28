@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BADGES,
   PLAYER_DISPLAYS,
+  ARCADE_DISPLAYS,
   DEVICE_LABEL,
   SERVER_FEED_ID,
   NOTIFICATIONS,
@@ -540,6 +541,12 @@ export default function NotificationsOverview() {
           title: "👤 Spieler-Anzeigen",
           desc: "Infos über einen Spieler (über alle Turniere), z. B. seine Form – hier nur an/aus je Gerät.",
           list: PLAYER_DISPLAYS,
+        },
+        {
+          key: "arcade",
+          title: "🕹️ Arcade",
+          desc: "Einstellungen für Arcade-Läufe – hier nur an/aus je Gerät.",
+          list: ARCADE_DISPLAYS,
         },
       ].map((sec) => (
         <div key={sec.key} className="rounded-xl border">

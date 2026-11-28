@@ -4,7 +4,7 @@
 // Legt über /api/arcade/start ein Arcade-Turnier an und öffnet es (onStarted).
 
 import { useEffect, useState } from "react";
-import { ARCADE_MODES, arcadeKindIcon, type ArcadeMode } from "@/lib/arcade";
+import { ARCADE_MODES, arcadeKindIcon, arcadeModeDef, arcadeUnlocked, type ArcadeMode } from "@/lib/arcade";
 import { PLAY_MINUTE_OPTIONS } from "@/lib/playMinutes";
 
 type Prof = { id: string; name: string; is_bot?: boolean | null };
@@ -27,6 +27,24 @@ export default function ArcadeStartCard({
   const [locationId, setLocationId] = useState(defaultLocationId ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 🔒 Freischalten: geschaffte Modi des gewählten Spielers
+  const [cleared, setCleared] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!profileId) {
+      setCleared(null);
+      return;
+    }
+    let alive = true;
+    setCleared(null);
+    fetch(`/api/arcade/progress?profileId=${encodeURIComponent(profileId)}&ts=${Date.now()}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => alive && setCleared(new Set(Array.isArray(j?.cleared) ? j.cleared.map(String) : [])))
+      .catch(() => alive && setCleared(new Set()));
+    return () => {
+      alive = false;
+    };
+  }, [profileId]);
+  const isOpen = (m: (typeof ARCADE_MODES)[number]) => arcadeUnlocked(m, cleared ?? new Set());
 
   useEffect(() => {
     fetch(`/api/profiles/list?ts=${Date.now()}`, { cache: "no-store" })
@@ -144,27 +162,42 @@ export default function ArcadeStartCard({
       ) : null}
 
       <div className="mt-3 text-xs font-medium text-neutral-600">🎚️ Schwierigkeitsgrad</div>
-      <div className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {ARCADE_MODES.map((m) => (
-          <button
-            key={m.mode}
-            type="button"
-            onClick={() => setMode(m.mode)}
-            className={
-              "rounded-xl border px-2 py-2 text-left transition " +
-              (mode === m.mode ? "border-fuchsia-500 bg-fuchsia-600 text-white shadow" : "bg-white hover:bg-fuchsia-50")
-            }
-          >
-            <div className="text-sm font-bold">
-              {m.icon} {m.label}
-            </div>
-            <div className={"text-[11px] " + (mode === m.mode ? "text-white/80" : "text-neutral-500")}>{m.hint}</div>
-          </button>
-        ))}
+      <div className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {ARCADE_MODES.map((m) => {
+          const open = isOpen(m);
+          const need = m.unlockAfter ? arcadeModeDef(m.unlockAfter) : null;
+          return (
+            <button
+              key={m.mode}
+              type="button"
+              onClick={() => open && setMode(m.mode)}
+              disabled={!open}
+              title={open ? m.hint : `🔒 Erst ${need?.icon ?? ""} ${need?.label ?? ""} schaffen`}
+              className={
+                "rounded-xl border px-2 py-2 text-left transition " +
+                (!open
+                  ? "cursor-not-allowed bg-neutral-100 opacity-60"
+                  : mode === m.mode
+                  ? "border-fuchsia-500 bg-fuchsia-600 text-white shadow"
+                  : "bg-white hover:bg-fuchsia-50")
+              }
+            >
+              <div className="text-sm font-bold">
+                {open ? m.icon : "🔒"} {m.label}
+                {cleared?.has(m.mode) ? <span className="ml-1" title="schon geschafft">✅</span> : null}
+              </div>
+              <div className={"text-[11px] " + (mode === m.mode && open ? "text-white/80" : "text-neutral-500")}>
+                {open ? m.hint : `erst ${need?.icon ?? ""} ${need?.label ?? ""} schaffen`}
+                {!m.ranked ? " · ohne Rangliste" : ""}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="mt-3 rounded-xl border bg-white p-2 text-[12px] text-neutral-700">
         <span className="font-semibold">Gegner:</span>{" "}
+        {def.dynamic ? <span className="text-neutral-500">werden beim Start zusammengestellt</span> : null}
         {def.stages.map((s, i) => (
           <span key={s.key} className="whitespace-nowrap">
             {i ? " → " : ""}
@@ -180,7 +213,7 @@ export default function ArcadeStartCard({
       <div className="mt-3 flex justify-end">
         <button
           type="button"
-          disabled={!profileId || !locationId || busy}
+          disabled={!profileId || !locationId || busy || !isOpen(def)}
           onClick={start}
           className="rounded-xl bg-fuchsia-600 px-5 py-2.5 text-sm font-black text-white shadow hover:bg-fuchsia-700 disabled:opacity-50"
         >

@@ -11,8 +11,8 @@ import { supabaseAdmin } from "@/lib/supabaseServer";
 import { sha256, randomCode } from "@/lib/crypto";
 import { extraballForced } from "@/lib/botRules";
 import { DEFAULT_PLAY_MINUTES, normalizePlayMinutes } from "@/lib/playMinutes";
-import { arcadeModeDef } from "@/lib/arcade";
-import { ensureArcadeBots } from "@/lib/arcadeServer";
+import { arcadeModeDef, arcadeModeDef as defOf, arcadeUnlocked } from "@/lib/arcade";
+import { buildDynamicStages, ensureArcadeBots, loadArcadeRuns } from "@/lib/arcadeServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -38,10 +38,28 @@ export async function POST(req: Request) {
     if (!prof) return fail("Spieler nicht gefunden", 404);
     if ((prof as { is_bot?: boolean }).is_bot) return fail("Ein Bot kann keinen Arcade-Lauf spielen", 400);
 
-    // 🤖 Gegner sicherstellen (fehlende einmal anlegen)
-    const bots = await ensureArcadeBots(sb, def.stages);
-    if (bots.error) return fail(bots.error, 500);
-    const stages = def.stages.map((s) => bots.ids[s.key]);
+    // 🔒 Freischalten: Voraussetzung (vorheriger Schwierigkeitsgrad) geschafft?
+    if (def.unlockAfter) {
+      const r = await loadArcadeRuns(sb, { profileId });
+      if (r.error) return fail(r.error, 500);
+      const cleared = new Set(r.runs.filter((x) => x.status === "cleared").map((x) => x.mode));
+      if (!arcadeUnlocked(def, cleared)) {
+        const need = defOf(def.unlockAfter);
+        return fail(`🔒 ${def.icon} ${def.label} ist noch gesperrt – erst ${need?.icon ?? ""} ${need?.label ?? def.unlockAfter} schaffen`, 403);
+      }
+    }
+
+    // 🤖 Gegner: feste Liste (fehlende Bots einmal anlegen) oder beim Start zusammengestellt (Monster-Rush/Spiegel/Zufall)
+    let stages: string[];
+    if (def.dynamic) {
+      const dyn = await buildDynamicStages(sb, def.mode, profileId);
+      if (dyn.error) return fail(dyn.error, 400);
+      stages = dyn.ids;
+    } else {
+      const bots = await ensureArcadeBots(sb, def.stages);
+      if (bots.error) return fail(bots.error, 500);
+      stages = def.stages.map((s) => bots.ids[s.key]);
+    }
 
     const { data: t, error: tErr } = await sb
       .from("tournaments")
