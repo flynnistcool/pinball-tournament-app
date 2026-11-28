@@ -34,6 +34,16 @@ async function handle(codeRaw: string) {
   // 🎱 DYP-Flipper-Gewicht (supabase_dyp_pinball_weight.sql) – fehlt die Spalte: Standard 3
   const { data: pw } = await sb.from("tournaments").select("dyp_pinball_weight").eq("id", t.id).maybeSingle();
   (t as any).dyp_pinball_weight = (pw as any)?.dyp_pinball_weight ?? 3;
+  // 🕹️ Arcade-Lauf (supabase_arcade.sql) – eigene Abfrage: fehlen die Spalten, ist es einfach kein Arcade-Lauf
+  const { data: ar } = await sb
+    .from("tournaments")
+    .select("arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
+    .eq("id", t.id)
+    .maybeSingle();
+  (t as any).arcade_mode = (ar as any)?.arcade_mode ?? null;
+  (t as any).arcade_lives = (ar as any)?.arcade_lives ?? null;
+  (t as any).arcade_stages = (ar as any)?.arcade_stages ?? null;
+  (t as any).arcade_profile_id = (ar as any)?.arcade_profile_id ?? null;
 
   // 2) Runden laden
   const { data: rounds, error: rErr } = await sb

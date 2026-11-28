@@ -180,6 +180,7 @@ export default function PhoneMatchInsights({
             mCount: mwrFor(pid)?.matchesPlayed ?? 0,
             elo: pr?.rating != null && Number.isFinite(Number(pr.rating)) ? Number(pr.rating) : null,
             placeholder: pr?.exclude_from_stats === true,
+            isBot: pr?.is_bot === true,
           };
         });
     const favH2h = h2hFromPairMachine(rivFav.pairMachine, machineName, format, formatLabel(format));

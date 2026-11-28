@@ -174,6 +174,8 @@ export function PersonalBestLine(props: {
   liveEntries: readonly LiveEntry[];
   /** dieses Match (für 🎰 Premiere: Scores aus genau diesem Match zählen nicht als "schon gespielt") */
   matchId?: string | null;
+  /** 🤖 Bots: keine 🎰 Premiere (ein Bot spielt nie "zum ersten Mal") */
+  noPremiere?: boolean;
 }) {
   if (props.hidden) return null;
   return <PersonalBestLineInner {...props} />;
@@ -185,12 +187,14 @@ function PersonalBestLineInner({
   machineName,
   liveEntries,
   matchId,
+  noPremiere,
 }: {
   code: string;
   profileId: string | null | undefined;
   machineName: string | null | undefined;
   liveEntries: readonly LiveEntry[];
   matchId?: string | null;
+  noPremiere?: boolean;
 }) {
   const loaded = useMachineRecords(code, true, [profileId]);
   const premiereOn = useBadgeOn("badge:premiere"); // 🏷️ an/aus je Gerät
@@ -199,7 +203,7 @@ function PersonalBestLineInner({
   const { before, today } = personalForMachine(profileId, machineName, loaded.personal, liveEntries);
   const avg = loaded.personalAvg?.[personalKey(String(profileId), machineKey(machineName))];
   const beaten = before != null && today != null && today > before;
-  const premiere = premiereOn && isPremiere(profileId, machineName, loaded.personal, liveEntries, matchId, loaded.played);
+  const premiere = !noPremiere && premiereOn && isPremiere(profileId, machineName, loaded.personal, liveEntries, matchId, loaded.played);
   return (
     <div className="pb-personal flex flex-wrap items-center gap-x-1.5 text-[11px] tabular-nums text-neutral-500">
       {premiere ? (

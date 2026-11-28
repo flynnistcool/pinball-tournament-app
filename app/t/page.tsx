@@ -77,8 +77,13 @@ import EloHistoryPanel from "@/components/EloHistoryPanel";
 import { useMyProfileId } from "@/components/useMyProfileId";
 import MyEntryButton from "@/components/MyEntryButton";
 import ScoreBalanceAdmin from "@/components/ScoreBalanceAdmin";
+import ArcadeTower, { arcadeViewOf as pbArcadeViewOf } from "@/components/ArcadeTower";
+import ArcadeStartCard from "@/components/ArcadeStartCard";
+import ArcadeOverlay, { ArcadeBar, type ArcadeMoment } from "@/components/ArcadeOverlay";
+import { arcadeModeDef as pbArcadeModeDef } from "@/lib/arcade";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import BotScoreRatingBadge from "@/components/BotScoreRatingBadge";
+import BotPreviewLine from "@/components/BotPreviewLine";
 import { botBadgeText as pbBotBadgeText, botBadgeTitle as pbBotBadgeTitle } from "@/lib/botBadge";
 import { useBotSettings as pbUseBotSettings } from "@/components/useBotSettings";
 import {
@@ -8651,6 +8656,7 @@ disabled={
                                       mCount: typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0,
                                       elo: typeof pv?.elo === "number" ? pv.elo : null,
                                       placeholder: pv?.isPlaceholder === true,
+                                      isBot: pv?.isBot === true,
                                     };
                                   })
                                   .filter(Boolean) as any[];
@@ -9180,6 +9186,7 @@ disabled={
                       mCount: typeof mwr?.matchesPlayed === "number" ? mwr.matchesPlayed : 0,
                       elo: typeof pv?.elo === "number" ? pv.elo : null,
                       placeholder: pv?.isPlaceholder === true,
+                      isBot: pv?.isBot === true,
                     };
                   });
                 const h2hFav = h2hFromPairMachine(rivFavData.pairMachine, machineName, tournament?.format, tournamentFormatLabel(tournament?.format));
@@ -9295,7 +9302,9 @@ disabled={
       />
     </button>
     {/* dezent: aktuelle Elo hinter dem Namen (Bots haben ihr Abzeichen unten) */}
-    {!playersById?.[mp.player_id]?.isBot && typeof playersById?.[mp.player_id]?.elo === "number" ? (
+    {/* Elo neben dem Namen – auch bei Bots (außer 👑 Champion: seine Elo zählt nur für die Siegchance) */}
+    {typeof playersById?.[mp.player_id]?.elo === "number" &&
+    !(playersById?.[mp.player_id]?.isBot && playersById?.[mp.player_id]?.botKind === "champion") ? (
       <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">
         Elo {Math.round(playersById[mp.player_id].elo as number)}
       </span>
@@ -9498,7 +9507,8 @@ return (
                     tc?.w ?? null,
                     tc?.m ?? null
                   )}
-                  {machineName
+                  {/* 🤖 Bots: Flipper-Siege werden nie gezählt (Statistik-Schutz) → Zeilen weglassen statt immer "—" */}
+                  {machineName && !playersById?.[String(mp?.player_id)]?.isBot
                     ? line(
                         `Siege ${machineName}`,
                         "an diesem Flipper an dieser Location, alle Formate (Siege/Spiele)",
@@ -9507,7 +9517,7 @@ return (
                         mpCount
                       )
                     : null}
-                  {machineName && typeof mwr?.matchesFormat === "number" && mwr.matchesFormat > 0
+                  {machineName && !playersById?.[String(mp?.player_id)]?.isBot && typeof mwr?.matchesFormat === "number" && mwr.matchesFormat > 0
                     ? line(
                         `Siege ${machineName} ${fmtName}`,
                         `an diesem Flipper an dieser Location, nur ${fmtName} (Siege/Spiele)`,
@@ -9533,11 +9543,8 @@ return (
           className="inline-flex shrink-0 items-center rounded-full bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700"
           title={pbBotBadgeTitle(playersById[String(mp.player_id)].botKind, playersById[String(mp.player_id)].botOwner)}
         >
-          {pbBotBadgeText(
-            playersById[String(mp.player_id)].botKind,
-            playersById[String(mp.player_id)].botOwner,
-            playersById[String(mp.player_id)].botElo
-          )}
+          {/* Elo steht schon neben dem Namen → hier ohne Zahl */}
+          {pbBotBadgeText(playersById[String(mp.player_id)].botKind, playersById[String(mp.player_id)].botOwner, null)}
         </span>
       ) : null}
       {/* 🟠 Specialist am Lieblingsflipper */}
@@ -9570,7 +9577,16 @@ return (
       {playersById?.[String(mp?.player_id)]?.isBot && mp?.match_id && getScore(mp) != null ? (
         <BotScoreRatingBadge matchId={String(mp.match_id)} playerId={String(mp.player_id)} score={getScore(mp)} />
       ) : null}
-      {PLAYER_ROW_LAYOUT === "balken" ? (
+      {/* 🤖 Bots: statt "💪 Bestwert" (haben sie nie) die Würfel-Spanne an diesem Flipper */}
+      {PLAYER_ROW_LAYOUT === "balken" && playersById?.[String(mp?.player_id)]?.isBot && m?.id ? (
+        <BotPreviewLine
+          hidden={tournament?.status === "finished"}
+          code={code}
+          matchId={String(m.id)}
+          playerId={String(mp.player_id)}
+          machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
+        />
+      ) : PLAYER_ROW_LAYOUT === "balken" ? (
         <PersonalBestLine
           hidden={tournament?.status === "finished"}
           code={code}
@@ -9578,6 +9594,7 @@ return (
           machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
           liveEntries={liveRecordEntries}
           matchId={m?.id ? String(m.id) : null}
+          noPremiere={playersById?.[String(mp?.player_id)]?.isBot === true}
         />
       ) : null}
     </div>
@@ -10974,6 +10991,13 @@ if (joined)
               onCreate={createTournament}
               extraball={newExtraball}
               onExtraballChange={setNewExtraball}
+            />
+          ) : null}
+          {tab === "create" ? (
+            <ArcadeStartCard
+              locations={locations}
+              defaultLocationId={locationId || null}
+              onStarted={(c) => joinTournament(c)}
             />
           ) : tab === "archive" ? (
             <div className="space-y-2">
@@ -14296,10 +14320,91 @@ if (rotEndTimeoutRef.current != null) {
   const dypMixPins = dypActiveMachines.filter((m: any) => m?.is_pinball !== false).length;
   const dypMixOthers = dypActiveMachines.filter((m: any) => m?.is_pinball === false).map((m: any) => String(m?.name ?? "?"));
 
+  // 🕹️ Arcade-Lauf: statt normaler Runde die nächste Stufe (1 Duell gegen den Bot dieser Stufe)
+  const pbArcade = pbArcadeViewOf(data);
+  const pbArcadeDef = pbArcadeModeDef(data?.tournament?.arcade_mode);
+  // 🎬 Overlay: READY? / STAGE CLEAR! / TRY AGAIN / CONGRATULATIONS! / GAME OVER (bzw. 🗼 Turm von Hand)
+  const [arcadeMoment, setArcadeMoment] = useState<ArcadeMoment | null>(null);
+  // nach "Nächste Stufe": so viele Runden müssen geladen sein, bevor gescrollt wird (null = nichts offen)
+  const [arcadeScrollPending, setArcadeScrollPending] = useState<number | null>(null);
+  const arcadePrevRef = useRef<{ wins: number; losses: number } | null>(null);
+  useEffect(() => {
+    if (!pbArcade) return;
+    const st = pbArcade.state;
+    const prev = arcadePrevRef.current;
+    arcadePrevRef.current = { wins: st.wins, losses: st.losses };
+    if (!prev) {
+      // erstes Laden: nur bei einem frischen Lauf (noch kein Duell) "READY?" zeigen
+      if ((data?.rounds ?? []).length === 0 && st.status === "playing" && data?.tournament?.status !== "finished") setArcadeMoment("start");
+      return;
+    }
+    if (st.wins === prev.wins && st.losses === prev.losses) return;
+    setArcadeMoment(
+      st.status === "cleared" ? "cleared" : st.status === "gameover" ? "gameover" : st.wins > prev.wins ? "win" : "loss"
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pbArcade?.state.wins, pbArcade?.state.losses, pbArcade?.state.status]);
+  // nach "Nächste Stufe": sobald die neue Runde geladen ist, dorthin scrollen
+  useEffect(() => {
+    if (arcadeScrollPending == null) return;
+    if ((data?.rounds ?? []).length < arcadeScrollPending) return; // neue Runde noch nicht geladen → warten
+    const t = window.setTimeout(() => {
+      if (getActiveRoundId()) jumpToActiveRound();
+      else matchesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setArcadeScrollPending(null);
+    }, 300);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arcadeScrollPending, (data?.rounds ?? []).length]);
+  async function arcadeNextStage(opts?: { sameMachine?: boolean }) {
+    if (locked || createRoundLockRef.current) return;
+    createRoundLockRef.current = true;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/arcade/next", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, ...(typeof opts?.sameMachine === "boolean" ? { sameMachine: opts.sameMachine } : {}) }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.ok) alert(j?.error ?? "Nächste Stufe konnte nicht angelegt werden");
+      else {
+        setArcadeMoment(null);
+        setArcadeScrollPending((data?.rounds ?? []).length + 1);
+      }
+      await reloadAll();
+    } finally {
+      setBusy(false);
+      createRoundLockRef.current = false;
+    }
+  }
+  // 🏁 Lauf zu Ende (geschafft / Game Over) → Turnier automatisch abschließen (einmal)
+  const pbArcadeFinishRef = useRef(false);
+  useEffect(() => {
+    const st = pbArcade?.state.status;
+    if (!st || st === "playing" || data?.tournament?.status === "finished" || pbArcadeFinishRef.current) return;
+    pbArcadeFinishRef.current = true;
+    (async () => {
+      const res = await fetch("/api/tournaments/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j?.ok === false) {
+        pbArcadeFinishRef.current = false;
+        alert(j?.error ?? "Arcade-Lauf konnte nicht abgeschlossen werden");
+      }
+      await reloadAll();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pbArcade?.state.status, data?.tournament?.status]);
+
   // opts kommt nur vom Rotation-Fenster; beim Klick auf den Knopf ist das erste Argument das Klick-Ereignis
   async function createRound(opts?: any) {
     if (locked) return;
     if (createRoundLockRef.current) return;
+    if (pbArcade) return arcadeNextStage(); // 🕹️
     const rotationMachineCount: number | null =
       typeof opts?.rotationMachineCount === "number" ? opts.rotationMachineCount : null;
 
@@ -14560,6 +14665,7 @@ if (speechRoundEnabled && !isEliminationFormat && !isRotationFormat && next) {
             mCount: mwr?.matchesPlayed ?? 0,
             elo: typeof prof?.rating === "number" ? prof.rating : null,
             placeholder: prof?.exclude_from_stats === true,
+            isBot: prof?.is_bot === true,
           };
         })
         .filter(Boolean) as any[];
@@ -15585,6 +15691,30 @@ const tasksById = useMemo(() => {
 
       </Card>
 
+{/* 🎬 Arcade-Overlay */}
+{pbArcade && pbArcadeDef && arcadeMoment ? (
+  <ArcadeOverlay
+    moment={arcadeMoment}
+    def={pbArcadeDef}
+    state={pbArcade.state}
+    stages={pbArcade.stages}
+    profilesById={profilesById}
+    onNext={arcadeNextStage}
+    onClose={() => setArcadeMoment(null)}
+    busy={busy}
+    revengeMachine={(() => {
+      // Flipper des letzten Duells (für "▶ Revanche · …")
+      const rn = new Map((data?.rounds ?? []).map((r: any) => [String(r.id), Number(r.number ?? 0)]));
+      const last = [...(data?.matches ?? [])].sort((a: any, b: any) => (rn.get(String(b.round_id)) ?? 0) - (rn.get(String(a.round_id)) ?? 0))[0];
+      return last?.machine_id ? machinesInfoById?.[String(last.machine_id)]?.name ?? null : null;
+    })()}
+  />
+) : null}
+{/* 🗼 Arcade-Turm */}
+{pbArcade ? (
+  <ArcadeTower data={data} profilesById={profilesById} onNext={arcadeNextStage} busy={busy || locked} />
+) : null}
+
 <MachinesList
   machines={data?.machines ?? []}
   onToggle={toggleMachine}
@@ -15620,6 +15750,16 @@ const tasksById = useMemo(() => {
   {/* 🔹 LINKE SEITE */}
   <div className="lg:flex-[3] min-w-0">
     <div ref={matchesSectionRef} />
+    {/* 🕹️ Arcade-Leiste direkt über den Matches */}
+    {pbArcade && pbArcadeDef ? (
+      <ArcadeBar
+        def={pbArcadeDef}
+        state={pbArcade.state}
+        stages={pbArcade.stages}
+        profilesById={profilesById}
+        onTower={() => setArcadeMoment("tower")}
+      />
+    ) : null}
     <RoundMatchesCard
       code={code}
       rounds={rounds}
@@ -16259,7 +16399,7 @@ const tasksById = useMemo(() => {
               : "Neue Runde erzeugen und Flipper zuweisen"
           }
         >
-          🎲 Neue Runde
+          {pbArcade ? "▶ Nächste Stufe" : "🎲 Neue Runde"}
         </Button>
 
 <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-900 border border-zinc-700">

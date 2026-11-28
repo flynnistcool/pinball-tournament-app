@@ -10,6 +10,8 @@
 //   Gewinnchance eines Spielers = Durchschnitt seiner Duell-Chancen gegen alle anderen im Match.
 // Favorit = höchste Gewinnchance mit mindestens FAVORITE_MIN_LEAD Vorsprung auf den Zweiten.
 // Platzhalter (Testprofile) können nicht Favorit sein (zählen aber als Gegner); Bots schon.
+// 🤖 Duelle gegen Bots (Nutzer 2026-11-28): NUR Elo – Flipper-Winrate, Turnierform und Bilanz zählen nicht
+//    (Bots würfeln rein nach Elo; ihre Siege werden nirgends gezählt). Kann später geändert werden.
 
 import { machineKey } from "@/lib/machineStats";
 
@@ -41,6 +43,8 @@ export type FavoriteCandidate = {
   elo: number | null;
   /** Platzhalter/Testprofil → nie Favorit */
   placeholder?: boolean;
+  /** 🤖 KI-Bot → Duelle mit ihm nur nach Elo */
+  isBot?: boolean;
 };
 
 /** direkte Bilanz an diesem Flipper aus Sicht von a: Siege a, Siege b, Duelle */
@@ -88,6 +92,8 @@ type DuelCalc = {
   eloDiff: number;
   mPart: number;
   tPart: number;
+  /** 🤖 Duell gegen einen Bot → nur Elo */
+  botEloOnly?: boolean;
   h2h: {
     w: number;
     l: number;
@@ -104,6 +110,10 @@ type DuelCalc = {
 
 function duelCalc(a: FavoriteCandidate, b: FavoriteCandidate, h2h?: H2hLookup): DuelCalc {
   const eloDiff = a.elo != null && b.elo != null ? a.elo - b.elo : 0;
+  // 🤖 gegen Bots nur Elo
+  if (a.isBot || b.isBot) {
+    return { chance: chanceOf(eloDiff), base: eloDiff, eloDiff, mPart: 0, tPart: 0, h2h: null, botEloOnly: true };
+  }
   const mPart = MACHINE_W * (machineForm(a) - machineForm(b));
   const tPart = tournamentForm(a) - tournamentForm(b);
   const base = eloDiff + mPart + tPart;
@@ -172,6 +182,10 @@ export function duelExplainLines(row: FavoriteRow): string[] {
     out.push(`gegen ${nm(b)}: ${pct(d.chance)}`);
     if (a.elo != null && b.elo != null) {
       out.push(`  · Elo ${Math.round(a.elo)} gegen ${Math.round(b.elo)} → allein nach Elo ${pct(chanceOf(d.eloDiff))}`);
+    }
+    if (d.botEloOnly) {
+      out.push(`  · 🤖 gegen Bots zählt nur die Elo (Flipper-Winrate, Turnierform und Bilanz zählen nicht)`);
+      continue;
     }
     const ma = a.m != null ? `${pct1(a.m)} (${a.mCount ?? 0} Spiele)` : "—";
     const mb = b.m != null ? `${pct1(b.m)} (${b.mCount ?? 0} Spiele)` : "—";
@@ -251,6 +265,13 @@ export function duelSteps(a: FavoriteCandidate, b: FavoriteCandidate, h2h?: H2hL
       ? `1) Elo-Unterschied: ${n1(a.elo)} − ${n1(b.elo)} = ${n1(c.eloDiff)} Pkt.`
       : `1) Elo-Unterschied: Elo fehlt → 0 Pkt.`
   );
+  // 🤖 gegen Bots: nur Elo
+  if (c.botEloOnly) {
+    out.push(`2) 🤖 Gegen Bots zählen Flipper-Winrate, Turnierform und Bilanz nicht – Bots würfeln rein nach Elo,`);
+    out.push(`   und ihre Siege werden nirgends gezählt.`);
+    out.push(`3) Chance = 1 / (1 + 10^(−${n1(c.eloDiff)} / 400)) = ${Math.round(c.chance * 1000) / 10} %`.replace(".", ","));
+    return out;
+  }
 
   // 2) Flipper-Winrate
   const mLine = (x: FavoriteCandidate, nm: string) => {

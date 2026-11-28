@@ -311,6 +311,12 @@ export default function MatchAnalysis({
                               "—"
                             )}
                           </td>
+                          {calc.botEloOnly ? (
+                            <td className={td + " text-neutral-400"} colSpan={3} title="Bots würfeln rein nach Elo; ihre Siege werden nirgends gezählt">
+                              🤖 gegen Bots zählt nur die Elo
+                            </td>
+                          ) : (
+                          <>
                           <td className={td}>
                             {signPts(calc.mPart)} <span className="text-neutral-400">Elo-Pkt.</span>
                             <PctNote d={pctSteps(calc).m} />
@@ -342,6 +348,8 @@ export default function MatchAnalysis({
                             )}
                             {calc.h2h ? <PctNote d={pctSteps(calc).h} /> : null}
                           </td>
+                          </>
+                          )}
                           <td className={td + " text-right font-bold " + (calc.chance > 0.5 ? "text-emerald-600" : calc.chance < 0.5 ? "text-rose-400" : "")}>
                             {pct(calc.chance)}
                           </td>
@@ -371,7 +379,8 @@ export default function MatchAnalysis({
           Elo-Punkten. Die direkte Bilanz der beiden an diesem Flipper ersetzt diese Basis teilweise: je mehr Duelle, desto mehr
           (höchstens 70 %). Daraus ergibt sich die Chance je Duell; bei mehr als 2 Spielern ist die Gewinnchance der Schnitt aller
           Duelle. Favorit = höchste Gewinnchance mit mindestens {Math.round(FAVORITE_MIN_LEAD * 100)} Prozentpunkten Vorsprung
-          (Platzhalter nie).
+          (Platzhalter nie). 🤖 Gegen Bots zählt nur die Elo – Flipper-Winrate, Turnierform und Bilanz nicht (Bots würfeln rein nach
+          Elo, ihre Siege werden nirgends gezählt).
         </div>
       </section>
     </div>
