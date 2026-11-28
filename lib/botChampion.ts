@@ -7,6 +7,7 @@
 //   seltene Ausreißer (champion.outlierChance / outlierMax). Unter CHAMPION_FEW Scores: Hinweis.
 
 import type { ScoreLevel } from "@/lib/botRules";
+import { DEFAULT_PLAY_MINUTES, timeFactor } from "@/lib/playMinutes";
 import {
   roundScore,
   rollInRange,
@@ -32,6 +33,8 @@ export function computeChampionScore(input: {
   settings: BotSettings;
   rng?: () => number;
   now?: Date;
+  /** ⏱️ Spielzeit des laufenden Turniers – andere Zeiten werden umgerechnet */
+  minutes?: number | null;
 }): BotCalc {
   const S = input.settings;
   const C = S.champion;
@@ -44,7 +47,7 @@ export function computeChampionScore(input: {
     bot: { name: input.botName, elo: Math.round(input.botElo) },
     machine: input.machine,
     location: input.location,
-    tournament: { format: fmt, extraball: input.extraball, level: input.level },
+    tournament: { format: fmt, extraball: input.extraball, level: input.level, minutes: input.minutes ?? null },
     // Einstufung (lib/botScoreRating) + Rechenzettel lesen Bereich/Ausreißer aus settings
     settings: { ...S, ...C },
     data: {
@@ -93,8 +96,9 @@ export function computeChampionScore(input: {
       calc.data.removedFormat++;
       continue;
     }
-    const converted = lvl !== input.level;
-    const factor = !converted ? 1 : input.level === "high" ? S.levelFactor : 1 / S.levelFactor;
+    const tf = timeFactor(Number(s.playMinutes ?? DEFAULT_PLAY_MINUTES), Number(input.minutes ?? DEFAULT_PLAY_MINUTES), S.timeExponent);
+    const converted = lvl !== input.level || tf !== 1;
+    const factor = (lvl === input.level ? 1 : input.level === "high" ? S.levelFactor : 1 / S.levelFactor) * tf;
     prepared.push({
       raw: s,
       used: Number(s.score) * factor,
@@ -124,7 +128,7 @@ export function computeChampionScore(input: {
     calc.pool = { key: "sameLevel", label: `alle Modi, ${levelName}`, count: pool.length };
   } else {
     pool = prepared;
-    calc.pool = { key: "mixed", label: `alle Modi, ${levelName} + anderes Niveau umgerechnet`, count: pool.length };
+    calc.pool = { key: "mixed", label: `alle Modi, ${levelName} + andere Spielzeiten/Niveaus umgerechnet`, count: pool.length };
   }
 
   const items = pool.map((p) => ({ v: p.used, w: 1 }));
@@ -153,6 +157,7 @@ export function computeChampionScore(input: {
       tournament: p.raw.tournamentName,
       date: p.raw.date,
       format: p.raw.format,
+      minutes: p.raw.playMinutes ?? null,
     }));
 
   const r = rollInRange(low, high, C, rng);

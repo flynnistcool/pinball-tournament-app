@@ -12,5 +12,6 @@ export function personalRecordTitle(info: PersonalRecordInfo | null | undefined)
   }
   if (info.tournament) parts.push(`„${info.tournament}“`);
   if (info.format) parts.push(formatLabel(info.format));
+  if (info.minutes != null && info.minutes !== 10) parts.push(`⏱️ ${info.minutes} min je Flipper`);
   return parts.length ? parts.join(" · ") : "Persönlicher Highscore";
 }

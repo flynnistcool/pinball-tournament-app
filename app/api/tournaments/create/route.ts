@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { extraballForced } from "@/lib/botRules";
 import { sha256, randomCode } from "@/lib/crypto";
+import { DEFAULT_PLAY_MINUTES, normalizePlayMinutes } from "@/lib/playMinutes";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -58,6 +59,8 @@ if (format === "dyp_round_robin") match_size = 4;
       format,
       location_id: locationId,
       extraball: extraballForced(format) || body.extraball === true, // 🎱 mit Extraball gespielt? (RtP/Timeplay: immer)
+      // ⏱️ Spielzeit je Flipper (nur RtP) – ab dem ersten Score gesperrt
+      ...(format === "rotation" ? { play_minutes: normalizePlayMinutes(body.playMinutes) ?? DEFAULT_PLAY_MINUTES } : {}),
     })
     .select("id, code, name, created_at, category, match_size, format, location_id, extraball")
     .single();

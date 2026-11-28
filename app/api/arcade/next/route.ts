@@ -25,7 +25,7 @@ export async function POST(req: Request) {
 
     const { data: t, error: tErr } = await sb
       .from("tournaments")
-      .select("id, status, arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
+      .select("id, status, format, arcade_mode, arcade_lives, arcade_stages, arcade_profile_id")
       .eq("code", code)
       .maybeSingle();
     if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
@@ -33,6 +33,7 @@ export async function POST(req: Request) {
     const tt = t as {
       id: string;
       status: string | null;
+      format: string | null;
       arcade_mode: string | null;
       arcade_lives: number | null;
       arcade_stages: string[] | null;
@@ -133,7 +134,13 @@ export async function POST(req: Request) {
     const nextNumber = Math.max(0, ...Array.from(roundNo.values())) + 1;
     const { data: round, error: nrErr } = await sb
       .from("rounds")
-      .insert({ tournament_id: tt.id, format: "matchplay", number: nextNumber, status: "open", elo_enabled: false })
+      .insert({
+        tournament_id: tt.id,
+        format: tt.format === "rotation" ? "rotation" : "matchplay", // 🔄 RtP-Arcade: Runde als RtP
+        number: nextNumber,
+        status: "open",
+        elo_enabled: false,
+      })
       .select("id")
       .single();
     if (nrErr || !round) return fail(`Runde anlegen fehlgeschlagen: ${nrErr?.message ?? "?"}`, 500);

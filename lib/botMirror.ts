@@ -12,6 +12,7 @@
 //   Kein Ausreißer-Deckel (Nutzer: ein Wahnsinnsspiel IST Form). 1 Score → dieser; 0 → Ersatz über Elo.
 
 import type { ScoreLevel } from "@/lib/botRules";
+import { DEFAULT_PLAY_MINUTES, timeFactor } from "@/lib/playMinutes";
 import {
   roundScore,
   rollInRange,
@@ -40,6 +41,8 @@ export type MirrorSample = {
   current: boolean;
   /** als falsch markiert (match_players.stats_ignored) */
   scoreIgnored?: boolean;
+  /** ⏱️ Spielzeit des Turniers (RtP: seine Minuten, sonst 10) */
+  playMinutes?: number | null;
 };
 
 /** neueste zuerst: Turnierdatum, dann Rundennummer */
@@ -68,21 +71,35 @@ export function computeMirrorBotScore(input: {
   settings: BotSettings;
   rng?: () => number;
   now?: Date;
+  /** ⏱️ Spielzeit des laufenden Turniers – Scores mit anderer Zeit werden umgerechnet */
+  minutes?: number | null;
 }): MirrorResult {
   const S = input.settings;
   const rng = input.rng ?? Math.random;
   const fmt = String(input.format ?? "").toLowerCase();
-  const levelName = input.level === "high" ? "mit Extraball" : "normales Punkteniveau";
+  const target = Number(input.minutes ?? DEFAULT_PLAY_MINUTES);
+  const levelName =
+    (input.level === "high" ? "mit Extraball" : "normales Punkteniveau") + (target !== DEFAULT_PLAY_MINUTES ? `, ${target} min` : "");
 
-  // gleiches Punkteniveau (keine Umrechnung – es sind ja seine echten Scores), nicht als falsch markiert
+  // gleiches Punkteniveau, nicht als falsch markiert; ⏱️ andere Spielzeit → auf die Zeit des Turniers umgerechnet
   const valid = sortNewestFirst(
     input.samples.filter((s) => Number(s.score) > 0 && !s.scoreIgnored && input.levelOf(s.format, s.extraball) === input.level)
-  );
-  const sameMode = valid.filter((s) => String(s.format ?? "").toLowerCase() === fmt);
+  ).map((s) => {
+    const from = Number(s.playMinutes ?? DEFAULT_PLAY_MINUTES);
+    return { ...s, orig: Number(s.score), score: Number(s.score) * timeFactor(from, target, S.timeExponent), minutes: from };
+  });
   const need = input.kind === "ghost" ? GHOST_MIN_SCORES : FORM_LAST_N;
-  const useSameMode = sameMode.length >= need;
-  const pool = useSameMode ? sameMode : valid;
-  const poolLabel = useSameMode ? `gleiches Format („${fmt}“), ${levelName}` : `alle Formate, ${levelName}`;
+  const sameMode = valid.filter((s) => String(s.format ?? "").toLowerCase() === fmt);
+  const sameModeSameTime = sameMode.filter((s) => s.minutes === target);
+  // Reihenfolge: gleiches Format + gleiche Zeit → gleiches Format (umgerechnet) → alle Formate
+  const pool =
+    sameModeSameTime.length >= need ? sameModeSameTime : sameMode.length >= need ? sameMode : valid;
+  const poolLabel =
+    pool === sameModeSameTime
+      ? `gleiches Format („${fmt}“), ${levelName}`
+      : pool === sameMode
+      ? `gleiches Format („${fmt}“), ${levelName}, andere Spielzeiten umgerechnet`
+      : `alle Formate, ${levelName}${valid.some((s) => s.minutes !== target) ? ", andere Spielzeiten umgerechnet" : ""}`;
   const taken = input.kind === "form" ? pool.slice(0, FORM_LAST_N) : pool;
 
   const info: BotMirrorInfo = {
@@ -97,6 +114,7 @@ export function computeMirrorBotScore(input: {
       tournament: s.tournamentName,
       format: s.format,
       current: s.current,
+      ...(s.minutes !== target ? { orig: Math.round(s.orig), minutes: s.minutes } : {}),
     })),
     fallback: null,
   };
@@ -119,7 +137,7 @@ export function computeMirrorBotScore(input: {
     bot: { name: input.botName, elo: input.owner.elo != null ? Math.round(input.owner.elo) : 0 },
     machine: input.machine,
     location: input.location,
-    tournament: { format: fmt, extraball: input.extraball, level: input.level },
+    tournament: { format: fmt, extraball: input.extraball, level: input.level, minutes: target },
     settings: S,
     data: {
       found: input.samples.length,
@@ -131,7 +149,7 @@ export function computeMirrorBotScore(input: {
       sameLevelSameMode: sameMode.length,
       otherLevel: 0,
     },
-    pool: { key: useSameMode ? "sameMode" : "sameLevel", label: poolLabel, count: pool.length },
+    pool: { key: pool === valid ? "sameLevel" : "sameMode", label: poolLabel, count: pool.length },
     windows: [],
     window: null,
     extrapolation: null,

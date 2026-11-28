@@ -5,6 +5,7 @@
 
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { machineKey } from "@/lib/machineStats";
+import { effectiveMinutes } from "@/lib/playMinutes";
 import type { BotRawSample } from "@/lib/botScore";
 import type { supabaseAdmin } from "@/lib/supabaseServer";
 
@@ -18,7 +19,7 @@ export async function loadBotSamples(
 
   const { data: ts, error: tErr } = await sb
     .from("tournaments")
-    .select("id, name, format, extraball, created_at")
+    .select("id, name, format, extraball, created_at, play_minutes")
     .eq("location_id", opts.locationId)
     .eq("status", "finished");
   if (tErr) return { samples: [], error: `Turniere laden fehlgeschlagen: ${tErr.message}` };
@@ -121,6 +122,7 @@ export async function loadBotSamples(
       matchId: String(row.match_id),
       playerId: String(row.player_id),
       profileId: profId,
+      playMinutes: effectiveMinutes(t.format, t.play_minutes),
     });
   }
   return { samples, error: null };

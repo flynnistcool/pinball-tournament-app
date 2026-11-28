@@ -4,6 +4,7 @@
 
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { machineKey } from "@/lib/machineStats";
+import { effectiveMinutes } from "@/lib/playMinutes";
 import type { MirrorSample } from "@/lib/botMirror";
 import type { supabaseAdmin } from "@/lib/supabaseServer";
 
@@ -41,8 +42,9 @@ export async function loadOwnerMachineScores(
     created_at: string | null;
     status: string | null;
     location_id: string | null;
+    play_minutes: number | null;
   }>(tIdsAll, (chunk) =>
-    sb.from("tournaments").select("id, name, format, extraball, created_at, status, location_id").in("id", chunk).order("id")
+    sb.from("tournaments").select("id, name, format, extraball, created_at, status, location_id, play_minutes").in("id", chunk).order("id")
   );
   if (tr.error) return { samples: [], error: `Turniere laden fehlgeschlagen: ${tr.error.message}` };
   const tours = tr.data.filter(
@@ -110,6 +112,7 @@ export async function loadOwnerMachineScores(
       tournamentName: String(t.name ?? "Turnier"),
       current: String(t.id) === String(opts.currentTournamentId),
       scoreIgnored: r.stats_ignored === true,
+      playMinutes: effectiveMinutes(t.format, t.play_minutes),
     });
   }
   return { samples, error: null };

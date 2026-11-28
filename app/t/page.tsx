@@ -81,6 +81,7 @@ import ArcadeTower, { arcadeViewOf as pbArcadeViewOf } from "@/components/Arcade
 import ArcadeStartCard from "@/components/ArcadeStartCard";
 import ArcadeOverlay, { ArcadeBar, type ArcadeMoment } from "@/components/ArcadeOverlay";
 import { arcadeModeDef as pbArcadeModeDef } from "@/lib/arcade";
+import { playMinutesOf as pbPlayMinutesOf } from "@/lib/playMinutes";
 import BotScoreButtons from "@/components/BotScoreButtons";
 import BotScoreRatingBadge from "@/components/BotScoreRatingBadge";
 import BotPreviewLine from "@/components/BotPreviewLine";
@@ -5365,7 +5366,16 @@ function RotationGlobalTimerSticky({
   defaultMinutes,
   onOpenSettings,
   musicVol,
+  fixedMinutes,
+  minutesLocked,
+  onMinutesChange,
 }: {
+  /** ⏱️ Spielzeit des Turniers (statt freier Auswahl) */
+  fixedMinutes?: number | null;
+  /** 🔒 ab dem ersten Score nicht mehr änderbar */
+  minutesLocked?: boolean;
+  /** Spielzeit ändern (nur vor dem ersten Score) – speichert am Turnier */
+  onMinutesChange?: (m: number) => void;
   locked: boolean;
   timeLeftLabel: string;
   timeLeftMs: number | null;
@@ -5385,12 +5395,17 @@ function RotationGlobalTimerSticky({
   /** ▶️ Probehören: Lautstärke wie die Timer-Musik (0..1) */
   musicVol?: number;
 }) {
-  const [minutes, setMinutes] = useState(defaultMinutes ?? 10);
-  // neue Standard-Dauer übernehmen, solange der Timer nicht läuft
+  const [minutes, setMinutes] = useState(fixedMinutes ?? defaultMinutes ?? 10);
+  // neue Standard-Dauer übernehmen, solange der Timer nicht läuft (ohne feste Spielzeit)
   useEffect(() => {
+    if (fixedMinutes) return;
     if (defaultMinutes && !running && !paused) setMinutes(defaultMinutes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultMinutes]);
+  // ⏱️ feste Spielzeit des Turniers übernehmen
+  useEffect(() => {
+    if (fixedMinutes) setMinutes(fixedMinutes);
+  }, [fixedMinutes]);
 
   const totalMs = (durationSec ?? 600) * 1000;
 
@@ -5455,11 +5470,22 @@ function RotationGlobalTimerSticky({
         <div className="grid grid-cols-2 items-center gap-1.5">
           <Select
             value={String(minutes)}
-            onChange={(e) => setMinutes(Number(e.target.value) || 10)}
+            onChange={(e) => {
+              const m = Number(e.target.value) || 10;
+              setMinutes(m);
+              if (fixedMinutes && onMinutesChange) onMinutesChange(m); // ⏱️ am Turnier speichern
+            }}
             className="!h-7 w-full !rounded-lg !px-2 !py-0 !text-xs"
-            title="Dauer (Minuten)"
-            disabled={locked || running || paused}
+            title={
+              minutesLocked
+                ? `🔒 Spielzeit ${minutes} min – festgelegt, ab dem ersten Score nicht mehr änderbar`
+                : fixedMinutes
+                ? "Spielzeit dieses Turniers (nur vor dem ersten Score änderbar)"
+                : "Dauer (Minuten)"
+            }
+            disabled={locked || running || paused || !!minutesLocked}
           >
+            {fixedMinutes && ![3, 5, 8, 10, 15, 20].includes(minutes) ? <option value={String(minutes)}>{minutes} min</option> : null}
             <option value="3">3 min</option>
             <option value="5">5 min</option>
             <option value="8">8 min</option>
@@ -9943,6 +9969,8 @@ return (
         code={code}
         matchId={String(mp.match_id)}
         playerId={String(mp.player_id)}
+        botName={playersById?.[String(mp.player_id)]?.name ?? null}
+        machineName={m?.machine_id ? machinesInfoById?.[String(m.machine_id)]?.name ?? null : null}
         hasScore={getScore(mp) != null}
         currentScore={getScore(mp)}
         disabled={locked || rotationWaitLocked}
@@ -10416,6 +10444,7 @@ if (sessionStorage.getItem("activity_bumped") !== "1") {
   const [category, setCategory] = useState<string>("");
   const [matchSize, setMatchSize] = useState<2 | 3 | 4>(2); // Standard: 1 vs 1
   const [newExtraball, setNewExtraball] = useState(false); // 🎱 neues Turnier mit Extraball?
+  const [newPlayMinutes, setNewPlayMinutes] = useState(10); // ⏱️ RtP: Zeit je Flipper
 
   const [tournamentFormat, setTournamentFormat] =
     useState<"matchplay" | "timeplay" | "swiss" | "round_robin" | "dyp_round_robin" | "elimination" | "rotation">("matchplay");
@@ -10518,6 +10547,7 @@ async function loadArchive() {
         templateTournamentId: templateTournamentId || null,
         locationId: locationId || null,
         extraball: newExtraball,
+        playMinutes: newPlayMinutes,
       }),
     });
 
@@ -10991,6 +11021,8 @@ if (joined)
               onCreate={createTournament}
               extraball={newExtraball}
               onExtraballChange={setNewExtraball}
+              playMinutes={newPlayMinutes}
+              onPlayMinutesChange={setNewPlayMinutes}
             />
           ) : null}
           {tab === "create" ? (
@@ -15207,8 +15239,21 @@ const tasksById = useMemo(() => {
   <div className="flex flex-wrap gap-2 border-t border-neutral-100 px-4 py-3 text-sm text-neutral-700">
     <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
       <span className="text-neutral-500">Format</span>
-      <span className="font-semibold">{formatLabel}</span>
+      <span className="font-semibold">
+        {pbArcadeModeDef(data?.tournament?.arcade_mode)
+          ? `🕹️ Arcade · ${pbArcadeModeDef(data?.tournament?.arcade_mode)?.label} · ${formatLabel}`
+          : formatLabel}
+      </span>
     </span>
+    {pbPlayMinutesOf(data?.tournament?.format, data?.tournament?.play_minutes) ? (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1"
+        title="Spielzeit je Flipper – ab dem ersten Score gesperrt (im Timer-Kasten davor noch änderbar)"
+      >
+        <span className="text-neutral-500">Zeit je Flipper</span>
+        <span className="font-semibold">⏱️ {pbPlayMinutesOf(data?.tournament?.format, data?.tournament?.play_minutes)} min</span>
+      </span>
+    ) : null}
     <span className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-1">
       <span className="text-neutral-500">Spieler/Maschine</span>
       <span className="font-semibold">{data?.tournament?.match_size ?? 4}</span>
@@ -15831,6 +15876,9 @@ const tasksById = useMemo(() => {
   <>
     {/* 🔵 Durchgang X von Y (eine Vergabe der blauen Felder) */}
     {/* 🔵 kurze Einblendung bei neuem Durchgang / alle fertig */}
+    {/* 🕹️ Arcade (RtP-Spielweise): keine Durchgangs-Anzeigen – nur der Timer */}
+    {!pbArcade ? (
+    <>
     <RotationTurnSplash
       progress={rotProgressNow}
       startSignal={rotStartSignal}
@@ -15872,6 +15920,8 @@ const tasksById = useMemo(() => {
         nameOf={(pid) => (data?.players ?? []).find((p: any) => String(p.id) === String(pid))?.name ?? "?"}
       />
     ) : null}
+    </>
+    ) : null}
     <RotationGlobalTimerSticky
       locked={locked}
       timeLeftLabel={rotFmt(displayMs)}
@@ -15887,6 +15937,18 @@ const tasksById = useMemo(() => {
       defaultMinutes={soundSettings.defaultMinutes}
       onOpenSettings={() => setSoundOpen(true)}
       musicVol={soundSettings.musicVol}
+      fixedMinutes={pbPlayMinutesOf(data?.tournament?.format, data?.tournament?.play_minutes)}
+      minutesLocked={(matchPlayers ?? []).some((x: any) => x?.score != null && x.score !== "")}
+      onMinutesChange={async (m) => {
+        const res = await fetch("/api/tournaments/set-play-minutes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, minutes: m }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok || !j?.ok) alert(j?.error ?? "Spielzeit konnte nicht gespeichert werden");
+        await reloadAll();
+      }}
       onFullscreen={() => {
         rotTimerAutoOpenedRef.current = true;
         setRotTimerFullscreen(true);

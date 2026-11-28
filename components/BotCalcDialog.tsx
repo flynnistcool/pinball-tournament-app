@@ -211,6 +211,10 @@ export function BotCalcView({
                       <td className="py-1 pr-2 text-right tabular-nums">{String(s.weight).replace(".", ",")}</td>
                       <td className="py-1 text-neutral-500">
                         {s.tournament} · {fmtLabel(s.format)} · {fmtDate(s.date)}
+                        {/* ⏱️ andere Spielzeit als dieses Turnier → umgerechnet */}
+                        {s.minutes != null && c.tournament.minutes != null && s.minutes !== c.tournament.minutes ? (
+                          <span className="ml-1 text-amber-700">· ⏱️ {s.minutes} min</span>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -361,7 +365,14 @@ function MirrorSteps({ c }: { c: BotCalc }) {
                         {u.tournament}
                         {u.current ? <span className="ml-1 text-violet-700">(heute)</span> : null}
                       </td>
-                      <td className="py-0.5 text-right font-semibold tabular-nums">{fmtScore(u.score)}</td>
+                      <td className="py-0.5 text-right font-semibold tabular-nums">
+                        {fmtScore(u.score)}
+                        {u.orig != null && u.minutes != null ? (
+                          <span className="block text-[10px] font-normal text-amber-700">
+                            ⏱️ {fmtScore(u.orig)} ({u.minutes} min) umgerechnet
+                          </span>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

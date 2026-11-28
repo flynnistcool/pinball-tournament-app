@@ -34,6 +34,9 @@ async function handle(codeRaw: string) {
   // 🎱 DYP-Flipper-Gewicht (supabase_dyp_pinball_weight.sql) – fehlt die Spalte: Standard 3
   const { data: pw } = await sb.from("tournaments").select("dyp_pinball_weight").eq("id", t.id).maybeSingle();
   (t as any).dyp_pinball_weight = (pw as any)?.dyp_pinball_weight ?? 3;
+  // ⏱️ Spielzeit je Flipper (supabase_play_minutes.sql) – eigene Abfrage
+  const { data: pmRow } = await sb.from("tournaments").select("play_minutes").eq("id", t.id).maybeSingle();
+  (t as any).play_minutes = (pmRow as any)?.play_minutes ?? null;
   // 🕹️ Arcade-Lauf (supabase_arcade.sql) – eigene Abfrage: fehlen die Spalten, ist es einfach kein Arcade-Lauf
   const { data: ar } = await sb
     .from("tournaments")

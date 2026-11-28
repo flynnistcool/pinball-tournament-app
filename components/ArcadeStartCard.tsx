@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { ARCADE_MODES, arcadeKindIcon, type ArcadeMode } from "@/lib/arcade";
+import { PLAY_MINUTE_OPTIONS } from "@/lib/playMinutes";
 
 type Prof = { id: string; name: string; is_bot?: boolean | null };
 
@@ -20,6 +21,9 @@ export default function ArcadeStartCard({
   const [profiles, setProfiles] = useState<Prof[]>([]);
   const [profileId, setProfileId] = useState("");
   const [mode, setMode] = useState<ArcadeMode>("easy");
+  // Spielweise: bestimmt, als welches Format die Scores gespeichert werden
+  const [style, setStyle] = useState<"matchplay" | "rotation">("matchplay");
+  const [playMinutes, setPlayMinutes] = useState(10); // ⏱️ nur RtP-Spielweise
   const [locationId, setLocationId] = useState(defaultLocationId ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -45,7 +49,7 @@ export default function ArcadeStartCard({
       const res = await fetch("/api/arcade/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId, mode, locationId }),
+        body: JSON.stringify({ profileId, mode, locationId, style, playMinutes }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j?.ok) {
@@ -98,6 +102,46 @@ export default function ArcadeStartCard({
           </select>
         </label>
       </div>
+
+      <div className="mt-3 text-xs font-medium text-neutral-600">🎮 Spielweise</div>
+      <div className="mt-1 grid gap-2 sm:grid-cols-2">
+        {(
+          [
+            ["matchplay", "🎯 Matchplay", "ohne Extraball – Scores zählen als Matchplay"],
+            ["rotation", "🔄 Round the Pinball", "mit Extraball wie an RtP-Abenden – Scores zählen als RtP, mit RtP-Timer"],
+          ] as const
+        ).map(([v, label, hint]) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setStyle(v)}
+            className={
+              "rounded-xl border px-3 py-2 text-left transition " +
+              (style === v ? "border-fuchsia-500 bg-fuchsia-600 text-white shadow" : "bg-white hover:bg-fuchsia-50")
+            }
+          >
+            <div className="text-sm font-bold">{label}</div>
+            <div className={"text-[11px] " + (style === v ? "text-white/80" : "text-neutral-500")}>{hint}</div>
+          </button>
+        ))}
+      </div>
+
+      {style === "rotation" ? (
+        <label className="mt-2 flex items-center gap-2 text-sm">
+          <span className="text-xs font-medium text-neutral-600">⏱️ Zeit je Flipper</span>
+          <select
+            value={playMinutes}
+            onChange={(e) => setPlayMinutes(Number(e.target.value) || 10)}
+            className="rounded-lg border bg-white px-2 py-1 text-sm"
+          >
+            {PLAY_MINUTE_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m} min{m === 10 ? " (Standard)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <div className="mt-3 text-xs font-medium text-neutral-600">🎚️ Schwierigkeitsgrad</div>
       <div className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">

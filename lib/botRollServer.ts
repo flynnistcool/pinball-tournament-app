@@ -13,6 +13,7 @@ import { rivalStrength } from "@/lib/botRival";
 import { computeChampionScore } from "@/lib/botChampion";
 import { characterMachines, isSpecialistFavorite, specialistFavorites } from "@/lib/botSpecialist";
 import { loadRivalDuels } from "@/lib/botRivalData";
+import { effectiveMinutes } from "@/lib/playMinutes";
 
 type Sb = ReturnType<typeof supabaseAdmin>;
 
@@ -31,7 +32,7 @@ export async function computeBotCalcForMatch(
 
   const { data: t, error: tErr } = await sb
     .from("tournaments")
-    .select("id, format, extraball, location_id, status, locations(name)")
+    .select("id, format, extraball, location_id, status, play_minutes, locations(name)")
     .eq("code", code)
     .maybeSingle();
   if (tErr) return fail(`Turnier laden fehlgeschlagen: ${tErr.message}`, 500);
@@ -112,6 +113,7 @@ export async function computeBotCalcForMatch(
   const botName = String(prof.name ?? player.name ?? "Bot");
   const locationName = ((t as any).locations?.name as string | undefined) ?? null;
   const level = scoreLevel(format, extraball) ?? "normal";
+  const minutes = effectiveMinutes(format, (t as any).play_minutes); // ⏱️ Spielzeit des Turniers
 
   let calc: BotCalc | null = null;
   let mirrorFallback: NonNullable<BotCalc["mirror"]> | null = null;
@@ -137,6 +139,7 @@ export async function computeBotCalcForMatch(
       levelOf: scoreLevel,
       samples: own.samples,
       settings,
+      minutes,
     });
     if (res.ok) calc = res.calc;
     else mirrorFallback = res.info; // zu wenig eigene Scores → unten wie ein fester Bot mit seiner Elo
@@ -219,6 +222,7 @@ export async function computeBotCalcForMatch(
       level,
       levelOf: scoreLevel,
       samples,
+      minutes,
     };
     // 👑 Champion: Spitzenfeld aller Scores (unabhängig von der Elo); 🔴/🟣 eigene Streuung
     calc =

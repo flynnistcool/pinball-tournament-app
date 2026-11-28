@@ -2,6 +2,8 @@
 // eines Turniers. Genutzt von /api/public/machine-records, /api/public/player-wins und dem Server-Ticker
 // (/api/public/feed/sync) – so rechnen Geräte und Server garantiert mit denselben Daten.
 
+import { loadBotSettings } from "@/lib/botSettingsServer";
+import { effectiveMinutes, playMinutesOf, timeFactor } from "@/lib/playMinutes";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { fetchAllIn } from "@/lib/supabaseChunks";
 import { scoreLevel } from "@/lib/botRules";
@@ -110,7 +112,7 @@ export async function loadMachineRecords(
 
   const { data: others, error: oErr } = await sb
     .from("tournaments")
-    .select("id, name, format, extraball, created_at")
+    .select("id, name, format, extraball, created_at, play_minutes")
     .eq("location_id", t.location_id)
     .eq("status", "finished")
     .neq("id", t.id);
@@ -120,11 +122,26 @@ export async function loadMachineRecords(
     (o: { format: string | null; created_at: string | null }) =>
       !NOT_COUNTED_FORMATS.has(String(o.format ?? "")) &&
       (!Number.isFinite(beforeMs) || (!!o.created_at && new Date(o.created_at).getTime() < beforeMs))
-  ) as { id: string; name: string | null; format: string | null; extraball: boolean | null; created_at: string | null }[];
+  ) as {
+    id: string;
+    name: string | null;
+    format: string | null;
+    extraball: boolean | null;
+    created_at: string | null;
+    play_minutes?: number | null;
+  }[];
   // 📊 Ø nur aus Turnieren mit gleichem Punkteniveau (wie bei den KI-Bots: lib/botRules.ts scoreLevel)
-  const { data: cur } = await sb.from("tournaments").select("extraball").eq("id", t.id).maybeSingle();
+  const { data: cur } = await sb.from("tournaments").select("extraball, play_minutes").eq("id", t.id).maybeSingle();
   const avgLevel = scoreLevel(t.format, (cur as { extraball?: boolean | null } | null)?.extraball ?? null);
   const avgTournamentIds = counted.filter((o) => scoreLevel(o.format, o.extraball) === avgLevel).map((o) => String(o.id));
+  // ⏱️ Ø nach Spielzeit: gleiche Zeit zählt direkt, andere Zeiten umgerechnet (Faktor wie bei den Bots)
+  const { settings: botSettings } = await loadBotSettings(sb);
+  const targetMin = effectiveMinutes(t.format, (cur as { play_minutes?: number | null } | null)?.play_minutes ?? null);
+  const avgTimeFactor: Record<string, number> = {};
+  for (const o of counted) {
+    const f = timeFactor(effectiveMinutes(o.format, o.play_minutes ?? null), targetMin, botSettings.timeExponent);
+    if (f !== 1) avgTimeFactor[String(o.id)] = f;
+  }
   const tIds = counted.map((o) => String(o.id));
   const since = Date.now() - MONTH_MS;
   const recentTournamentIds = counted
@@ -182,8 +199,14 @@ export async function loadMachineRecords(
     personalFor,
     recentTournamentIds,
     tournamentDates: Object.fromEntries(counted.map((o) => [String(o.id), o.created_at ?? null])),
-    tournamentInfo: Object.fromEntries(counted.map((o) => [String(o.id), { name: o.name ?? null, format: o.format ?? null }])),
+    tournamentInfo: Object.fromEntries(
+      counted.map((o) => [
+        String(o.id),
+        { name: o.name ?? null, format: o.format ?? null, minutes: playMinutesOf(o.format, o.play_minutes ?? null) },
+      ])
+    ),
     avgTournamentIds,
+    avgTimeFactor,
   });
   // Meldungen/Badges: nur 🤖 Bots ausnehmen – Testprofile ("nicht in Statistik") bekommen alle Meldungen,
   // ihre Scores zählen aber weiter nicht für Rekorde (countedMps oben)

@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { machineKey, personalKey, type LiveEntry, type PriorRecords } from "@/lib/recordWatch";
 import { personalRecordTitle as personalTitle } from "@/lib/personalRecordTitle";
 import { levelText } from "@/lib/scoreForm";
+import { minutesHint } from "@/lib/playMinutes";
 import { isPremiere, personalForMachine, recordsForMachine, type ShownRecord } from "@/lib/matchRecords";
 
 type Loaded = {
@@ -222,12 +223,18 @@ function PersonalBestLineInner({
           title={personalTitle(loaded.personalInfo[personalKey(String(profileId), machineKey(machineName))])}
         >
           {fmt(before)}
+          {/* ⏱️ Bestwert aus abweichender Spielzeit */}
+          {minutesHint(loaded.personalInfo[personalKey(String(profileId), machineKey(machineName))]?.minutes) ? (
+            <span className="ml-0.5 font-normal text-amber-700">
+              {minutesHint(loaded.personalInfo[personalKey(String(profileId), machineKey(machineName))]?.minutes)}
+            </span>
+          ) : null}
         </span>
       ) : null}
       {avg && avg.n > 0 ? (
         <span
           className="cursor-help"
-          title={`Durchschnittsscore aus ${avg.n} ${avg.n === 1 ? "Spiel" : "Spielen"} an diesem Flipper (${levelText(loaded.avgLevel)}, beendete Turniere hier, ohne heute)`}
+          title={`Durchschnittsscore aus ${avg.n} ${avg.n === 1 ? "Spiel" : "Spielen"} an diesem Flipper (${levelText(loaded.avgLevel)}, beendete Turniere hier, ohne heute)${(avg as { converted?: boolean }).converted ? " – ⏱️ andere Spielzeiten auf die Zeit dieses Turniers umgerechnet" : ""}`}
         >
           · Ø <span className="font-semibold text-neutral-700">{fmt(avg.avg)}</span>
         </span>

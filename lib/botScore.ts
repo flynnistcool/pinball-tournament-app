@@ -16,6 +16,7 @@
 //    (app_settings 'bot_settings', lib/botSettingsServer.ts). Einstufung eines Wurfs: lib/botScoreRating.ts
 
 import type { ScoreLevel } from "@/lib/botRules";
+import { DEFAULT_PLAY_MINUTES, timeFactor } from "@/lib/playMinutes";
 
 export type BotSettings = {
   eloWindows: number[];
@@ -53,6 +54,8 @@ export type BotSettings = {
   /** 🎭 Charakter-Bot: Elo mehr am Liebling / weniger am Angstflipper */
   characterBonus: number;
   characterMalus: number;
+  /** ⏱️ Umrechnung zwischen Spielzeiten: (Ziel / Quelle) ^ timeExponent – 1 = im Verhältnis der Zeit */
+  timeExponent: number;
 };
 
 /** Streuung eines Bot-Stils (ersetzt Bereich + Ausreißer der festen Bots) */
@@ -102,6 +105,8 @@ export const BOT_SETTINGS: BotSettings = {
   characterFlops: 2,
   characterBonus: 250,
   characterMalus: 250,
+  /** ⏱️ 10 → 5 min = × 0,5 (Nutzer 2026-11-28: erst einmal im Verhältnis der Zeit) */
+  timeExponent: 1,
 };
 
 /** Stellschrauben für eine Bot-Art: Gambler/Pro bekommen ihre eigene Streuung, alle anderen bleiben gleich */
@@ -133,6 +138,8 @@ export type BotRawSample = {
   playerId?: string;
   /** Profil des Spielers (👻/⚡ im Bot-Labor: Scores eines bestimmten Spielers) */
   profileId?: string | null;
+  /** ⏱️ Spielzeit des Turniers (lib/playMinutes effectiveMinutes – RtP: seine Minuten, sonst 10) */
+  playMinutes?: number | null;
 };
 
 export type BotCalcSample = {
@@ -147,6 +154,8 @@ export type BotCalcSample = {
   tournament: string;
   date: string | null;
   format: string | null;
+  /** ⏱️ Spielzeit des Scores (wenn abweichend umgerechnet) */
+  minutes?: number | null;
 };
 
 export type BotCalc = {
@@ -156,7 +165,7 @@ export type BotCalc = {
   bot: { name: string; elo: number };
   machine: string;
   location: string | null;
-  tournament: { format: string; extraball: boolean; level: ScoreLevel };
+  tournament: { format: string; extraball: boolean; level: ScoreLevel; minutes?: number | null };
   settings: BotSettings;
   data: {
     found: number;
@@ -230,8 +239,8 @@ export type BotMirrorInfo = {
   found: number;
   /** welcher Datentopf (gleiches Format / gleiches Punkteniveau) */
   poolLabel: string;
-  /** genommene Scores (neueste zuerst) */
-  used: { score: number; at: string | null; tournament: string; format: string | null; current: boolean }[];
+  /** genommene Scores (neueste zuerst); orig/minutes = vor der Umrechnung (andere Spielzeit) */
+  used: { score: number; at: string | null; tournament: string; format: string | null; current: boolean; orig?: number; minutes?: number }[];
   /** Form-Bot: Durchschnitt der genommenen Scores */
   avg?: number | null;
   /** Form-Bot: Spanne (0.05 = ±5 %) */
@@ -322,6 +331,8 @@ export function computeBotScore(input: {
   rng?: () => number;
   settings?: BotSettings;
   now?: Date;
+  /** ⏱️ Spielzeit des laufenden Turniers (RtP: seine Minuten, sonst 10) – andere Zeiten werden umgerechnet */
+  minutes?: number | null;
 }): BotCalc {
   const S = input.settings ?? BOT_SETTINGS;
   const rng = input.rng ?? Math.random;
@@ -333,7 +344,7 @@ export function computeBotScore(input: {
     bot: { name: input.botName, elo: Math.round(input.botElo) },
     machine: input.machine,
     location: input.location,
-    tournament: { format: fmt, extraball: input.extraball, level: input.level },
+    tournament: { format: fmt, extraball: input.extraball, level: input.level, minutes: input.minutes ?? null },
     settings: S,
     data: {
       found: input.samples.length,
@@ -385,8 +396,10 @@ export function computeBotScore(input: {
       calc.data.removedNoElo++;
       continue;
     }
-    const converted = lvl !== input.level;
-    const factor = !converted ? 1 : input.level === "high" ? S.levelFactor : 1 / S.levelFactor;
+    // ⏱️ andere Spielzeit → umrechnen (gilt wie ein anderes Punkteniveau: erst gleiche Zeit, sonst umgerechnet)
+    const tf = timeFactor(Number(s.playMinutes ?? DEFAULT_PLAY_MINUTES), Number(input.minutes ?? DEFAULT_PLAY_MINUTES), S.timeExponent);
+    const converted = lvl !== input.level || tf !== 1;
+    const factor = (lvl === input.level ? 1 : input.level === "high" ? S.levelFactor : 1 / S.levelFactor) * tf;
     prepared.push({
       raw: s,
       elo: Number(s.elo),
@@ -410,14 +423,16 @@ export function computeBotScore(input: {
   }
 
   // 2) Datentöpfe in Reihenfolge
-  const levelName = input.level === "high" ? "hohes Niveau (Extraball)" : "normales Niveau";
+  const levelName =
+    (input.level === "high" ? "hohes Niveau (Extraball)" : "normales Niveau") +
+    (input.minutes != null && input.minutes !== DEFAULT_PLAY_MINUTES ? `, ${input.minutes} min` : "");
   const pools: { key: BotCalc["pool"]["key"]; label: string; items: Prepared[] }[] = [];
   if (sameMode.length >= S.minSameMode) {
     pools.push({ key: "sameMode", label: `nur Modus „${fmt}“, ${levelName}`, items: sameMode });
   }
   if (sameLevel.length) pools.push({ key: "sameLevel", label: `alle Modi, ${levelName}`, items: sameLevel });
   if (prepared.length > sameLevel.length) {
-    pools.push({ key: "mixed", label: `alle Modi, ${levelName} + anderes Niveau umgerechnet`, items: prepared });
+    pools.push({ key: "mixed", label: `alle Modi, ${levelName} + andere Spielzeiten/Niveaus umgerechnet`, items: prepared });
   }
 
   const kW = (k: KStatus, withK32: boolean) =>
@@ -508,6 +523,7 @@ export function computeBotScore(input: {
       tournament: u.p.raw.tournamentName,
       date: u.p.raw.date,
       format: u.p.raw.format,
+      minutes: u.p.raw.playMinutes ?? null,
     }));
 
   // 5) Bereich + würfeln
@@ -580,6 +596,7 @@ export function normalizeBotSettings(raw: unknown): BotSettings {
     characterFlops: Math.round(num(r.characterFlops, D.characterFlops, 0, 10)),
     characterBonus: Math.round(num(r.characterBonus, D.characterBonus, 0, 1000)),
     characterMalus: Math.round(num(r.characterMalus, D.characterMalus, 0, 1000)),
+    timeExponent: num(r.timeExponent, D.timeExponent, 0.3, 2),
   };
 
   function normChampion(v: unknown, def: BotStyle): BotStyle {

@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import ExtraballToggle from "@/components/ExtraballToggle";
 import { extraballForced } from "@/lib/botRules";
+import { PLAY_MINUTE_OPTIONS } from "@/lib/playMinutes";
 
 export type TournamentFormat =
   | "matchplay"
@@ -68,7 +69,12 @@ export default function CreateTournamentForm({
   onCreate,
   extraball = false,
   onExtraballChange,
+  playMinutes = 10,
+  onPlayMinutesChange,
 }: {
+  /** ⏱️ Spielzeit je Flipper (nur Round the Pinball) */
+  playMinutes?: number;
+  onPlayMinutesChange?: (v: number) => void;
   name: string;
   onNameChange: (v: string) => void;
   /** Vorschlags-Chips unter dem Namen */
@@ -100,6 +106,7 @@ export default function CreateTournamentForm({
     format === "elimination" ? "alle in einem Match" : format === "dyp_round_robin" ? "2 vs 2" : `${matchSize} Spieler pro Maschine`,
     locName ? `📍 ${locName}` : "ohne Location-Import",
     extraball || xbLocked ? "🎱 mit Extraball" : null,
+    format === "rotation" ? `⏱️ ${playMinutes} min je Flipper` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -193,6 +200,22 @@ export default function CreateTournamentForm({
         {onExtraballChange ? (
           <div className="sm:max-w-md">
             <ExtraballToggle checked={extraball} onChange={onExtraballChange} disabled={busy} locked={xbLocked} />
+          </div>
+        ) : null}
+
+        {format === "rotation" && onPlayMinutesChange ? (
+          <div className="sm:max-w-md">
+            <FieldLabel>⏱️ Zeit je Flipper</FieldLabel>
+            <Select value={String(playMinutes)} onChange={(e) => onPlayMinutesChange(Number(e.target.value) || 10)} disabled={busy}>
+              {PLAY_MINUTE_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {m} min{m === 10 ? " (Standard)" : ""}
+                </option>
+              ))}
+            </Select>
+            <div className="mt-1 text-xs text-neutral-500">
+              Gilt für das ganze Turnier – ab dem ersten Score nicht mehr änderbar (Statistik und Bots rechnen nach Spielzeit).
+            </div>
           </div>
         ) : null}
       </Section>

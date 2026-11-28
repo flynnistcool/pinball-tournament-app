@@ -11,6 +11,7 @@ import { BOT_SETTINGS, normalizeBotSettings, computeBotScore, settingsForKind, k
 import { effectiveExtraball, extraballForced, scoreLevel } from "@/lib/botRules";
 import { BotCalcView, fmtLabel } from "@/components/BotCalcDialog";
 import { computeMirrorBotScore, type MirrorSample } from "@/lib/botMirror";
+import { PLAY_MINUTE_OPTIONS } from "@/lib/playMinutes";
 import { computeChampionScore } from "@/lib/botChampion";
 import BotKindsOverview from "@/components/BotKindsOverview";
 import { botBadgeText } from "@/lib/botBadge";
@@ -48,7 +49,7 @@ function labCalc(
   bot: Bot | undefined,
   name: string,
   elo: number,
-  base: { machine: string; location: string | null; format: string; extraball: boolean; samples: BotRawSample[]; settings: BotSettings },
+  base: { machine: string; location: string | null; format: string; extraball: boolean; samples: BotRawSample[]; settings: BotSettings; minutes?: number },
   rng: () => number
 ): BotCalc {
   const level = scoreLevel(base.format, base.extraball) ?? "normal";
@@ -66,6 +67,7 @@ function labCalc(
         tournamentName: s.tournamentName,
         current: false,
         scoreIgnored: s.scoreIgnored,
+        playMinutes: s.playMinutes ?? null,
       }));
     const res = computeMirrorBotScore({
       kind,
@@ -80,6 +82,7 @@ function labCalc(
       samples: own,
       settings: base.settings,
       rng,
+      minutes: base.minutes ?? null,
     });
     if (res.ok) return res.calc;
     fallback = res.info;
@@ -97,6 +100,7 @@ function labCalc(
     samples: base.samples,
     settings: settingsForKind(base.settings, bot?.bot_kind), // 🔴/🟣 eigene Streuung
     rng,
+    minutes: base.minutes ?? null,
   });
   if (bot?.bot_kind === "gambler" || bot?.bot_kind === "pro") calc.style = bot.bot_kind;
   if (fallback) calc.mirror = fallback;
@@ -149,7 +153,7 @@ function simulate(
   key: string,
   name: string,
   elo: number,
-  base: { machine: string; location: string | null; format: string; extraball: boolean; samples: BotRawSample[]; settings: BotSettings },
+  base: { machine: string; location: string | null; format: string; extraball: boolean; samples: BotRawSample[]; settings: BotSettings; minutes?: number },
   seed: number,
   bot?: Bot
 ): SimResult {
@@ -254,6 +258,21 @@ export default function BotLab() {
   const [machines, setMachines] = useState<string[]>([]);
   const [machine, setMachine] = useState("");
   const [format, setFormat] = useState("rotation");
+  // ⏱️ Spielzeit für die Probe-Rechnung (nur Round the Pinball; andere Formate gelten wie 10 min)
+  const [labMinutes, setLabMinutes] = useState(10);
+  // 📏 Zeit-Umrechnung aus echten Daten gemessen (nur Info, nicht automatisch übernommen)
+  const [timeCal, setTimeCal] = useState<{
+    byMinutes: { minutes: number; exponent: number; factor: number; pairs: number }[];
+    overall: { exponent: number; pairs: number } | null;
+    otherTournaments: number;
+  } | null>(null);
+  useEffect(() => {
+    fetch(`/api/bots/time-calibration?ts=${Date.now()}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => j?.ok && setTimeCal({ byMinutes: j.byMinutes ?? [], overall: j.overall ?? null, otherTournaments: j.otherTournaments ?? 0 }))
+      .catch(() => {});
+  }, []);
+  const labMin = format === "rotation" ? labMinutes : 10;
   const [extraball, setExtraball] = useState(false);
   const [customElo, setCustomElo] = useState<string>("");
 
@@ -378,7 +397,7 @@ export default function BotLab() {
 
   const results = useMemo(() => {
     if (!samples) return [];
-    const base = { machine, location: locName, format, extraball: xb, samples, settings };
+    const base = { machine, location: locName, format, extraball: xb, samples, settings, minutes: labMin };
     const list: SimResult[] = bots.flatMap((b) =>
       b.bot_kind === "specialist"
         ? [
@@ -399,7 +418,7 @@ export default function BotLab() {
     return list.sort((a, b) => a.elo - b.elo);
     // simSeed: neu würfeln
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [samples, bots, customElo, format, xb, settings, machine, locName, simSeed]);
+  }, [samples, bots, customElo, format, xb, settings, machine, locName, simSeed, labMin]);
 
   const rows = useMemo(() => {
     const out = (samples ?? []).map((s) => {
@@ -441,7 +460,7 @@ export default function BotLab() {
       const bot = bots.find((b) => b.id === r.key);
       for (let i = 0; i < 10; i++) {
         rolls.push(
-          labCalc(bot, r.name, r.elo, { machine, location: locName, format, extraball: xb, samples, settings }, Math.random)
+          labCalc(bot, r.name, r.elo, { machine, location: locName, format, extraball: xb, samples, settings, minutes: labMin }, Math.random)
         );
       }
       return { key: r.key, name: r.name, elo: r.elo, rolls };
@@ -451,7 +470,7 @@ export default function BotLab() {
   // Daten/Einstellungen geändert → alte Einzelwürfe passen nicht mehr
   useEffect(() => {
     setTenRolls(null);
-  }, [samples, settings, format, xb, customElo, bots]);
+  }, [samples, settings, format, xb, customElo, bots, labMin]);
 
   // 🚫 einzelnen Score ignorieren / wieder zählen (Turnierergebnis bleibt unverändert)
   const [ignoreBusy, setIgnoreBusy] = useState<string | null>(null);
@@ -526,6 +545,20 @@ export default function BotLab() {
               </option>
             ))}
           </select>
+          {format === "rotation" ? (
+            <select
+              value={labMinutes}
+              onChange={(e) => setLabMinutes(Number(e.target.value) || 10)}
+              className="mt-1 h-9 w-full rounded-xl border bg-white px-2 text-sm"
+              title="⏱️ Spielzeit je Flipper – Scores mit anderer Zeit werden umgerechnet"
+            >
+              {PLAY_MINUTE_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  ⏱️ {m} min je Flipper{m === 10 ? " (Standard)" : ""}
+                </option>
+              ))}
+            </select>
+          ) : null}
         </label>
         <label className="block">
           <div className="mb-1 text-xs font-medium text-neutral-600">🧪 Eigene Elo testen</div>
@@ -741,6 +774,53 @@ export default function BotLab() {
                 onChange={(v) => set("characterMalus", Math.max(0, Math.round(v)))}
                 suffix="Elo"
               />
+              <NumField
+                label="⏱️ Zeit-Umrechnung"
+                hint="Scores mit anderer Spielzeit: × (Ziel-Minuten / Minuten) hoch diesem Wert. 1 = im Verhältnis der Zeit (10 → 5 min = × 0,5); größer = kurze Spiele noch schwächer."
+                value={settings.timeExponent}
+                base={saved.timeExponent}
+                onChange={(v) => set("timeExponent", Math.min(2, Math.max(0.3, v || 1)))}
+                step={0.05}
+              />
+              {/* 📏 aus euren Daten gemessen – nur zur Info */}
+              <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/60 p-2.5 text-[11px] text-amber-900">
+                <div className="font-semibold">📏 Aus euren Daten (Zeit-Umrechnung)</div>
+                {!timeCal ? (
+                  <div className="text-amber-800/70">lädt …</div>
+                ) : !timeCal.byMinutes.length ? (
+                  <div className="text-amber-800/80">
+                    {timeCal.otherTournaments
+                      ? "Noch keine Vergleiche: dieselben Spieler müssen denselben Flipper mit 10 min und mit anderer Zeit gespielt haben."
+                      : "Noch keine beendeten Round-the-Pinball-Turniere mit anderer Spielzeit als 10 min."}
+                  </div>
+                ) : (
+                  <>
+                    {timeCal.byMinutes.map((b) => (
+                      <div key={b.minutes}>
+                        bei <b>{b.minutes} min</b>: gemessen <b>{String(b.exponent).replace(".", ",")}</b> → 10 → {b.minutes} min = ×
+                        {String(b.factor).replace(".", ",")} <span className="text-amber-800/70">({b.pairs} Vergleiche)</span>
+                      </div>
+                    ))}
+                    {timeCal.overall ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span>
+                          gesamt: <b>{String(timeCal.overall.exponent).replace(".", ",")}</b> ({timeCal.overall.pairs} Vergleiche)
+                          {timeCal.overall.pairs < 10 ? " – noch wenig Daten" : ""}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => set("timeExponent", Math.min(2, Math.max(0.3, timeCal.overall!.exponent)))}
+                          className="rounded-md border border-amber-400 bg-white px-2 py-0.5 font-semibold hover:bg-amber-100"
+                          title="Trägt den gemessenen Wert ins Feld ein – ins Spiel kommt er erst mit „💾 Übernehmen und speichern“"
+                        >
+                          Wert übernehmen
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+                <div className="mt-1 italic text-amber-800/70">nur zur Info – noch nicht im Spiel (erst nach „Wert übernehmen“ + Speichern)</div>
+              </div>
               <NumField label="🥊 Rivale: je Duell (±)" hint="Rivalen-Bot: so viel stärker, wenn sein Spieler vorne liegt – so viel schwächer, wenn der Spieler verliert." value={settings.rivalStep} base={saved.rivalStep} onChange={(v) => set("rivalStep", Math.max(0, Math.round(v)))} suffix="Elo" />
               <NumField label="⚡ Form-Bot Spanne (±)" hint="Form-Bot: so weit um den Durchschnitt der letzten 2 Scores seines Spielers." value={Math.round(settings.formSpreadPct * 100)} base={Math.round(saved.formSpreadPct * 100)} onChange={(v) => set("formSpreadPct", Math.min(100, Math.max(0, v)) / 100)} suffix="%" />
               <NumField label="Auf-/Abschlag je 100 Elo" hint="Wenn es keine Spieler mit ähnlicher Elo gibt (z. B. 2500er)." value={Math.round(settings.extrapolatePer100 * 100)} base={Math.round(saved.extrapolatePer100 * 100)} onChange={(v) => set("extrapolatePer100", Math.max(0, v) / 100)} suffix="%" />

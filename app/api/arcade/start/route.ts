@@ -1,11 +1,16 @@
 // 🕹️ Arcade-Lauf starten: legt ein normales Turnier an (Matchplay, 2 Spieler je Match) mit
 // arcade_mode / arcade_lives / arcade_stages (Bot-Profile in Reihenfolge) / arcade_profile_id.
-// POST { profileId, mode, locationId } -> { ok: true, code } | { ok: false, error }
+// POST { profileId, mode, locationId, style? } -> { ok: true, code } | { ok: false, error }
+// style: "matchplay" (Standard, ohne Extraball) | "rotation" (Round the Pinball, mit Extraball wie bei RtP-Abenden)
+// → das Turnier wird in diesem Format gespeichert, damit die Scores im richtigen Daten-Topf landen
+//   (Bots/Ghost/Form nehmen zuerst Scores aus dem gleichen Format).
 // Die Stufen (Runden) legt danach /api/arcade/next einzeln an.
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseServer";
 import { sha256, randomCode } from "@/lib/crypto";
+import { extraballForced } from "@/lib/botRules";
+import { DEFAULT_PLAY_MINUTES, normalizePlayMinutes } from "@/lib/playMinutes";
 import { arcadeModeDef } from "@/lib/arcade";
 import { ensureArcadeBots } from "@/lib/arcadeServer";
 
@@ -22,6 +27,7 @@ export async function POST(req: Request) {
     const profileId = String(body?.profileId ?? "").trim();
     const locationId = String(body?.locationId ?? "").trim();
     const def = arcadeModeDef(String(body?.mode ?? ""));
+    const format = body?.style === "rotation" ? "rotation" : "matchplay";
     if (!profileId) return fail("Spieler fehlt", 400);
     if (!locationId) return fail("Location fehlt – die Bots brauchen die Scores einer Location", 400);
     if (!def) return fail("Unbekannter Arcade-Modus", 400);
@@ -45,9 +51,11 @@ export async function POST(req: Request) {
         admin_pin_hash: sha256("0000"),
         category: "🕹️ Arcade",
         match_size: 2,
-        format: "matchplay",
+        format,
         location_id: locationId,
-        extraball: false,
+        extraball: extraballForced(format), // RtP: immer mit Extraball; Matchplay im Arcade: ohne
+        // ⏱️ Spielzeit je Flipper (nur RtP-Spielweise)
+        ...(format === "rotation" ? { play_minutes: normalizePlayMinutes(body?.playMinutes) ?? DEFAULT_PLAY_MINUTES } : {}),
         arcade_mode: def.mode,
         arcade_lives: def.lives,
         arcade_stages: stages,

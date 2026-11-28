@@ -7,6 +7,7 @@
 // Das laufende Turnier kommt live dazu (siehe evaluateEntry).
 
 import { machineKey } from "@/lib/machineStats";
+import { minutesHint } from "@/lib/playMinutes";
 
 export { machineKey };
 
@@ -21,8 +22,9 @@ export type PriorRecords = {
   personal: Record<string, number>;
   /** `${profileId}|${machineKey}` → woher der persönliche Bestwert stammt (für den Mouseover) */
   personalInfo?: Record<string, PersonalRecordInfo>;
-  /** `${profileId}|${machineKey}` → Durchschnittsscore + Anzahl Spiele (gleiche Basis wie der Bestwert) */
-  personalAvg?: Record<string, { avg: number; n: number }>;
+  /** `${profileId}|${machineKey}` → Durchschnittsscore + Anzahl Spiele (gleiche Basis wie der Bestwert);
+   *  converted = ⏱️ zu wenig Spiele mit gleicher Spielzeit → andere Zeiten umgerechnet */
+  personalAvg?: Record<string, { avg: number; n: number; converted?: boolean }>;
   /** `${profileId}|${machineKey}` → alle bisherigen Scores (älteste zuerst) – für den Verlauf beim Aufklappen */
   personalHistory?: Record<string, PersonalHistoryEntry[]>;
   /** 🤖/🚫 Profile im laufenden Turnier, die keine Allzeit-/30-Tage-Rekorde halten dürfen (Bots, Platzhalter) */
@@ -31,8 +33,8 @@ export type PriorRecords = {
   played?: string[];
 };
 
-/** Herkunft eines persönlichen Bestwerts: Turnierdatum, Turniername, Format */
-export type PersonalRecordInfo = { at: string | null; tournament: string | null; format: string | null };
+/** Herkunft eines persönlichen Bestwerts: Turnierdatum, Turniername, Format, ⏱️ Spielzeit (RtP) */
+export type PersonalRecordInfo = { at: string | null; tournament: string | null; format: string | null; minutes?: number | null };
 
 /** ein bisheriger Score eines Spielers auf einem Flipper */
 export type PersonalHistoryEntry = PersonalRecordInfo & { score: number };
@@ -57,10 +59,12 @@ export function buildPriorRecords(input: {
   recentTournamentIds?: readonly string[];
   /** Turnier-ID → Datum (für "aufgestellt am") */
   tournamentDates?: Readonly<Record<string, string | null>>;
-  /** Turnier-ID → Name + Format (für "aufgestellt in") */
-  tournamentInfo?: Readonly<Record<string, { name: string | null; format: string | null }>>;
+  /** Turnier-ID → Name + Format (+ ⏱️ Spielzeit bei RtP) (für "aufgestellt in") */
+  tournamentInfo?: Readonly<Record<string, { name: string | null; format: string | null; minutes?: number | null }>>;
   /** nur diese Turniere zählen für den Durchschnitt (gleiches Punkteniveau); fehlt = alle */
   avgTournamentIds?: readonly string[];
+  /** ⏱️ Turnier-ID → Umrechnungsfaktor auf die Spielzeit des laufenden Turniers (fehlt = 1, gleiche Zeit) */
+  avgTimeFactor?: Readonly<Record<string, number>>;
 }): PriorRecords {
   const avgOk = input.avgTournamentIds ? new Set(input.avgTournamentIds.map(String)) : null;
   const machineById = new Map(input.machines.map((m) => [String(m.id), m]));
@@ -74,6 +78,9 @@ export function buildPriorRecords(input: {
   const personal: Record<string, number> = {};
   const personalInfo: Record<string, PersonalRecordInfo> = {};
   const personalSum: Record<string, { sum: number; n: number }> = {};
+  // ⏱️ nur Spiele mit GLEICHER Spielzeit (Faktor 1) – reichen sie (AVG_SAME_TIME_MIN), zählen nur diese
+  const personalSumSame: Record<string, { sum: number; n: number }> = {};
+  const AVG_SAME_TIME_MIN = 3;
   const personalHistory: Record<string, PersonalHistoryEntry[]> = {};
 
   for (const mp of input.matchPlayers) {
@@ -86,9 +93,11 @@ export function buildPriorRecords(input: {
     const player = playerById.get(String(mp.player_id));
 
     const cur = records[key];
+    const recTid = machine?.tournament_id ? String(machine.tournament_id) : null;
     const rec: PriorRecord = {
       score,
-      holder: player?.name ?? null,
+      // ⏱️ Rekord aus abweichender Spielzeit → "Flo (5 min)" (überall, wo der Halter steht)
+      holder: player?.name ? player.name + minutesHint(recTid ? input.tournamentInfo?.[recTid]?.minutes : null) : null,
       machineName: machine?.name?.trim() ?? null,
       at: machine?.tournament_id ? input.tournamentDates?.[String(machine.tournament_id)] ?? null : null,
     };
@@ -106,11 +115,18 @@ export function buildPriorRecords(input: {
         at: tid ? input.tournamentDates?.[tid] ?? null : null,
         tournament: tid ? input.tournamentInfo?.[tid]?.name ?? null : null,
         format: tid ? input.tournamentInfo?.[tid]?.format ?? null : null,
+        minutes: tid ? input.tournamentInfo?.[tid]?.minutes ?? null : null,
       };
       if (!avgOk || (tid && avgOk.has(tid))) {
+        const f = tid ? input.avgTimeFactor?.[tid] ?? 1 : 1;
         const acc = personalSum[pk] ?? (personalSum[pk] = { sum: 0, n: 0 });
-        acc.sum += score;
+        acc.sum += score * f;
         acc.n += 1;
+        if (f === 1) {
+          const same = personalSumSame[pk] ?? (personalSumSame[pk] = { sum: 0, n: 0 });
+          same.sum += score;
+          same.n += 1;
+        }
       }
       (personalHistory[pk] ?? (personalHistory[pk] = [])).push({ score, ...info });
       const prev = personalInfo[pk];
@@ -122,8 +138,12 @@ export function buildPriorRecords(input: {
       }
     }
   }
-  const personalAvg: Record<string, { avg: number; n: number }> = {};
-  for (const [pk, a] of Object.entries(personalSum)) personalAvg[pk] = { avg: Math.round(a.sum / a.n), n: a.n };
+  const personalAvg: Record<string, { avg: number; n: number; converted?: boolean }> = {};
+  for (const [pk, a] of Object.entries(personalSum)) {
+    const same = personalSumSame[pk];
+    if (same && (same.n >= AVG_SAME_TIME_MIN || same.n === a.n)) personalAvg[pk] = { avg: Math.round(same.sum / same.n), n: same.n };
+    else personalAvg[pk] = { avg: Math.round(a.sum / a.n), n: a.n, converted: true };
+  }
   for (const list of Object.values(personalHistory)) {
     list.sort((a, b) => String(a.at ?? "").localeCompare(String(b.at ?? "")));
   }

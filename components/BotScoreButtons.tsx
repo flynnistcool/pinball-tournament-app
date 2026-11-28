@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import BotCalcDialog from "@/components/BotCalcDialog";
+import BotPlayOverlay from "@/components/BotPlayOverlay";
 import type { BotCalc } from "@/lib/botScore";
 
 export default function BotScoreButtons({
@@ -15,7 +16,12 @@ export default function BotScoreButtons({
   currentScore,
   disabled,
   onRolled,
+  botName,
+  machineName,
 }: {
+  /** für die "Bot spielt"-Show */
+  botName?: string | null;
+  machineName?: string | null;
   code: string;
   matchId: string;
   playerId: string;
@@ -28,30 +34,43 @@ export default function BotScoreButtons({
   const [open, setOpen] = useState(false);
   const [calc, setCalc] = useState<BotCalc | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 🎱 laufende "Bot spielt"-Show (Ergebnis kommt parallel vom Server)
+  const [show, setShow] = useState<Promise<
+    { ok: true; score: number; calc: BotCalc | null } | { ok: false; error: string; calc?: BotCalc | null }
+  > | null>(null);
 
-  async function roll() {
+  function roll() {
     if (busy || disabled) return;
     setBusy(true);
     setErr(null);
+    const p = fetch("/api/bots/roll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, matchId, playerId }),
+    })
+      .then(async (res) => {
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok || !j?.ok) return { ok: false as const, error: String(j?.error ?? "Bot konnte nicht spielen"), calc: j?.calc ?? null };
+        return { ok: true as const, score: Number(j.score), calc: (j.calc ?? null) as BotCalc | null };
+      })
+      .catch(() => ({ ok: false as const, error: "Netzwerkfehler – Bot konnte nicht spielen", calc: null }));
+    setShow(p);
+  }
+
+  async function finishShow(score: number, c: BotCalc | null) {
+    setShow(null);
+    setCalc(c);
     try {
-      const res = await fetch("/api/bots/roll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, matchId, playerId }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j?.ok) {
-        setErr(j?.error ?? "Bot konnte nicht spielen");
-        if (j?.calc) setCalc(j.calc);
-        return;
-      }
-      setCalc(j.calc ?? null);
-      await onRolled(Number(j.score));
-    } catch {
-      setErr("Netzwerkfehler – Bot konnte nicht spielen");
+      await onRolled(score); // erst nach der Show speichern
     } finally {
       setBusy(false);
     }
+  }
+  function failShow(error: string, c: BotCalc | null) {
+    setShow(null);
+    setErr(error);
+    if (c) setCalc(c);
+    setBusy(false);
   }
 
   async function openCalc() {
@@ -101,6 +120,15 @@ export default function BotScoreButtons({
         >
           ⚠️ {err}
         </button>
+      ) : null}
+      {show ? (
+        <BotPlayOverlay
+          botName={botName ?? "Bot"}
+          machineName={machineName ?? null}
+          result={show}
+          onDone={finishShow}
+          onError={failShow}
+        />
       ) : null}
       {open ? (
         <BotCalcDialog
